@@ -232,7 +232,18 @@ def export(t: dict, path: Path, noise: float = 0.0, seed: int = 0):
 # 跑 bmdrt
 # --------------------------------------------------------------------------
 
-def run_one(csv: Path, outdir: Path, quick: bool, kmax: int):
+def run_one(csv: Path, outdir: Path, quick: bool, kmax: int,
+            sigma_floor: float = 0.0, k_force: int | None = None,
+            quiet: bool = False):
+    """跑一条谱。
+
+    k_force 给定时**跳过 K 扫描**，只拟合这一个 K。做 σ 地板这类
+    "固定模型、只改一个旋钮"的对照时必须这样——否则 K 也在变，
+    参数漂移分不清是地板造成的还是 K 造成的；而且每多一个 K 就多一次
+    JAX 重编译（实测一条谱 3 个 K ≈ 15 分钟）。
+
+    quiet=True 时把 run() 的打印吞掉（扫描时几十次输出没人看）。
+    """
     import bmdrt as M
 
     cfg = M._deep_merge(M.DEFAULTS,
@@ -244,6 +255,11 @@ def run_one(csv: Path, outdir: Path, quick: bool, kmax: int):
     cfg["batch"]["skip_done"] = False
     cfg["fit"]["quick"] = bool(quick)
     cfg["fit"]["kmax"] = int(kmax)
+    cfg["fit"]["sigma_floor"] = float(sigma_floor or 0.0)
+
+    if k_force is not None:
+        return _run_forced(csv, outdir, cfg, int(k_force), quiet=quiet)
+
     t0 = time.time()
     rec = M.process_one(csv, cfg)
     rec["wall"] = time.time() - t0
@@ -251,6 +267,36 @@ def run_one(csv: Path, outdir: Path, quick: bool, kmax: int):
     rec["result"] = (json.loads(js.read_text(encoding="utf-8"))
                      if js.exists() else None)
     return rec
+
+
+def _run_forced(csv: Path, outdir: Path, cfg: dict, K: int, quiet: bool = False):
+    """固定 K 直接调 bm_real.run，绕开 bmdrt 的 K 扫描与批处理簿记。"""
+    import contextlib
+    import io
+    import bm_real as R
+
+    fit = cfg["fit"]
+    kkcfg = cfg.get("kk") or {}
+    kk_opts = {k: kkcfg[k] for k in ("c", "max_M", "res_tol",
+                                     "auto_L", "auto_tail", "auto_cap")
+               if k in kkcfg}
+    sub = outdir / csv.stem
+    sub.mkdir(parents=True, exist_ok=True)
+    R.OUT = sub
+    R.NULL_CACHE = None
+    t0 = time.time()
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf if quiet else sys.stdout):
+        R.run(str(csv), K_force=K, kmax=int(fit["kmax"]),
+              include_L=fit["include_L"], zeta=str(fit["zeta"]),
+              quick=bool(fit["quick"]), ta=fit["ta"],
+              kk_mode=str(kkcfg.get("mode", "gate")), kk_opts=kk_opts,
+              diag=cfg.get("diag") or {}, drt_opts=cfg.get("drt") or {},
+              sigma_floor=float(fit.get("sigma_floor") or 0.0))
+    js = sub / f"real_{csv.stem}.json"
+    return dict(wall=time.time() - t0, ok=js.exists(),
+                result=(json.loads(js.read_text(encoding="utf-8"))
+                        if js.exists() else None))
 
 
 # --------------------------------------------------------------------------
@@ -316,6 +362,12 @@ def _verdict(t: dict, res: dict, matched: int) -> str:
                 + (f"；选择状态 {st}" if st else ""))
     if st == "rejected":
         return "模型选择被拒绝（无 K 过硬筛选）"
+    if st == "exploratory":
+        # quick 档：采样预算撑不起严格线，"rejected" 不代表模型被否定。
+        # 这里仍然报 K 与分量数，但必须标明不是选择结论。
+        base = (f"K={k}（真值 {t['K']}），对上 {matched} 个分量"
+                if k != t["K"] else "K 与分量数都对上")
+        return f"{base}；**exploratory（quick 档，非选择结论）**"
     if st == "degraded":
         return "降级档（未过严格线）"
     if k == t["K"] and matched == t["K"]:
@@ -344,6 +396,9 @@ def write_report(items, args, path: Path):
          f"- 噪声："
          + (f"注入 {args.noise:.2%}·|Z|（数据集原谱无噪）" if getattr(args, "noise", 0) > 0
             else "**无**（数据集原样；σ 会塌、采样分级不可信）"),
+         f"- 噪声地板："
+         + (f"{args.sigma_floor:.1e}·zmax" if getattr(args, "sigma_floor", 0) > 0
+            else "关闭（σ 无下界）"),
          f"- 生成时间：{time.strftime('%Y-%m-%d %H:%M:%S')}", ""]
 
     L += ["## 总览", "",
@@ -419,6 +474,9 @@ def main(argv=None) -> int:
     ap.add_argument("--noise", type=float, default=0.0,
                     help="注入相对噪声（占 |Z| 的比例），如 0.005 = 0.5%%。"
                          "数据集本身无噪，检验 K 选择时应加噪声")
+    ap.add_argument("--sigma-floor", type=float, default=0.0,
+                    help="噪声地板（相对 zmax），如 1e-4。默认 0 = 关闭。"
+                         "用来切断无噪数据上 σ→0 的漏斗")
     ap.add_argument("--reuse", action="store_true",
                     help="复用已有结果 JSON 重新出报告（不重拟合）")
     ap.add_argument("--kmax", type=int, default=5)
@@ -427,11 +485,14 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     a.src = Path(a.src)
     global OUTBASE
-    # 加了噪声就别往无噪结果目录里写，否则两份结论混在一起没法比
+    # 加了噪声/地板就别往无噪结果目录里写，否则两份结论混在一起没法比
     tag = a.tag
     if a.noise > 0:
         tag = f"{tag}_noise{int(round(a.noise * 1e4))}bp" if tag \
             else f"noise{int(round(a.noise * 1e4))}bp"
+    if a.sigma_floor > 0:
+        tag = f"{tag}_floor{int(round(a.sigma_floor * 1e6))}e6" if tag \
+            else f"floor{int(round(a.sigma_floor * 1e6))}e6"
     if tag:
         OUTBASE = ROOT / "out" / f"ecm_test_{tag}"
 
@@ -472,7 +533,8 @@ def main(argv=None) -> int:
             rec = dict(wall=0.0, result=res, reused=True)
             print(f"    复用已有结果：{'是' if res else '否（缺文件）'}")
         else:
-            rec = run_one(csv, OUTBASE / "res", a.quick, a.kmax)
+            rec = run_one(csv, OUTBASE / "res", a.quick, a.kmax,
+                          sigma_floor=a.sigma_floor)
         cmp = compare(t, rec.get("result"))
         print(f"    → {cmp['verdict']}；KK={cmp.get('kk')}；"
               f"状态={cmp.get('status')}；{rec['wall']:.0f}s")

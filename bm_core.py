@@ -195,11 +195,22 @@ def model_z(f, p, include_L=True):
 def make_model(K: int = 10, alpha: float | None = 1.0, sigma: tuple | None = None,
                include_L: bool = False, pad_dec: float = 1.5,
                zeta_fixed: float | None = None, phi_lo: float = 0.5,
-               diffusion: str | None = None):
+               diffusion: str | None = None, sigma_floor: float = 0.0):
     """alpha=None → 让 α~Exp(1) 进采样（复现论文）；否则固定。
 
     zeta_fixed：把 ζ 钉死（如 1.0 = 纯 ZARC 基底），用于隔离
     "ζ 的自由度是不是采样困难的根源"。None 表示自由。
+
+    sigma_floor：**噪声地板**，相对 `zmax` 的比例（`0.0` = 关闭，逐位等于
+    改动前的行为）。开启后 `s = floor + LogNormal(...)`，即 σ 不可能低于
+    `sigma_floor·zmax`。
+
+    为什么需要它：`s_re/s_im` 原本是**无下界**的 LogNormal。遇到无噪声
+    或近无噪声数据（ECM 正演谱、仿真、极高信噪比测量），只要模型族能精确
+    表示实部，似然就把 σ 一路推向 0 —— 实测落在先验中心下方 12σ，形成
+    σ→0 的漏斗，NUTS 树深饱和（触顶 53%），采样分级掉到 0，K 选择被全判
+    "不可用"。地板把漏斗截断。任何真实测量都有噪声底，所以地板有物理含义，
+    但**具体数值必须按仪器精度标定，不能为了让 R̂ 好看而调**。
 
     diffusion：扩散项，**默认 None = 与改动前逐位一致**。
       · None   基础模型
@@ -282,8 +293,21 @@ def make_model(K: int = 10, alpha: float | None = 1.0, sigma: tuple | None = Non
             Zt = Zt + 1j * omega * L
 
         if sigma is None:
-            s_re = numpyro.sample("s_re", dist.LogNormal(jnp.log(0.01 * zmax), 1.0))
-            s_im = numpyro.sample("s_im", dist.LogNormal(jnp.log(0.01 * zmax), 1.0))
+            if sigma_floor > 0:
+                # 有地板：先采基量，再加地板得到**有效** σ。
+                # `s_re` 用 deterministic 落盘，保证报告里的 sigma 就是
+                # 似然里真正用的那个，不是基量。
+                floor = sigma_floor * zmax
+                b_re = numpyro.sample("s_re_base",
+                                      dist.LogNormal(jnp.log(0.01 * zmax), 1.0))
+                b_im = numpyro.sample("s_im_base",
+                                      dist.LogNormal(jnp.log(0.01 * zmax), 1.0))
+                s_re = numpyro.deterministic("s_re", b_re + floor)
+                s_im = numpyro.deterministic("s_im", b_im + floor)
+            else:
+                # 默认路径：与加 sigma_floor 之前**逐位一致**，不要改。
+                s_re = numpyro.sample("s_re", dist.LogNormal(jnp.log(0.01 * zmax), 1.0))
+                s_im = numpyro.sample("s_im", dist.LogNormal(jnp.log(0.01 * zmax), 1.0))
         else:
             s_re = jnp.asarray(float(sigma[0]))
             s_im = jnp.asarray(float(sigma[1]))
@@ -484,7 +508,8 @@ def fit(f, Z, K: int = 10, alpha: float | None = 1.0, sigma: tuple | None = None
         seed: int = 0, progress: bool = True, num_chains: int = 1,
         target_accept: float = 0.9, zeta_fixed: float | None = None,
         init_values: dict | None = None, max_tree_depth: int = 10,
-        extra_fields: tuple = (), diffusion: str | None = None):
+        extra_fields: tuple = (), diffusion: str | None = None,
+        sigma_floor: float = 0.0):
     """跑 NUTS。
 
     num_chains > 1 时才有 R-hat；单链的 R-hat 恒等于 1，不能当收敛证据。
@@ -498,6 +523,8 @@ def fit(f, Z, K: int = 10, alpha: float | None = 1.0, sigma: tuple | None = None
     （num_steps 不进 get_samples，也不在默认 extra_fields 里）。
 
     diffusion：透传给 `make_model`。None = 基础模型（与改动前逐位一致）。
+
+    sigma_floor：透传给 `make_model`。0.0 = 关闭（默认，行为不变）。
     """
     if not HAS_NUMPYRO:                 # pragma: no cover
         raise ImportError("需要 numpyro 才能采样。纯后处理/自检（bm_check、"
@@ -507,7 +534,8 @@ def fit(f, Z, K: int = 10, alpha: float | None = 1.0, sigma: tuple | None = None
     f = np.asarray(f, float)
     Z = np.asarray(Z, complex)
     m = make_model(K, alpha=alpha, sigma=sigma, include_L=include_L,
-                   zeta_fixed=zeta_fixed, diffusion=diffusion)
+                   zeta_fixed=zeta_fixed, diffusion=diffusion,
+                   sigma_floor=sigma_floor)
     # init_strategy 不能传 None（numpyro 0.19 会走到 substitute(data=None) 分支报
     # "Only one of data or substitute_fn"），只在真要初始化时才加这个 kwarg。
     kw = dict(target_accept_prob=target_accept, max_tree_depth=max_tree_depth)

@@ -596,6 +596,121 @@ def diffusion_resolution(f, s=None, diffusion=None, tol: float = 0.02) -> dict:
 # 自检
 # --------------------------------------------------------------------------
 
+def warburg_band_slope(f, Zs, slope_tol: float = 0.15,
+                       min_dec: float = 1.0) -> dict:
+    """检查模型阻抗是否在**连续频段**上呈 Nyquist 45° 直线。
+
+    为什么需要这一步：`looks_like_warburg()` 只看**单个分量**的 φζ、峰位和
+    R–τ 简并。K≥2 时模型可以改用「多个 φ≈0.5 的分量拼出 45° 段」来逼近
+    扩散尾，这时**没有任何分量是简并的**，逐分量判据必然漏判（实测 4382：
+    真值 `Rs_Ws`，两分量 φζ=0.502/0.501，判 `no`）。
+
+    但「两个分量 φζ≈0.5」本身不足以说明是扩散——一个 `R‖CPE(n=0.5)` 也是
+    φ=0.5。区别在**合成阻抗的几何形状**上，所以直接查形状。
+
+    **用 `d(−Im Z)/d(Re Z)` 而不是 `d log|Z| / d log f`**：后者被串联电阻
+    压平。实测 4382（真值就是半无限 Warburg，R_inf=106 Ω 与扩散幅值同量级）
+    的 `|Z|` 斜率只有 −0.03，看起来完全不像扩散；而 Warburg 的
+    `Z_W = A(jω)^(−1/2)` 满足 `Re = −Im`，即 Nyquist 斜率恒为 1，与
+    `R_inf` 无关（`R_inf` 只是沿实轴平移）。
+
+    参数
+    ----
+    f   : 频率（Hz），要求单调（内部会排序）
+    Zs  : 模型阻抗，形状 (n_samp, n_f) 或 (n_f,)。逐样本算斜率再取中位数，
+          **不要先平均参数再算曲线**（非线性）。
+    slope_tol : 允许偏离 1 的幅度。0.15 → 斜率落在 [0.85, 1.15]。
+    min_dec   : 连续满足条件的最短频段长度（decade）。
+
+    返回 dict：band_dec（最长连续段长度）、f_lo/f_hi、slope_med、frac_band
+    """
+    f = np.asarray(f, float)
+    o = np.argsort(f)
+    f, lf = f[o], np.log10(f[o])
+    Z = np.asarray(Zs, complex)
+    if Z.ndim == 1:
+        Z = Z[None, :]
+    Z = Z[:, o]
+    if f.size < 5:
+        return dict(band_dec=0.0, f_lo=float("nan"), f_hi=float("nan"),
+                    slope_med=float("nan"), frac_band=0.0, usable=False)
+
+    # 以 log f 为参数求两个方向的变化率，再取比值 = d(−Im)/d(Re)。
+    # 不直接用 np.gradient(-Im, Re)：Re 未必随 f 单调（有电感/多弧时）。
+    dre = np.gradient(Z.real, lf, axis=1)
+    dim = np.gradient(-Z.imag, lf, axis=1)
+    # 分母过小（Re 在该点几乎不随 f 变）→ 比值无意义，标记为 nan
+    with np.errstate(divide="ignore", invalid="ignore"):
+        sl = np.where(np.abs(dre) > 1e-12 * np.maximum(np.abs(Z.real).max(axis=1, keepdims=True), 1e-300),
+                      dim / dre, np.nan)
+    slope = np.nanmedian(sl, axis=0)
+    ok = np.isfinite(slope) & (np.abs(slope - 1.0) <= slope_tol)
+
+    # 最长连续 True 段
+    best_len, best_i, i = 0, -1, 0
+    while i < ok.size:
+        if not ok[i]:
+            i += 1
+            continue
+        j = i
+        while j + 1 < ok.size and ok[j + 1]:
+            j += 1
+        if j - i + 1 > best_len:
+            best_len, best_i = j - i + 1, i
+        i = j + 1
+    if best_len < 2:
+        return dict(band_dec=0.0, f_lo=float("nan"), f_hi=float("nan"),
+                    slope_med=float(np.nanmedian(slope)), frac_band=0.0,
+                    usable=False)
+    lo, hi = best_i, best_i + best_len - 1
+    dec = float(lf[hi] - lf[lo])
+    return dict(band_dec=dec, f_lo=float(f[lo]), f_hi=float(f[hi]),
+                slope_med=float(np.nanmedian(slope[lo:hi + 1])),
+                frac_band=float(dec / max(lf[-1] - lf[0], 1e-12)),
+                usable=True)
+
+
+def warburg_multicomponent(sig, band: dict | None, tol_pz: float = 0.04,
+                           min_n: int = 2, min_dec: float = 0.5) -> tuple:
+    """多分量拼 45° 段的**弱识别**。
+
+    返回 `("weak", why)` 或 `("no", why)`。**永远不给 strong**：
+    两个 φζ≈0.5 的分量加上一段 45° 斜率，仍然可能是一个宽化的
+    `R‖CPE(n≈0.5)`，不足以断定是半无限扩散。它的用途是提示人去看，
+    不是改变 K 选择。
+
+    `min_dec` 取 0.5 而不是 1.0：实测用 K 个 `R‖CPE(φ=0.5)` 离散化
+    半无限 Warburg，K=4 只有 0.51 decade、K=6 只有 0.68 decade 落在
+    45°±0.15 内——有限个分量本来就拼不出长段的干净 45°。要求 1 decade
+    会让这条判据永远不触发。段长会写进 why，由人判断。
+
+    `band` 来自 `warburg_band_slope()`；None 表示没算（就只按参数判，
+    此时一律不给 weak，避免只凭参数下结论）。
+    """
+    pinned, inside = [], []
+    for k, s in enumerate(sig or []):
+        if s.get("nonphysical"):
+            continue
+        if abs(float(s.get("pz", 1.0)) - 0.5) <= tol_pz:
+            pinned.append(k)
+            if float(s.get("p_peak_out", 1.0)) < 0.5:
+                inside.append(k)
+    if len(inside) < min_n:
+        return "no", []
+    why = [f"{len(inside)} 个分量 φζ 同时落在 0.5±{tol_pz}（#{'、#'.join(str(k + 1) for k in inside)}），"
+           f"且峰位都在窗口内——逐分量判据看不到这种拼法"]
+    if band is None or not band.get("usable"):
+        return "no", why + ["但没算合成阻抗的斜率，**不据此下结论**"]
+    if band["band_dec"] < min_dec:
+        return "no", why + [f"合成阻抗的 45° 连续段只有 {band['band_dec']:.2f} decade"
+                            f"（要求 ≥{min_dec:.1f}）→ 更像宽化 R‖CPE，不是扩散"]
+    why.append(f"合成阻抗在 {band['f_lo']:.3g}–{band['f_hi']:.3g} Hz 上连续 "
+               f"{band['band_dec']:.2f} decade 呈 {band['slope_med']:+.2f} 斜率"
+               f"（占全带 {band['frac_band']:.0%}）")
+    why.append("**弱识别**：可能是扩散尾被拆成几段近似；不改变 K 选择，需人工确认")
+    return "weak", why
+
+
 def _selftest():
     print("=" * 68)
     print("bm_diff 自检")

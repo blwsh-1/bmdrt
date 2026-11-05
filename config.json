@@ -17,7 +17,18 @@
     "ta": null,
     "include_L": null,
     "zeta": "1.0",
-    "diffusion": "none"
+    "diffusion": "none",
+    "sigma_floor": 0.0
+  },
+
+  "drt": {
+    "_说明": "DRT 去电感数据通道。DRT 是 Tikhonov 非负反演，表示不了 jωL，有感性尾时会在高频边缘长伪峰。deinduce=true 时按四道检查决定是否把 Z−jωL 交给 DRT；**BM-DRT 的似然始终用原始 Z**。min_share 是感抗在 f_max 处占 |Z| 的最小比例（低于它扣了白扣）；tol_stab 是高频 ImZ/ω 的离散度上限 (p90−p10)/median（超过说明高频尾不是干净 ωL）；min_gain 是去电感后 DRT 高频残差至少要降的比例；tol_neg 是扣除后高频 ImZ 允许变负的幅度（超过说明 L 估大、造出容性伪像）。",
+    "deinduce": true,
+    "n_hi": 5,
+    "min_share": 0.005,
+    "tol_stab": 0.35,
+    "min_gain": 0.2,
+    "tol_neg": 0.02
   },
 
   "kk": {

@@ -94,9 +94,12 @@ DEFAULTS = {
     "paths": {"inbox": "inbox", "out": "out", "archive": "archive",
               "rejected": "rejected"},
     "fit": {"krange": None, "wide": False, "kmax": 5, "quick": False,
-            "ta": None, "include_L": None, "zeta": "1.0"},
+            "ta": None, "include_L": None, "zeta": "1.0",
+            "sigma_floor": 0.0},
     "kk": {"mode": "gate", "c": 0.85, "max_M": 50, "res_tol": 0.05,
            "auto_L": True, "auto_tail": True, "auto_cap": True},
+    "drt": {"deinduce": True, "n_hi": 5, "min_share": 5e-3,
+            "tol_stab": 0.35, "min_gain": 0.20, "tol_neg": 0.02},
     "diag": {"corr_strong": 0.90, "corr_medium": 0.70,
              "diff_resolution_tol": 0.02},
     "batch": {"move_done": True, "skip_done": True, "min_points": 8,
@@ -238,6 +241,7 @@ def process_one(path: Path, cfg: dict) -> dict:
                 kkcfg = cfg.get("kk") or {}
                 kk_opts = {k: kkcfg[k] for k in KK_OPT_KEYS if k in kkcfg}
                 dcfg = cfg.get("diag") or {}
+                drtcfg = cfg.get("drt") or {}
                 R.run(str(path), K_force=None,
                       krange=fit["krange"], wide=fit["wide"],
                       kmax=int(fit["kmax"]), include_L=fit["include_L"],
@@ -246,7 +250,9 @@ def process_one(path: Path, cfg: dict) -> dict:
                       diffusion=(None if str(fit.get("diffusion", "none")).lower()
                                  in ("none", "", "null") else str(fit["diffusion"])),
                       kk_mode=str(kkcfg.get("mode", "gate")),
-                      kk_opts=kk_opts, diag=dcfg)
+                      kk_opts=kk_opts, diag=dcfg,
+                      drt_opts=drtcfg,
+                      sigma_floor=float(fit.get("sigma_floor", 0.0) or 0.0))
                 js = outdir / f"real_{stem}.json"
                 rec["ok"] = js.exists()
                 rec["json"] = str(js) if js.exists() else None

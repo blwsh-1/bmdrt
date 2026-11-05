@@ -106,7 +106,7 @@ python bmdrt.py list / config / help
 ```
 --krange 1,4   --wide   --kmax 6   --quick   --ta 0.95
 --L / --no-L   --zeta 1.0|free   --diffusion none|Ws|Wo|both
---kk gate|warn|off
+--kk gate|warn|off   --sigma-floor 1e-4   --no-deinduce
 --no-move      --out DIR   --inbox DIR   --interval 30
 ```
 
@@ -122,6 +122,33 @@ python bmdrt.py list / config / help
 也不是一次成功拟合——`bmdrt.py` 的汇总会把它单独计数，`batch_2e.py`
 不会因此把整批退出码变红。数值阈值（`c` / `max_M` / `res_tol` / `auto_L` /
 `auto_tail` / `auto_cap`）在 `config.json` 的 `kk` 段。
+
+`--sigma-floor` 是**噪声地板**（相对 `zmax`，默认 `0` = 关闭，行为与改动前
+逐位一致）。`s_re/s_im` 原本是无下界的 LogNormal，遇到无噪/近无噪数据会
+一路塌到相对 1e-8，形成 σ→0 的漏斗，NUTS 树深饱和（实测触顶 53%）、
+采样分级掉到 0、K 选择被全判"不可用"。地板把漏斗截断。
+
+> **不要为了让 R̂ 好看而调地板。** 它是数值正则化项，不是测量噪声估计。
+> 真实 2E 谱的 `σ_im/zmax` 在 1e-3–1e-2，1e-4 的地板对它们基本不起作用。
+> 要定值请用 `sweep_sigma_floor.py` 按五档扫描，看参数/K 稳定性、
+> 树深饱和、参数相关性、预测精度五项，而不是只看 R̂。
+
+`--no-deinduce` 关闭 **DRT 去电感通道**（见 §6）。
+
+### 采样状态的四种取值
+
+`k_selection_status` 现在区分四档，**不要把它们混为一谈**：
+
+| 状态 | 含义 |
+|---|---|
+| `converged` | 有 K 通过完整硬筛选（原 `ok`） |
+| `degraded` | 只降到「可用」档，没过硬筛选 |
+| `rejected` | 正式档下所有 K 都被剔除，结果只是相对排序 |
+| `exploratory` | **quick 档专属**：采样预算撑不起严格收敛线，K 与 elpd 都不是选择结论 |
+
+quick 档（800 warmup / 400 采样 / 2 链）与严格线（`tail ESS>400`、`触顶<1%`）
+不在同一个采样预算尺度上，所以它永远不会输出 `rejected`——那会把「预算不足」
+误读成「模型被统计证据否定」。
 
 任何 `cmd_<名字>.py` 里写一个 `run(argv)` 就会自动多一个子命令，无需修改入口。
 
@@ -184,6 +211,52 @@ evidence/b2x/     配对 LOO 事后重算脚本
 - **Ws/Wo 可分辨性** `bm_diff.diffusion_resolution()`：两核在 `ωτ_D≫1` 时同形，
   先判 `f_min < f_D` 且带内最大相对差 > `tol`，否则报「不可分」，
   不许用 elpd 差宣称有限长扩散。
+- **DRT 去电感数据通道** `bm_real.deinduce_for_drt()`：见下。
+- **多分量扩散弱识别** `bm_diff.warburg_band_slope()` + `warburg_multicomponent()`：
+  `looks_like_warburg()` 只看单个分量的 φζ / 峰位 / R–τ 简并；K≥2 时模型可以
+  用「多个 φ≈0.5 的分量拼 45° 段」逼近扩散尾，这条路径它看不到。补一条查
+  **合成阻抗 Nyquist 斜率**（`d(−Im Z)/d(Re Z) ≈ 1`）的弱识别。
+  用 Nyquist 而不是 `d log|Z|/d log f`：后者被串联电阻压平（实测 4382 的
+  `|Z|` 斜率只有 −0.03，Nyquist 是 +0.40）。**只给 `weak`、不改 K 选择**，
+  因为单个宽化的 `R‖CPE(n≈0.5)` 也可能满足。
+
+### DRT 去电感通道
+
+DRT 是 Tikhonov 非负反演，基底 `Σ γ(τ)/(1+jωτ)` **表示不了 `jωL`**。
+有感性尾时它会在高频网格边缘长出一个伪峰去扛，把 K 候选撑大、把峰位挤偏。
+
+所以分两条数据通道：
+
+```
+Z_DRT = Z_raw − jωL_est   →  只喂 drt.prescreen()（K 候选 + 初值）
+Z_raw                     →  喂 BM-DRT 的似然（不能改，否则后验不再是
+                             「给定观测」的后验）
+```
+
+**不能无条件扣**，四道检查全过才扣（阈值在 `config.json` 的 `drt` 段）：
+
+| 检查 | 条件 | 不过时 |
+|---|---|---|
+| 有感抗点 | 最高 5 点里 ≥3 个 `Im Z > 0` | 用原始 Z |
+| 稳定性 | `ImZ/ω` 的 `(p90−p10)/median ≤ 35%` | 保留原始 Z，标记电感干扰 |
+| 占比 | `ω_max·L / |Z(f_max)| ≥ 0.5%` | 扣了白扣，跳过 |
+| 不过扣 | 扣完**最高 3 点** `Im Z ≥ −2%·|Z|` | L 估大，保留原始 Z |
+| 有收益 | DRT 高频段相对残差至少降 20% | 保留原始 Z |
+
+过扣检查只查最高 3 点：`ImZ/ω` 在**高频段下沿**本来就会偏低（容性贡献还没
+衰减完），按 top-5 取最小必然误报（实测 2EMC1-1_0005mA：top-5 最小 −4.78%，
+top-3 是 0.00/+1.13/+1.49%）。
+
+实测效果（真实 2E 谱，f=1–1e5 Hz）：
+
+| 谱 | L_est | `ImZ/ω` 离散度 | f_max 处占比 | DRT 高频残差 |
+|---|---|---|---|---|
+| 2EMC1-1_0005mA | 6.06e-8 H | 7% | 87.3% | 48.54% → **14.65%** |
+| 2EMC1-2_0005mA | 4.32e-8 H | 1% | 96.9% | 63.90% → **12.54%** |
+
+决策（`used` / `L` / 四道检查 / 扣前后残差）全部写进 `real_*.json` 的
+`drt_deinduce` 段，事后可复核。
+
 
 **仍缺**（见 `docs/bmdrt_改动清单与实施计划.md` 的 P2）：
 遮掩不合格点后重跑 KK、跨噪声实现的重复性统计、`(K, diffusion)` 三倍扫描
@@ -215,8 +288,9 @@ evidence/b2x/     配对 LOO 事后重算脚本
 
 **已修复的风险**：`select_k()` 原来的 `pool = ok or usable or list(res_list)`
 在全部模型被硬剔除时仍会输出「相对最好」，等于把相对排序包装成最优 K。
-现在返回 `selection_status ∈ {ok, degraded, rejected, not_compared,
-rejected_by_kk}`，`rejected` 时报告与 JSON 都写明「不输出最优 K 的结论」。
+现在返回 `selection_status ∈ {converged, degraded, rejected, exploratory,
+not_compared, rejected_by_kk}`（旧结果文件里的 `ok` 是 `converged` 的别名），
+`rejected` 时报告与 JSON 都写明「不输出最优 K 的结论」。
 
 **仍存在的限制**：`report_2e.py` 记录该批 117 条谱未做扩散对照——这是
 `batch_2e.py` 没传 `--diffusion` 造成的，不是判据问题。

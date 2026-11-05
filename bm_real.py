@@ -60,9 +60,11 @@ except Exception:                       # pragma: no cover
 try:                                    # K-K 事前门禁；缺了只是少一道体检，不阻断拟合
     from bm_kk import kk_check as _kk_check
     from bm_kk import format_report as _kk_format_report
+    from bm_kk import estimate_L as _kk_estimate_L
 except Exception:                       # pragma: no cover
     _kk_check = None
     _kk_format_report = None
+    _kk_estimate_L = None
 
 try:                                    # 全参数相关矩阵（"别只看误差"那一层）
     import bm_corr as CORR
@@ -204,6 +206,152 @@ def detect_L(f, Z) -> bool:
     """高频端 Im Z > 0 说明有感抗尾巴（−Im Z < 0）。取最高 3 点投票。"""
     hi = np.argsort(f)[-3:]
     return bool(np.mean(Z.imag[hi] > 0) >= 0.5)
+
+
+# --------------------------------------------------------------------------
+# DRT 去电感数据通道
+# --------------------------------------------------------------------------
+# **只影响 DRT 预判，不改 BM-DRT 的似然。** 两者必须分开：
+#   · DRT 是 Tikhonov 非负反演，基底是 Σ γ(τ)/(1+jωτ)，**表示不了 jωL**。
+#     有感性尾时它会在高频网格边缘长出一个伪峰去扛，把 K 候选撑大、
+#     把峰位挤偏。
+#   · BM-DRT 的似然必须用**原始 Z**，否则等于把预处理结论又喂回模型，
+#     后验不再是"给定观测"的后验。
+# 所以：Z_DRT = Z_raw − jωL 只喂 prescreen；fit_one 仍然收 Z_raw。
+#
+# 不能无条件扣。扣多了会在高频造出容性伪像（Im Z 变负），扣的位置不对
+# 会把真实的容性高频弧一起削掉。下面四道检查都过才扣。
+
+def _high_band_resid(res, f, Z, frac: float = 2.0 / 3.0) -> float:
+    """DRT 残差在**高频段**的 RMS（按 log f 上 1/3 切）。
+
+    用 DRT 自己的残差而不是另造一个平滑基准：DRT 就是下游消费者，
+    "扣 L 有没有用"应该由它的拟合能力回答，不该由我们猜。
+
+    **`drt()` 返回的 `resid` 已经是相对量**（`(Z_fit−Z)/|Z|`，见 drt.py:140），
+    这里不能再除一次 `|Z|`。之前多除一次，在 |Z|≈0.03 Ω 的 2E 谱上把残差
+    放大成 1917%，纯属自造。
+    """
+    lf = np.log10(np.asarray(f, float))
+    m = lf >= np.quantile(lf, frac)
+    if int(m.sum()) < 3:
+        return float("nan")
+    r = np.asarray(res["resid"], complex)[m]
+    return float(np.sqrt(np.mean(np.abs(r) ** 2)))
+
+
+def deinduce_for_drt(f, Z, L_est=None, n_hi: int = 5, min_share: float = 5e-3,
+                     tol_stab: float = 0.35, min_gain: float = 0.20,
+                     tol_neg: float = 0.02):
+    """决定 DRT 预判用原始 `Z` 还是去电感后的 `Z_DRT = Z − jωL`。
+
+    参数
+    ----
+    L_est    : 先验电感估计（H）。None 时内部用 `bm_kk.estimate_L` 再算一次。
+    n_hi     : 用最高的几个点估 L。
+    min_share: 感抗在 f_max 处占 |Z| 的最小比例。低于它扣了也白扣，
+               直接跳过（避免为一个 0.1% 的尾巴冒过扣的风险）。
+    tol_stab : `Im Z/ω` 在最高若干点上的**离散度**上限，取
+               `(p90−p10)/median`。超过就说明高频尾不是一个干净的 ωL
+               （混了容性弧或噪声），此时扣 L 不可信。
+    min_gain : 要求去电感后高频段 DRT 相对残差至少降低这个比例才采用。
+    tol_neg  : 扣除后最高频若干点的 `Im Z` 允许为负的幅度（占该点 |Z|）。
+               超过说明 L 估大了、造出了容性伪像。
+
+    返回 dict（全部可 JSON 序列化，`Z` 字段除外）：
+        used / L / reason / checks / resid_high_raw / resid_high_drt
+        edge_high_raw / edge_high_drt / share_max
+    """
+    f = np.asarray(f, float)
+    Z = np.asarray(Z, complex)
+    out = dict(used=False, L=None, reason="", share_max=float("nan"),
+               resid_high_raw=float("nan"), resid_high_drt=float("nan"),
+               edge_high_raw=float("nan"), edge_high_drt=float("nan"),
+               checks={})
+    chk = out["checks"]
+
+    if L_est is None and _kk_estimate_L is not None:
+        try:
+            L_est = _kk_estimate_L(f, Z, n_hi=n_hi)
+        except Exception:                   # noqa: BLE001
+            L_est = None
+    if L_est is None or not np.isfinite(L_est) or L_est <= 0:
+        out["reason"] = "无感抗点（高频 Im Z 不为正），DRT 直接用原始 Z"
+        chk["has_L"] = False
+        return out
+    chk["has_L"] = True
+
+    # ---- ① 稳定性：高频 Im Z/ω 是不是一个常数 ----
+    hi = np.argsort(f)[-min(n_hi, f.size):]
+    w = 2 * np.pi * f[hi]
+    pos = Z.imag[hi] > 0
+    if int(pos.sum()) < 3:
+        out["reason"] = (f"高频只有 {int(pos.sum())} 个感抗点，不足以判稳定性，"
+                         f"DRT 用原始 Z")
+        chk["stable"] = False
+        return out
+    x = Z.imag[hi][pos] / w[pos]
+    med = float(np.median(x))
+    spread = float((np.percentile(x, 90) - np.percentile(x, 10)) / med) if med > 0 else np.inf
+    chk.update(stable=bool(spread <= tol_stab), spread=spread, n_pos=int(pos.sum()))
+
+    # ---- ② 占比：扣了到底有没有影响 ----
+    share = float(w.max() * med / max(abs(Z[np.argmax(f)]), 1e-300))
+    out["share_max"] = share
+    chk["share_ok"] = bool(share >= min_share)
+
+    if not chk["stable"]:
+        out["reason"] = (f"高频 Im Z/ω 离散度 {spread:.0%} > {tol_stab:.0%}，"
+                         f"不像干净的串联电感（可能混了容性弧或噪声）→ "
+                         f"**保留原始 Z**，只标记电感干扰")
+        return out
+    if not chk["share_ok"]:
+        out["reason"] = (f"感抗在 f_max 处仅占 |Z| 的 {share:.2%} < {min_share:.2%}，"
+                         f"扣除无实质影响 → DRT 直接用原始 Z")
+        return out
+
+    # ---- ③ 过扣检查：扣完**最高频** Im Z 不能明显变负 ----
+    # 只查最高 3 点，不能查整个 top-5：Im Z/ω 在**高频段下沿**本来就会偏低
+    # （容性/弛豫贡献还没衰减完），那里扣完必然剩负值，那是物理不是过扣。
+    # 过扣只可能出现在最高频——那里 ωL 占优，L 估大了就直接把 Im Z 压穿。
+    # 实测 2EMC1-1_0005mA：top-5 最小 -4.78%（误报），top-3 是 0.00/+1.13/+1.49%。
+    Zs = Z - 1j * (2 * np.pi * f) * med
+    hi3 = np.argsort(f)[-min(3, f.size):]
+    worst = float(np.min(Zs.imag[hi3] / np.maximum(np.abs(Z[hi3]), 1e-300)))
+    chk["over_correct"] = bool(worst < -tol_neg)
+    chk["worst_resid"] = worst
+    if chk["over_correct"]:
+        out["reason"] = (f"扣除后最高频 Im Z 降到 {worst:.2%}·|Z|（超过 -{tol_neg:.0%}），"
+                         f"L 明显估大 → **保留原始 Z**")
+        return out
+
+    # ---- ④ 收益：DRT 自己的高频残差有没有变好 ----
+    try:
+        res_raw, _, _ = prescreen(f, Z)
+        res_drt, _, _ = prescreen(f, Zs)
+    except Exception as e:                  # noqa: BLE001
+        out["reason"] = f"DRT 试算失败（{type(e).__name__}: {e}）→ 保留原始 Z"
+        return out
+    r_raw = _high_band_resid(res_raw, f, Z)
+    r_drt = _high_band_resid(res_drt, f, Zs)
+    e_raw = float(res_raw.get("edge_high_frac", float("nan")))
+    e_drt = float(res_drt.get("edge_high_frac", float("nan")))
+    out.update(resid_high_raw=r_raw, resid_high_drt=r_drt,
+               edge_high_raw=e_raw, edge_high_drt=e_drt)
+    gain = (r_raw - r_drt) / r_raw if np.isfinite(r_raw) and r_raw > 0 else 0.0
+    chk["gain"] = float(gain)
+    chk["gain_ok"] = bool(gain >= min_gain)
+
+    if not chk["gain_ok"]:
+        out["reason"] = (f"去电感后 DRT 高频残差只降 {gain:.0%}（< {min_gain:.0%}），"
+                         f"收益不足 → DRT 用原始 Z")
+        return out
+
+    out.update(used=True, L=float(med),
+               reason=(f"扣 jωL（L={med:.3g} H，ImZ/ω 离散度 {spread:.0%}，"
+                       f"f_max 处占 |Z| {share:.1%}）后 DRT 高频残差 "
+                       f"{r_raw:.2%}→{r_drt:.2%}（降 {gain:.0%}）"))
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -530,11 +678,14 @@ def init_values(pk, res, K, zeta_fixed=1.0):
 # --------------------------------------------------------------------------
 
 def fit_one(f, Z, K, include_L, zeta, init=None, seed=0, kw=None, diffusion=None,
-            diag=None):
+            diag=None, sigma_floor=0.0):
     """跑一次 NUTS，返回全部指标（不打印、不画图）。
 
     diag：事后诊断阈值（corr_strong / corr_medium / diff_resolution_tol），
     由 config.json 的 diag 段传入；缺省时用模块内置默认值。
+
+    sigma_floor：噪声地板（相对 zmax）。0.0 = 关闭，行为与改动前一致。
+    只在做「无噪合成数据」或「极高信噪比」时才需要开，见 bm_core.make_model。
     """
     diag = diag or {}
     kw = dict(KW) if kw is None else dict(kw)
@@ -542,7 +693,8 @@ def fit_one(f, Z, K, include_L, zeta, init=None, seed=0, kw=None, diffusion=None
     t0 = time.time()
     s, mc = B.fit(f, Z, K=K, alpha=0.5, sigma=None, include_L=include_L,
                   zeta_fixed=(None if zeta == "free" else float(zeta)),
-                  init_values=init, diffusion=diffusion, **kw)
+                  init_values=init, diffusion=diffusion,
+                  sigma_floor=float(sigma_floor or 0.0), **kw)
     dt = time.time() - t0
     ch = mc.get_samples(group_by_chain=True)
 
@@ -598,6 +750,25 @@ def fit_one(f, Z, K, include_L, zeta, init=None, seed=0, kw=None, diffusion=None
                                            float(f.min()), float(f.max()))
             sk["level"], sk["why"] = DIFF.looks_like_warburg(sk)
             sig.append(sk)
+
+    # ---- 多分量拼 45° 段：逐分量判据**看不到**的路径 ----
+    # 实测 4382（真值 Rs_Ws）：两分量 φζ=0.502/0.501，但峰位都在窗内、
+    # 无 R-τ 简并，looks_like_warburg() 判 no。这时模型是用「多个 φ≈0.5
+    # 的分量拼出 45° 段」来逼近扩散尾，逐分量判据的前提不成立。
+    # 补一条查**合成阻抗斜率**的弱识别，只提示、不改 K 选择。
+    wmul = dict(level="no", why=[], band=None)
+    if DIFF is not None and K >= 2:
+        try:
+            n_s = len(s["R_inf"])
+            ii = np.linspace(0, n_s - 1, min(100, n_s)).astype(int)
+            Zm = np.stack([B.model_z(f, _params(s, i, include_L), include_L=include_L)
+                           for i in ii])
+            band = DIFF.warburg_band_slope(f, Zm)
+            lvl, why = DIFF.warburg_multicomponent(sig, band)
+            wmul = dict(level=lvl, why=list(why), band=band)
+        except Exception as e:              # noqa: BLE001  诊断不该让主流程崩
+            wmul = dict(level="no", why=[f"多分量扩散检查失败：{type(e).__name__}"],
+                        band=None)
 
     # ---- 模型选择用哪个口径：**物理峰位** ----
     # 理由：硬筛选的目的是剔除"峰跑到窗口外、面积不可信"的分量，而"峰"在
@@ -675,6 +846,7 @@ def fit_one(f, Z, K, include_L, zeta, init=None, seed=0, kw=None, diffusion=None
         n_frag=n_frag, frac_neg=frac_neg,
         degeneracy=sig,
         n_warburg_like=int(sum(1 for s in sig if s["level"] != "no")),
+        warburg_multi=wmul,
         diffusion=diffusion, param_corr=pc, diffusion_resolution=dres,
         f_lo=float(f.min()), f_hi=float(f.max()), n_pts=int(f.size),
         zmax_obs=zmax_obs, p_diff_small=p_diff_small, diff_amp_key=diff_amp_key,
@@ -726,8 +898,16 @@ def grade(r):
     return (2 if not hard else (1 if not loose else 0)), hard, loose
 
 
-def select_k(res_list):
+def select_k(res_list, exploratory: bool = False):
     """在多个 K 之间选择。四条规则，全部可复核。
+
+    exploratory=True（quick 档）时，最终状态一律改写成 `exploratory`：
+    quick 只有 800 warmup / 400 采样 / 2 链，而严格线要求 `tail ESS>400`、
+    `触顶<1%` —— **这两套设置不在同一个采样预算尺度上**。此时出现
+    `rejected` 只说明采样不够，不说明模型被统计证据否定。用单独的状态名
+    把这两件事分开，避免把"预算不足"读成"模型不合格"。
+
+    状态取值：exploratory | converged | degraded | rejected
 
     1) **硬性剔除**（任一触发即淘汰）：
        · 采样分级 0（R̂/ESS/divergence/触顶 任一越线）
@@ -741,9 +921,10 @@ def select_k(res_list):
     4) 若全部被剔除，仍返回一个 dict（下游 report/plot/save_out 需要它），
        但打上 `selection_status` 并在 note 首条写明「不输出最优 K 的结论」，
        **绝不把「相对最好」包装成「最优」**：
-         ok         有 K 过完整硬筛选
+         converged  有 K 过完整硬筛选（旧结果文件里写作 "ok"）
          degraded   只降到「可用」档（分级≥1 但被物理/峰位/LOO 规则剔除）
          rejected   连「可用」都没有，结果只是相对排序、无物理意义
+         exploratory quick 档专属，见函数开头说明
 
     为什么硬筛选**只认 p_peak_out_max、不认 p_out**：`p_out` 是给人看的
     兼容字段，峰位不可用时会退回 τ 口径；如果拿它做硬筛选，模型选择就
@@ -787,7 +968,9 @@ def select_k(res_list):
 
     usable = [r for r in res_list if r["grade"] >= 1]
     pool = ok or usable or list(res_list)
-    status = "ok" if ok else ("degraded" if usable else "rejected")
+    # 四档命名按审查意见统一：converged / degraded / rejected / exploratory。
+    # 旧结果文件里的 "ok" 视为 converged 的别名，读的时候不用改。
+    status = "converged" if ok else ("degraded" if usable else "rejected")
     if not ok:
         note.append("严格标准下没有 K 全过（分级≥1 但被物理有效性/峰位/LOO "
                     "规则剔除），已降级到「可用」档；下面的选择只是相对最好，"
@@ -814,6 +997,12 @@ def select_k(res_list):
                     f"{deficit(small):.1f} ± {small['dse']:.1f}，"
                     f"小于 max(2, dse) → 按简约优先取 K={small['K']}")
         best = small
+    if exploratory:
+        # quick 档：采样预算与严格线不匹配，把"预算不足"和"模型被否定"分开。
+        note.insert(0, "**exploratory（quick 档）**：本次采样预算（800/400/2 链）"
+                       "撑不起严格收敛线，所以下面的采样分级与 elpd 排名都不能"
+                       "当作模型选择结论。要判 K，请用正式档重跑。")
+        status = "exploratory"
     best["selection_status"] = status
     return best, note
 
@@ -833,6 +1022,9 @@ def report(res, include_L, zeta, f):
     st = r.get("selection_status")
     if st in ("degraded", "rejected"):
         print(f"  ** 模型选择状态 {st}：本结果不是「最优 K」的结论 **")
+    elif st == "exploratory":
+        print("  ** 探索性结果（quick 档）：采样预算不足，K 与 elpd 都不是"
+              "模型选择结论，要引用请用正式档重跑 **")
     tag = {2: "严格通过", 1: "可用（有瑕疵）", 0: "**不可用**"}[r["grade"]]
     print(f"\n=== 拟合（K={K}, ζ={'free' if zeta == 'free' else zeta}"
           f"{', +L' if include_L else ''}, 播种={'是' if r['seeded'] else '否'}, "
@@ -995,6 +1187,9 @@ def judge(res, f, include_L):
     if st == "rejected":
         msg.insert(0, "**模型选择被拒绝**：没有任何 K 通过硬性筛选，"
                       "本次不给出「最优 K」，elpd 排名仅相对、无物理意义。")
+    elif st == "exploratory":
+        msg.insert(0, "**探索性结果（quick 档）**：采样预算撑不起严格收敛线，"
+                      "K 与 elpd 都不是模型选择结论；引用前须用正式档重跑。")
     elif st == "degraded":
         msg.append("模型选择降级：只在「可用」档里做相对比较，"
                    "引用 K 时须说明它没过硬筛选。")
@@ -1006,6 +1201,12 @@ def judge(res, f, include_L):
                         for p in pc["strong"][:3])
         msg.append(f"**参数强相关**：{who}。这些参数只能定出一个组合，"
                    f"单独引用其中一个会被读成「已经定住」，实际没有。")
+
+    # 多分量拼 45° 段：逐分量判据漏掉的那条路径（如真值是纯 Warburg 的谱）。
+    wm = r.get("warburg_multi") or {}
+    if wm.get("level") == "weak":
+        msg.append("**可能是扩散尾被拆成多个分量**：" + "；".join(wm.get("why") or [])
+                   + "。弱识别，不改 K；若要确认，用 --diffusion Ws 跑一次对比。")
 
     # 扩散项：先确认能不能分，再谈比较结果。
     dres = r.get("diffusion_resolution") or {}
@@ -1222,12 +1423,19 @@ def plot_real(name, f, Z, res, pres, pk, pk_all, include_L, path):
 # 主流程
 # --------------------------------------------------------------------------
 
-def prescreen_stage(f, Z):
-    """① 预处理 + 传统 DRT。只产出候选与初值，不产出结论。"""
+def prescreen_stage(f, Z, deind=None):
+    """① 预处理 + 传统 DRT。只产出候选与初值，不产出结论。
+
+    Z 是**交给 DRT 的输入**，可能已经过 `deinduce_for_drt` 扣掉 jωL；
+    BM-DRT 的似然另外收原始 Z。deind 只用于打印这一层做了什么。
+    """
     t0 = time.time()
     pres, pk, pk_all = prescreen(f, Z)
     dt = time.time() - t0
     print(f"\n=== ① DRT 预判断（{dt * 1000:.0f} ms, λ={pres['lam']:.3g}） ===")
+    if deind is not None:
+        tag = "**已扣 jωL**" if deind.get("used") else "原始 Z"
+        print(f"  DRT 输入：{tag} —— {deind.get('reason', '')}")
     print(f"  原始 {len(pk_all)} 峰 → 频段内且 ≥2% 面积 {len(pk)} 个"
           f"（这是**候选**，不是 K 的定值）")
     for p in pk:
@@ -1311,9 +1519,13 @@ def save_out(stem, f, Z, res, pres, include_L, zeta, tips, K_sel_note):
         k_selection_status=res.get("selection_status"),
         param_corr=res.get("param_corr"),
         diffusion_resolution=res.get("diffusion_resolution"),
+        # DRT 去电感通道的决策（used/L/四道检查/扣前后残差）+ 噪声地板
+        drt_deinduce=res.get("drt_deinduce"),
+        sigma_floor=res.get("sigma_floor"),
         # 扩散项：写进 json 才能让 status / 事后复核不重跑就看得到
         diffusion=res.get("diffusion"),
         n_warburg_like=res.get("n_warburg_like", 0),
+        warburg_multi=res.get("warburg_multi"),
         p_diff_small=res.get("p_diff_small"),
         zmax_obs=res.get("zmax_obs"),
         # 模型选择实际用到的字段，单独记一份，免得事后只能从 p_out 反推：
@@ -1352,12 +1564,17 @@ def save_out(stem, f, Z, res, pres, include_L, zeta, tips, K_sel_note):
 
 def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
         include_L=None, zeta="1.0", dry=False, quick=False, ta=None,
-        diffusion=None, kk_mode="gate", kk_opts=None, diag=None):
+        diffusion=None, kk_mode="gate", kk_opts=None, diag=None,
+        drt_opts=None, sigma_floor=0.0):
     """kk_mode: gate(fail 即拒绝定 K) | warn(只报告) | off(不跑门禁)。
     kk_opts 是传给 kk_check 的数值参数（c/max_M/res_tol/auto_L/...），
     不在代码里写死，由 config.json 统一管。
     diag 同理：事后诊断阈值（相关矩阵 / 扩散可分辨性），来自 config.json。
+    drt_opts 是 DRT 去电感通道的阈值（min_share/tol_stab/min_gain/tol_neg）。
+    sigma_floor 是噪声地板（相对 zmax），0.0 = 关闭。
     """
+    drt_opts = drt_opts or {}
+    sigma_floor = float(sigma_floor or 0.0)
     diag = diag or {}
     print(f"\n=== 读数据 {path} ===")
     f, Z = load_spectrum(path)
@@ -1391,7 +1608,26 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
             print(f"  结果：{js}")
             return None
 
-    pres, pk, pk_all, _ = prescreen_stage(f, Z)
+    # ---- ⓪b DRT 去电感数据通道 -------------------------------------
+    # 只决定**交给 DRT 的那份数据**。BM-DRT 的似然在下面仍然收原始 Z。
+    deind = None
+    Z_drt = Z
+    if drt_opts.get("deinduce", True) and _kk_estimate_L is not None:
+        try:
+            deind = deinduce_for_drt(
+                f, Z, L_est=(kk or {}).get("L_est"),
+                n_hi=int(drt_opts.get("n_hi", 5)),
+                min_share=float(drt_opts.get("min_share", 5e-3)),
+                tol_stab=float(drt_opts.get("tol_stab", 0.35)),
+                min_gain=float(drt_opts.get("min_gain", 0.20)),
+                tol_neg=float(drt_opts.get("tol_neg", 0.02)))
+            if deind.get("used"):
+                Z_drt = Z - 1j * (2 * np.pi * f) * float(deind["L"])
+        except Exception as e:              # noqa: BLE001
+            deind = dict(used=False, L=None, checks={},
+                         reason=f"去电感通道异常，已跳过：{type(e).__name__}: {e}")
+
+    pres, pk, pk_all, _ = prescreen_stage(f, Z_drt, deind=deind)
     K_drt = max(1, min(len(pk), kmax))
 
     if dry:
@@ -1431,7 +1667,7 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
         init = init_values(pk, pres, K) if pk else None
         print(f"\n  --- K={K} 拟合中（播种={'是' if init else '否'}）---")
         r = fit_one(f, Z, K, include_L, zeta, init=init, kw=kw,
-                    diffusion=diffusion, diag=diag)
+                    diffusion=diffusion, diag=diag, sigma_floor=sigma_floor)
         print(f"      {r['t']:.0f}s  R̂max={r['rhat_max']:.3f} "
               f"bulk={r['bulk_min']:.0f} tail={r['tail_min']:.0f} "
               f"div={r['ndiv']} 触顶={r['tds']['frac_cap'] * 100:.1f}% "
@@ -1450,16 +1686,19 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
         cols = [c for c in ("rank", "elpd_loo", "elpd_diff", "dse", "weight", "p_loo")
                 if c in df.columns]
         print(df[cols].to_string(float_format=lambda v: f"{v:.1f}"))
-        best, note = select_k(res_list)
+        best, note = select_k(res_list, exploratory=bool(quick))
         print("\n  规则：① 硬性剔除（分级0 / P(峰位出窗)>0.5 / 峰位诊断不可用 /"
               " φζ>1 超 1% / Pareto-k>0.7 超 10%）"
               "② elpd 最大 ③ 差 < max(2, dse) 取更小 K")
         for t in note:
             print(f"    · {t}")
-        st = best.get("selection_status", "ok")
+        st = best.get("selection_status", "converged")
         if st == "rejected":
             print("  → **没有可信的 K**：下面的 elpd 排序仅相对、无物理意义，"
                   "不输出最优 K 结论")
+        elif st == "exploratory":
+            print(f"  → 探索性结果 K={best['K']}（quick 档，**不是模型选择结论**；"
+                  f"正式档重跑后再引用）")
         else:
             extra = "，且仅来自「可用」降级档" if st == "degraded" else ""
             print(f"  → **K={best['K']}**（只在 {ks[0]}..{ks[-1]} 内最优{extra}）")
@@ -1470,6 +1709,10 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
 
     if kk is not None:
         best["kk"] = kk
+    # DRT 去电感通道的决策 + 噪声地板：必须落盘，否则事后无法复核
+    # "这次 DRT 用的是原始 Z 还是扣过 L 的 Z"、"σ 有没有被地板截住"。
+    best["drt_deinduce"] = deind
+    best["sigma_floor"] = sigma_floor
 
     report(best, include_L, zeta, f)
     tips = judge(best, f, include_L)
@@ -1527,6 +1770,13 @@ def main():
                     help="拟合前 Lin-KK 门禁：gate=判 fail 就拒绝定 K（默认）/ "
                          "warn=只报告仍拟合 / off=完全跳过。"
                          "数值阈值走 config.json 的 kk 段")
+    ap.add_argument("--sigma-floor", type=float, default=None,
+                    help="噪声地板（相对 zmax），如 1e-4。默认 0 = 关闭。"
+                         "只对无噪/近无噪数据有意义；开启后 σ 不会低于该值，"
+                         "用来切断 σ→0 的漏斗。真实数据请按仪器精度标定，"
+                         "不要为了让 R̂ 好看而调")
+    ap.add_argument("--no-deinduce", action="store_true",
+                    help="关闭 DRT 去电感通道，DRT 直接用原始 Z（对照用）")
     a = ap.parse_args()
     if a.zeta == "free":
         print("** --zeta free：HN 的解析 DRT 在 ζφ>1 时会出负值，"
@@ -1534,7 +1784,9 @@ def main():
     diff = None if a.diffusion == "none" else a.diffusion
     run(a.csv, K_force=a.K, krange=a.krange, wide=a.wide, kmax=a.kmax,
         include_L=a.L, zeta=a.zeta, dry=a.dry, quick=a.quick, ta=a.ta,
-        diffusion=diff, kk_mode=a.kk)
+        diffusion=diff, kk_mode=a.kk,
+        drt_opts={"deinduce": not a.no_deinduce},
+        sigma_floor=(a.sigma_floor or 0.0))
 
 
 if __name__ == "__main__":
