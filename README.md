@@ -161,10 +161,18 @@ evidence/b2x/     配对 LOO 事后重算脚本
 Lin-KK / K-K 因果性体检、低频扩散尾的显式路由、遮掩不合格点后重跑。
 项目内 `AutoECM/validate_fit.py:lin_kk()` 是可复用的现成实现（需 `impedance` 包）。
 
+> **KK 是事前门禁，不是事后诊断。** 见 `docs/手动拟合实践者建议_与BM-DRT对照评估.md`：
+> 数据不满足因果/线性/稳定时，增加 K 只会更会贴噪声，PSIS-LOO 只能在
+> 「似然假设成立」的前提下比较模型。本仓库目前诊断层很全（acf / 趋势 / PPC /
+> 峰位 / 脊线 / R̂ / ESS），但没有任何一道前置有效性检查。
+
 > 关于低频：本仓库**不使用 DCT**。DCT 是导纳域的电容时间分布，
 > 不是低频专用工具；在阻抗域正确做法是把
 > `(K, diffusion=none) / (K, diffusion=Ws) / (K, diffusion=Wo)`
 > 纳入同一套 LOO 模型比较。详见 `docs/低频数据是否用DCT_结论.md`。
+> **前置条件**：本批实测谱 `f_min ≈ 1 Hz`，而 `W_open/W_short` 只在
+> `f ≲ f_D = 1/(2πτ_D)` 才偏离半无限 Warburg；频段不够时三者不可分，
+> 应报告「不可分」而不是选出「最优扩散模型」（`bm_diff.py:39-42,503-511`）。
 
 **已知风险**：`bm_real.select_k()` 中的
 `pool = ok or usable or list(res_list)` 在全部模型被硬剔除时仍会输出相对最好结果；
@@ -181,6 +189,7 @@ Lin-KK / K-K 因果性体检、低频扩散尾的显式路由、遮掩不合格�
 | `docs/低频数据是否用DCT_结论.md` | DRT / DCT / DDC / DDT 术语澄清与低频决策 |
 | `docs/EIS-DRT数据预处理_方法与文献.md` | 11 类预处理方法、作用、18 条文献、SOP |
 | `docs/幺的科研路_DRT阻抗数据处理方法整理.md` | RelaxIS 3 / Nova / EIS Spectrum Analyser 等工作流整理 |
+| `docs/手动拟合实践者建议_与BM-DRT对照评估.md` | KK 门禁、参数相关性与置信区间、CPE-n 物理含义、三类难谱，逐条对照本仓库代码 |
 
 `evidence/b2x/paired_loo.py` 用于跨配置配对 LOO：
 `bmdrt.py auto --krange 1,1` 只跑一个模型，占位 `elpd_diff/dse` 需事后从 `samples.npz` 重算。
