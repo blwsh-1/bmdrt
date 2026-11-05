@@ -37,7 +37,8 @@ inevitable contributions from the measurement system"。返回值
 分级判定的关键：中段才是主证据
 ------------------------------
     1. 原谱做 Lin-KK，按 **log f 三分**统计复相对残差 RMS；
-    2. 低频若有 −45° 尾 / 低频残差超阈 → 用 `add_cap=True` 在同一频率网格复验；
+    2. 低频若有扩散尾候选（`|Z|` 斜率 **且** Nyquist 45° 双判据成立）/ 低频残差超阈
+       → 用 `add_cap=True` 在同一频率网格复验；
     3. **只允许 add_cap 放宽低频段**：`rms_clean["low"]` 取 raw/cap 更优者；
        `mid` / `high` 一律用 raw。这样 add_cap 绝不可能把一段真实的
        中段不自洽"吸收"掉，门禁不会被自己引入的自由度骗过；
@@ -200,10 +201,17 @@ def _residual_structure(f, r: dict) -> dict:
 
     必须**实部与虚部同时**系统性才算：只在一个分量上平滑，往往只是
     加噪谱在低 |Z| 端被相对残差放大，或 Lin-KK 基底表达力不足。
+
+    **lag-1 只在频率点近似对数等间距时才成立。** 原始扫描通常是对数等间距，
+    但清洗后的数据常有合并/剔除，相邻两点的频率跨度可能差好几倍；这时
+    "跨 3 decade 的一对"和"跨 0.05 decade 的一对"被同等对待，自相关就失真。
+    处理：只保留间距落在中位间距 [0.5, 2] 倍内的相邻对；不足 3 对时退回全部
+    （并保持原判据不变，避免在稀疏谱上悄悄换判据）。
     """
     nan = float("nan")
     out = {"ac1_re": nan, "ac1_im": nan, "scr_re": nan, "scr_im": nan,
-           "rms_re": nan, "rms_im": nan, "systematic": False}
+           "rms_re": nan, "rms_im": nan, "systematic": False,
+           "n_pairs": 0, "spacing_uniform": True}
     if "res_re" not in r or f is None:
         return out
     lf = np.log10(np.asarray(f, float))
@@ -211,19 +219,34 @@ def _residual_structure(f, r: dict) -> dict:
     m = (lf > q1) & (lf <= q2)
     if int(m.sum()) < 5:
         m = np.ones(lf.size, bool)
+
+    # 间距筛选：只留对数间距与中位数可比的相邻对
+    dlf = np.diff(lf[m])
+    pair = np.ones(dlf.size, bool)
+    if dlf.size >= 4:
+        med = float(np.median(dlf))
+        if med > 0:
+            pair = (dlf >= 0.5 * med) & (dlf <= 2.0 * med)
+            out["spacing_uniform"] = bool(pair.mean() >= 0.8)
+    if int(pair.sum()) < 3:
+        pair = np.ones(dlf.size, bool)      # 太稀疏就别筛，保持旧行为
+        out["spacing_uniform"] = False
+    out["n_pairs"] = int(pair.sum())
+
     for name, key in (("re", "res_re"), ("im", "res_im")):
         x = np.asarray(r[key], float)[m]
         rms = float(np.sqrt(np.mean(x ** 2)))
         out[f"rms_{name}"] = rms
         if x.size < 4:
             continue
-        sd = float(np.std(x))
+        a, b = x[:-1][pair], x[1:][pair]
+        sd = float(np.std(np.concatenate([a, b])))
         if sd <= 1e-30:
             ac1 = 1.0 if rms > 1e-30 else 0.0
         else:
-            ac1 = float(np.corrcoef(x[:-1], x[1:])[0, 1])
+            ac1 = float(np.corrcoef(a, b)[0, 1])
         out[f"ac1_{name}"] = ac1
-        out[f"scr_{name}"] = float(np.mean(np.sign(x[:-1]) != np.sign(x[1:])))
+        out[f"scr_{name}"] = float(np.mean(np.sign(a) != np.sign(b)))
     out["systematic"] = bool(out["ac1_re"] > 0.5 and out["ac1_im"] > 0.5)
     return out
 
@@ -252,30 +275,153 @@ def estimate_L(f, Z, n_hi: int = 5):
     return L if np.isfinite(L) and L > 0 else None
 
 
-def diffusion_tail_cut(f, Z, frac: float = 0.25, min_keep: int = 16):
-    """识别低频 −45° 扩散尾，返回 (建议截断点 f_cut, 斜率)。
+def nyquist_slope_low(f, Z, frac: float = 0.25, min_re_span: float = 0.01):
+    """低频段 Nyquist 斜率，用 `−Im Z` 对 `Re Z` 做**最小二乘**直线拟合。
 
-    判据：最低 `frac` 比例的点上 `log|Z| ~ log f` 斜率接近 −0.5
-    （半无限 Warburg 的 `|Z| ∝ f^(-1/2)`）。含 R_inf 时斜率会偏缓，
-    放宽到 [-0.85, -0.20]。
+    半无限 Warburg `Z_W = A(jω)^(−1/2)` 满足 `Re = −Im`，斜率 = **+1**
+    （Nyquist 图上的 45° 直线）。
 
-    **只作诊断**：本门禁改用 `add_cap=True` 复验而不丢点，
-    见模块 docstring。返回值仍保留给后续「低频截断敏感性分析」用。
+    两个实现选择都是踩过坑才定的：
+
+    * **不除以 `d Re/d log f`**：`Re` 饱和（阻塞电极、`Wo` 低频平台）时
+      分母趋 0，比值法直接炸成 ±∞（实测 `caseF_wo` +21、`caseG` −30，
+      符号还随 `frac` 翻转）。最小二乘对分母不敏感。
+    * **不用 `d log|Z| / d log f ≈ −0.5`**：那个量会被串联 `R_inf` 压平。
+      实测 `caseE_warburg`（真值含 `Ws`）`|Z|` 斜率只有 −0.02，
+      因为 40 Ω 的实部把 2.5 Ω 的 Warburg 淹了。
+
+    返回 `(slope, re_span_rel, stability)`：
+        slope        最小二乘斜率；`Re` 跨度不足时为 None（斜率无定义）
+        re_span_rel  该段 `Re` 跨度 / `|Z|max`，用来看这个斜率可不可信
+        stability    逐点斜率落在 1±0.35 的比例（噪声大时会很低）
     """
     f, Z = np.asarray(f, float), np.asarray(Z, complex)
+    n_low = max(4, int(round(f.size * frac)))
+    idx = np.argsort(f)[:n_low]
+    re, im = Z.real[idx], -Z.imag[idx]
+    zmax = max(float(np.max(np.abs(Z[idx]))), EPS)
+    span = float(re.max() - re.min())
+    rel = span / zmax
+    if span <= min_re_span * zmax:
+        # Re 基本不动：Nyquist 斜率没有定义（不是"斜率=0"）
+        return None, rel, None
+    try:
+        b = float(np.polyfit(re, im, 1)[0])
+    except Exception:                          # noqa: BLE001
+        return None, rel, None
+    lf = np.log10(np.maximum(f[idx], EPS))
+    dre = np.gradient(re, lf)
+    dim = np.gradient(im, lf)
+    ok = np.abs(dre) > 1e-9 * zmax
+    stab = float(np.mean(np.abs(dim[ok] / dre[ok] - 1.0) <= 0.35)) if ok.any() else None
+    return (b if np.isfinite(b) else None), rel, stab
+
+
+def diffusion_tail_candidate(f, Z, frac: float = 0.25, min_keep: int = 16,
+                             slope_lo: float = -0.85, slope_hi: float = -0.20,
+                             ny_tol: float = 0.35):
+    """低频扩散尾**候选**（诊断量，不截断任何数据点）。
+
+    两条判据必须同时成立才给出"候选"：
+
+      A. 幅度判据：最低 `frac` 段的 `log|Z| ~ log f` 斜率 ∈ [slope_lo, slope_hi]；
+      B. 相位判据：同段 Nyquist 斜率 `d(−Im)/d(Re)` ∈ 1 ± `ny_tol`。
+
+    **两条都只是必要条件，不是充分条件。** 这一点必须写清楚，因为：
+      · **任何一条圆弧的下降段都会经过 45°**。实测 `example_caseE.csv`
+        （无扩散元件）最低 10% 段 Nyquist 斜率 +1.02、逐点稳定度 1.00，
+        跨度占 `|Z|` 的 10% —— 只看相位判据会判成扩散尾。
+        它之所以被挡掉，靠的是幅度判据（`|Z|` 斜率 −0.03）。
+      · 审查意见提到的「单个 `R‖CPE(n=0.5)` 也有 φ=45°」同理：45° 不是
+        扩散阻抗独有的签名。本次实测窄窗口（`f` 跨 4 个数量级、
+        `τ=0.16 s`、`φ=0.5`）里最低 25% 落在弧的已弛豫段（斜率 −0.78），
+        没有复现假阳性；但这只是"没测到"，不是"不会发生"。
+
+    所以函数名叫 `candidate`：它能**否证**（斜率对不上就不是扩散尾），
+    不能**确认**。真正确认要靠"在连续频段上停在 45°"以及窗口外扩散的
+    物理约束（见 `bm_diff.warburg_band_slope` 的多点判据）。
+
+    A 会漏掉被 `R_inf` 淹没的短尾：`caseE_warburg`（真值 `R∞=10+ZARC+Ws`，
+    `A_W=2`）在 0.1 Hz 的 Warburg 只有 2.5 Ω，而实部 40 Ω，
+    `|Z|` 斜率 −0.02 → A 不成立 → 返回"无候选"。这是**保守的漏报**，
+    不会造成误判为扩散尾。
+
+    返回 dict：
+        f_cut         候选截断点（Hz）；A 不成立时为 None。**仅诊断，不截断**
+        slope_z       幅度判据的斜率
+        slope_ny      相位判据的斜率（None = `Re` 跨度不足，斜率无定义）
+        ny_span       该段 `Re` 跨度 / `|Z|`，判断 slope_ny 可信度
+        ny_stability  逐点斜率落在 45°±0.35 的比例
+        amp_ok        幅度判据（对 `R_inf` 敏感：会被压平）
+        phase_ok      相位判据（对 `R_inf` 免疫：平移不改斜率）
+        is_candidate  两条同时成立（**必要不充分**）
+        why           人类可读说明
+
+    两条判据各有一个方向的盲区，**不要**拿单条去下结论：
+      · 幅度成立、相位不成立 → 不是扩散尾（`caseF_wo`：|Z| −0.54 但 Ny +21）；
+      · 相位成立、幅度被 `R_inf` 压平 → **本地判不了**。
+        实测 `10 + 2(jω)^(−1/2)` 的 Ny 斜率 +1.00、`|Z|` 斜率只有 −0.11，
+        而 `caseE`（无扩散元件）在同一窗口是 Ny +1.02、`|Z|` −0.03 ——
+        两者在最低 25% 段**形态相同**，区别只在"45° 能持续多宽"。
+        持续性属于频段判据，交给 `bm_diff.warburg_band_slope`。
+    """
+    f, Z = np.asarray(f, float), np.asarray(Z, complex)
+    out = dict(f_cut=None, slope_z=None, slope_ny=None, ny_span=None,
+               ny_stability=None, amp_ok=False, phase_ok=False,
+               is_candidate=False, why=[])
     n = f.size
     n_low = max(4, int(round(n * frac)))
     if n - n_low < min_keep:
-        return None, None
+        out["why"].append(f"点数不足（{n} 点，最低段 {n_low} 点），不做扩散尾判断")
+        return out
+
     idx = np.argsort(f)[:n_low]
-    lf, lz = np.log10(f[idx]), np.log10(np.maximum(np.abs(Z[idx]), EPS))
+    lf, lz = np.log10(np.maximum(f[idx], EPS)), np.log10(np.maximum(np.abs(Z[idx]), EPS))
     try:
         slope = float(np.polyfit(lf, lz, 1)[0])
     except Exception:                          # noqa: BLE001
-        return None, None
-    if not (-0.85 <= slope <= -0.20):
-        return None, slope
-    return float(f[idx][-1]), slope
+        return out
+    ny, span, stab = nyquist_slope_low(f, Z, frac)
+    out.update(slope_z=slope, slope_ny=ny, ny_span=span, ny_stability=stab)
+
+    amp_ok = bool(slope_lo <= slope <= slope_hi)
+    pha_ok = bool(ny is not None and abs(ny - 1.0) <= ny_tol)
+    out.update(amp_ok=amp_ok, phase_ok=pha_ok)
+
+    if amp_ok:
+        out["f_cut"] = float(f[idx][-1])
+    ny_txt = f"{ny:+.2f}" if ny is not None else "无定义"
+    if amp_ok and pha_ok:
+        out.update(is_candidate=True,
+                   why=[f"幅度斜率 {slope:+.2f} 且 Nyquist 斜率 {ny_txt}"
+                        f"（45°±{ny_tol:.2f}，Re 跨度 {span:.1%}·|Z|）"
+                        f"→ **扩散尾候选**（必要不充分）"])
+    elif amp_ok:
+        out["why"].append(
+            f"幅度斜率 {slope:+.2f} 落在扩散区间，但 Nyquist 斜率 {ny_txt}"
+            f"（Re 跨度 {span:.1%}·|Z|）偏离 45° → **不判扩散尾**；"
+            f"更可能是串联电阻压平 / 窗口边缘容性衰减 / 单条弧的下降段")
+    elif pha_ok:
+        out["why"].append(
+            f"Nyquist 斜率 {ny_txt} 在 45°±{ny_tol:.2f} 内，但幅度斜率 "
+            f"{slope:+.2f} 不在 [{slope_lo:.2f}, {slope_hi:.2f}]"
+            f"（Re 跨度 {span:.1%}·|Z|）→ **本地无法判定**："
+            f"可能是被 R_inf 压平的短尾，也可能是未闭合弧的下降段"
+            f"（两者在此窗口形态相同）。持续性请查频段判据")
+    else:
+        out["why"].append(
+            f"幅度斜率 {slope:+.2f}、Nyquist 斜率 {ny_txt}，两判据都不成立")
+    return out
+
+
+def diffusion_tail_cut(f, Z, frac: float = 0.25, min_keep: int = 16):
+    """**已弃用**，保留仅为兼容旧调用；请用 `diffusion_tail_candidate()`。
+
+    旧版只凭 `|Z|` 斜率断言「−45° 扩散尾」，是过度断言（见新函数 docstring）。
+    这里只回传 `(f_cut, slope_z)`，语义与原版一致，但**不再**代表"确认是扩散尾"。
+    """
+    c = diffusion_tail_candidate(f, Z, frac=frac, min_keep=min_keep)
+    return c["f_cut"], c["slope_z"]
 
 
 # --------------------------------------------------------------------------
@@ -297,8 +443,10 @@ def kk_check(f, Z, include_L=None, c: float = 0.85, max_M: int = 50,
         residual_structure  中段残差 ac1/符号变化率/systematic
         L_fit         Lin-KK 自身拟出的串联电感（H）
         L_est         高频 Im Z/ω 稳健估计（H），None 表示没有感抗点
-        f_cut         低频 −45° 尾建议截断点（Hz），**仅诊断不截断**
-        tail_slope    低频 log|Z|~log f 斜率
+        f_cut         低频扩散尾**候选**截断点（Hz），**仅诊断不截断**
+        tail_slope    低频 `log|Z|~log f` 斜率（幅度判据）
+        tail          `diffusion_tail_candidate()` 的完整返回（含 Nyquist 斜率、
+                      `Re` 跨度与 `is_candidate`；两条判据只是必要不充分）
         attribution   归因字符串列表
         n / f_min / f_max
 
@@ -319,7 +467,7 @@ def kk_check(f, Z, include_L=None, c: float = 0.85, max_M: int = 50,
     base = dict(status="ok", reason="", mu=None, M=None, mu_converged=None,
                         rms_raw=None, rms_cap=None, rms_clean=None,
                 residual_structure=None, res_tol=float(res_tol),
-                L_fit=None, L_est=None, f_cut=None, tail_slope=None,
+                L_fit=None, L_est=None, f_cut=None, tail_slope=None, tail=None,
                 attribution=[], n=int(f.size),
                 f_min=float(f.min()), f_max=float(f.max()))
 
@@ -348,8 +496,10 @@ def kk_check(f, Z, include_L=None, c: float = 0.85, max_M: int = 50,
 
     # ---- 端部诊断量（不改写数据）----
     L_est = estimate_L(f, Z) if (auto_L and include_L is not False) else None
-    f_cut, slope = diffusion_tail_cut(f, Z) if auto_tail else (None, None)
-    base.update(L_est=L_est, f_cut=f_cut, tail_slope=slope)
+    tail = diffusion_tail_candidate(f, Z) if auto_tail else None
+    f_cut = (tail or {}).get("f_cut")
+    slope = (tail or {}).get("slope_z")
+    base.update(L_est=L_est, f_cut=f_cut, tail_slope=slope, tail=tail)
 
     # ---- 低频扩散尾：add_cap 在同一网格复验，不丢点 ----
     rms_cap = None
@@ -374,11 +524,23 @@ def kk_check(f, Z, include_L=None, c: float = 0.85, max_M: int = 50,
     # ---- 归因 ----
     attr = []
     if rms_cap is not None and rms_cap["low"] < rms_raw["low"]:
-        attr.append(
-            f"低频 −45° 扩散尾（斜率 "
-            f"{slope if slope is not None else float('nan'):.2f}）："
-            f"Lin-KK 加串联电容后低频残差 {rms_raw['low']:.1%} → "
-            f"{rms_cap['low']:.1%}，未丢弃数据点")
+        # 不能因为「加串联电容后低频变好了」就说是扩散尾——add_cap 只是在
+        # 低频端给了一个额外的自由发散项，能吸收很多种端部效应。
+        # 只有 Nyquist 45° 成立时才用"扩散尾"这个词。
+        ny = (tail or {}).get("slope_ny")
+        ny_txt = f"{ny:+.2f}" if ny is not None else "无定义"
+        if (tail or {}).get("is_candidate"):
+            attr.append(
+                f"低频扩散尾候选（Nyquist 斜率 {ny_txt}≈45°，|Z| 斜率 "
+                f"{slope if slope is not None else float('nan'):+.2f}）："
+                f"Lin-KK 加串联电容后低频残差 {rms_raw['low']:.1%} → "
+                f"{rms_cap['low']:.1%}，未丢弃数据点")
+        else:
+            attr.append(
+                f"低频端部被串联电容解释（残差 {rms_raw['low']:.1%} → "
+                f"{rms_cap['low']:.1%}），但 Nyquist 斜率 {ny_txt}"
+                f"（|Z| 斜率 {slope if slope is not None else float('nan'):+.2f}）"
+                f"→ **未达 45°，不判为扩散尾**；归因为窗口外端部效应即可")
         if cap.get("C_fit") is not None:
             attr.append(f"  等效串联电容 C={cap['C_fit']:.3g} F（仅为 KK 校验用，非物理元件）")
     if L_est is not None:
@@ -467,6 +629,16 @@ def format_report(g: dict) -> str:
             lines.append(f"    Lin-KK 自由串联电感 L_fit={g['L_fit']:.3g} H"
                          + (f"（高频稳健估计 L={g['L_est']:.3g} H）"
                             if g.get("L_est") is not None else ""))
+        tl = g.get("tail") or {}
+        if tl.get("slope_z") is not None:
+            ny = tl.get("slope_ny")
+            lines.append(
+                f"    低频端部：|Z| 斜率 {tl['slope_z']:+.2f}，Nyquist 斜率 "
+                + (f"{ny:+.2f}" if ny is not None else "无定义")
+                + (f"（Re 跨度 {tl['ny_span']:.1%}·|Z|）"
+                   if tl.get("ny_span") is not None else "")
+                + ("  → 45° 扩散尾候选（必要不充分）" if tl.get("is_candidate")
+                   else "  → 不判扩散尾"))
     for a in g.get("attribution", []):
         lines.append(f"    · {a}")
     return "\n".join(lines)
