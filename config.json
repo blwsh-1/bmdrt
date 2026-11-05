@@ -1,0 +1,35 @@
+{
+  "_说明": "bmdrt 的唯一配置文件。改这里就不必每次敲命令行参数；命令行只做临时覆盖。",
+
+  "paths": {
+    "inbox": "inbox",
+    "out": "out",
+    "archive": "archive",
+    "rejected": "rejected"
+  },
+
+  "fit": {
+    "_说明": "krange=null 表示按 DRT 预判断自动取 [K_drt-1, K_drt+1]；wide=true 则扫 1..kmax",
+    "krange": null,
+    "wide": false,
+    "kmax": 5,
+    "quick": false,
+    "ta": null,
+    "include_L": null,
+    "zeta": "1.0",
+    "diffusion": "none"
+  },
+
+  "batch": {
+    "_说明": "move_done=true 会把跑完的输入移到 archive/；skip_done=true 跳过已出结果的文件",
+    "move_done": true,
+    "skip_done": true,
+    "min_points": 8,
+    "min_decades": 1.0,
+    "ext": [".csv", ".tsv", ".txt", ".dat"]
+  },
+
+  "watch": {
+    "interval_s": 30
+  }
+}

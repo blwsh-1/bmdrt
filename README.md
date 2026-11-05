@@ -1,0 +1,207 @@
+# bmdrt — 贝叶斯混合 DRT 的 EIS 拟合工具
+
+把电化学阻抗谱 `Z(ω)` 分解成若干 Havriliak–Negami（HN）弛豫分量，用
+**逐频率点 PSIS-LOO** 比较不同分量数 `K` 与扩散配置，自动选出最简约且可辨识的模型。
+传统 Tikhonov DRT 只用来给 `K` 的搜索范围做预判断，**不参与似然、不决定最终 K**。
+
+> 设计原则：**DRT 只做预判断，K 由证据选，不由 DRT 定。**
+
+---
+
+## 1. 三层算法架构
+
+| 层 | 文件 | 作用 |
+|----|------|------|
+| ① DRT 预判断 | `drt.py` | Tikhonov 正则化反卷积 + L-curve 选 λ + 峰识别，只给出 `K` 的候选范围与 NUTS 初值 |
+| ② 贝叶斯拟合 | `bm_core.py` | HN 基底 + stick-breaking 权重 + NUTS；似然只用原始 `Z'` / `Z''` |
+| ③ 模型比较 | `bm_real.py` | 逐点联合似然 → PSIS-LOO → `select_k()` → 残差 / PPC / 峰位 / 扩散退化诊断 |
+
+核心模型：
+
+```
+Z(ω) = R_inf + jωL + Σ_k w_k · R_k / [1 + (jωτ_k)^φ_k]^ζ_k  (+ 可选扩散项)
+```
+
+- `ζ=1, φ<1` → ZARC（R‖CPE）；`φ=ζ=1` → Debye；`φ=1, ζ=1/2` → Gerischer 型
+- 权重用 stick-breaking：`v_k ~ Beta(1, α)`，`α` 默认固定 0.5
+- 可选扩散：`Ws`（半无限 Warburg）/ `Wo`（有限长阻挡 Warburg）/ `both`（仅对照），默认 `none`
+- 噪声为绝对口径：`Normal(Z', s_re)` 与 `Normal(Z'', s_im)` 分别作用
+
+**逐频率点联合似然**是关键：同一频率的 `Z'` 与 `Z''` 必须一起留出/计入，
+
+```
+ll[a, j] = log p(Z'_j | θ_a) + log p(Z''_j | θ_a)
+```
+
+不能摊成 `2n` 个独立观测，否则 LOO 泄漏、`elpd` 系统性高估。
+
+---
+
+## 2. 快速开始
+
+```bash
+# 建议使用独立虚拟环境
+python -m venv .venv
+pip install -r requirements.txt
+
+# 数学自检（不依赖真实数据，先跑这个确认环境）
+python bmdrt.py check
+
+# 单个样例
+python bmdrt.py auto examples/example_caseE.csv --out out --no-move
+
+# 无参数 = 处理 inbox/ 里的全部文件（等价于 auto）
+python bmdrt.py
+
+# Windows 一键：双击 bmdrt.bat
+```
+
+输出按「一个输入 → 一个独立目录」组织，互不覆盖：
+
+```
+out/<名>/real_<名>.png          2×3 诊断图（数据 + 拟合 + 残差 + DRT）
+out/<名>/real_<名>_circuit.png  等效电路图（参数 = 后验中位数）
+out/<名>/real_<名>.json         全部指标
+out/<名>/real_<名>_samples.npz  后验样本
+out/<名>/run.log                完整控制台输出
+```
+
+---
+
+## 3. 输入数据格式
+
+`bm_real.load_spectrum()` 自动识别 `,`/`\t`/`;`/空白分隔，可带表头或纯数据。
+支持两种列组合：
+
+```csv
+f_Hz,Zre,Zim
+100000,12.3,-0.8
+...
+```
+
+或 `|Z|,phase`（相位默认角度，`max|phase|>7` 时自动按度转弧度）。
+无表头文件要求 3 列，顺序固定 `f, Zre, Zim`。
+
+读数据时会自动做：非有限值过滤、`f>0`、按频率升序、重复频率点取平均。
+**容性虚部为负**；Gamry 导出若符号相反，用 `convert_2e.py` 的相位自检自动翻转。
+
+`examples/` 里有 8 个样例，覆盖两种列格式、无表头、含 Warburg 尾、仅 `Wo` 等情形。
+
+---
+
+## 4. 命令行
+
+```
+python bmdrt.py                      # = auto：处理 inbox/
+python bmdrt.py auto <文件或目录...>  # 指定输入
+python bmdrt.py watch                # 常驻监听 inbox/
+python bmdrt.py check [--fit]        # 数学自检（--fit 连拟合一起跑）
+python bmdrt.py diff [--fast]        # 扩散项回归（B1/B2/C1/Wo/B2-ident/DRT）
+python bmdrt.py bench                # 合成 benchmark
+python bmdrt.py list / config / help
+```
+
+常用覆盖项（`auto` / `watch` 有效）：
+
+```
+--krange 1,4   --wide   --kmax 6   --quick   --ta 0.95
+--L / --no-L   --zeta 1.0|free   --diffusion none|Ws|Wo|both
+--no-move      --out DIR   --inbox DIR   --interval 30
+```
+
+任何 `cmd_<名字>.py` 里写一个 `run(argv)` 就会自动多一个子命令，无需修改入口。
+
+默认参数集中在 `config.json`，改配置比记命令行更可靠：
+
+```json
+{"fit": {"kmax": 5, "zeta": "1.0", "diffusion": "none", ...},
+ "batch": {"min_points": 8, "min_decades": 1.0, ...}}
+```
+
+---
+
+## 5. 目录结构
+
+保持**扁平布局**：`bmdrt.py` 用 `Path(__file__).parent` 定位 `config.json`，
+并靠文件名约定自动发现 `cmd_*.py`，移动源码会破坏这一机制。
+
+```
+bmdrt.py          唯一入口
+config.json       默认参数
+bm_core.py        模型 / NUTS / 诊断原语
+bm_real.py        主流程与 K 选择
+bm_diff.py        扩散元件 + HN↔Warburg 退化诊断
+drt.py            传统 Tikhonov DRT 预判断
+bm_experiments.py R̂ / ESS / 树深 / acf
+bm_check.py       18 项数学自检
+bm_bench.py       合成 benchmark
+bm_ident.py       可辨识性分析
+bm_circuit.py     等效电路图绘制
+cmd_diff.py       扩散项回归
+cmd_status.py     汇总 out/ 结果表
+batch_2e.py       117 条谱批量运行
+convert_2e.py     Gamry xlsx → 三列 CSV
+report_2e.py      批次报告生成
+fit_store.py      drt.py 命令行模式的轻量读取器（兼容 shim）
+examples/         8 个最小样例数据
+docs/             方法、预处理、算法链路、扩散方案文档
+evidence/b2x/     配对 LOO 事后重算脚本
+```
+
+---
+
+## 6. 数据预处理现状
+
+**已做**（在读取与建模环节内）：
+文件清洗与列识别、虚部符号自检、频率轴升序/去重/非有限值过滤、
+高频感抗自动检测 `detect_L()` 并在模型内以 `jωL` 显式建模、
+逐点联合似然与 LOO、残差 / PPC / 峰位诊断。
+
+**尚未接入**（见 `docs/算法链路与数据预处理必要性评估.md`）：
+Lin-KK / K-K 因果性体检、低频扩散尾的显式路由、遮掩不合格点后重跑。
+项目内 `AutoECM/validate_fit.py:lin_kk()` 是可复用的现成实现（需 `impedance` 包）。
+
+> 关于低频：本仓库**不使用 DCT**。DCT 是导纳域的电容时间分布，
+> 不是低频专用工具；在阻抗域正确做法是把
+> `(K, diffusion=none) / (K, diffusion=Ws) / (K, diffusion=Wo)`
+> 纳入同一套 LOO 模型比较。详见 `docs/低频数据是否用DCT_结论.md`。
+
+**已知风险**：`bm_real.select_k()` 中的
+`pool = ok or usable or list(res_list)` 在全部模型被硬剔除时仍会输出相对最好结果；
+`report_2e.py` 也明确记录该批 117 条谱未做扩散对照。
+
+---
+
+## 7. 文档
+
+| 文档 | 内容 |
+|------|------|
+| `DIFFUSION_PLAN.md` | 扩散扩展方案：数学、先验、测试矩阵、模型选择 |
+| `docs/算法链路与数据预处理必要性评估.md` | 三层架构逐行代码审查、预处理缺口与优先级 |
+| `docs/低频数据是否用DCT_结论.md` | DRT / DCT / DDC / DDT 术语澄清与低频决策 |
+| `docs/EIS-DRT数据预处理_方法与文献.md` | 11 类预处理方法、作用、18 条文献、SOP |
+| `docs/幺的科研路_DRT阻抗数据处理方法整理.md` | RelaxIS 3 / Nova / EIS Spectrum Analyser 等工作流整理 |
+
+`evidence/b2x/paired_loo.py` 用于跨配置配对 LOO：
+`bmdrt.py auto --krange 1,1` 只跑一个模型，占位 `elpd_diff/dse` 需事后从 `samples.npz` 重算。
+
+---
+
+## 8. 数据与许可
+
+原始 Gamry `.xlsx` 测量数据、`out/`、`figures/`、`*.npz` 等运行产物由
+`.gitignore` 排除，不包含在本仓库中。`convert_2e.py` 需要本地
+`EISmeasurements/` 目录才能运行。
+
+许可证见 `LICENSE`；若需改为专有/不公开，直接删除该文件即可。
+
+---
+
+## 9. 运行环境
+
+在 Python 3.11 / Windows 上验证，实际跑通版本：
+`numpy 2.2.6, scipy 1.15.3, jax/jaxlib 0.6.2, numpyro 0.19.0,
+arviz 0.23.4, matplotlib 3.10.9, pandas 2.3.3, openpyxl 3.1.5`。
+
+`bmdrt.bat` 里写死了 `D:\autoeis_env\Scripts\python.exe`，
+找不到时回退到 `PATH` 上的 `python`；换机器请改这一行。
