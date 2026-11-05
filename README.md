@@ -106,8 +106,22 @@ python bmdrt.py list / config / help
 ```
 --krange 1,4   --wide   --kmax 6   --quick   --ta 0.95
 --L / --no-L   --zeta 1.0|free   --diffusion none|Ws|Wo|both
+--kk gate|warn|off
 --no-move      --out DIR   --inbox DIR   --interval 30
 ```
+
+`--kk` 控制**拟合前**的 Lin-KK 门禁（默认 `gate`）：
+
+| 模式 | 行为 |
+|------|------|
+| `gate` | 判 `fail` 就跳过整条拟合链，写 `fit_performed=false` 的结果 json，不输出 K |
+| `warn` | 只打印门禁报告，仍继续拟合 |
+| `off`  | 完全跳过门禁 |
+
+`fit_performed=false` 是批量流程的契约字段：`KK 拒绝` **不是运行失败**，
+也不是一次成功拟合——`bmdrt.py` 的汇总会把它单独计数，`batch_2e.py`
+不会因此把整批退出码变红。数值阈值（`c` / `max_M` / `res_tol` / `auto_L` /
+`auto_tail` / `auto_cap`）在 `config.json` 的 `kk` 段。
 
 任何 `cmd_<名字>.py` 里写一个 `run(argv)` 就会自动多一个子命令，无需修改入口。
 
@@ -130,7 +144,9 @@ bmdrt.py          唯一入口
 config.json       默认参数
 bm_core.py        模型 / NUTS / 诊断原语
 bm_real.py        主流程与 K 选择
-bm_diff.py        扩散元件 + HN↔Warburg 退化诊断
+bm_kk.py          拟合前 Lin-KK 分级门禁（ok/warn/fail/unavailable）
+bm_corr.py        全参数后验相关矩阵 + 90% 区间（可单独对 npz 重算）
+bm_diff.py        扩散元件 + HN↔Warburg 退化诊断 + Ws/Wo 可分辨性
 drt.py            传统 Tikhonov DRT 预判断
 bm_experiments.py R̂ / ESS / 树深 / acf
 bm_check.py       18 项数学自检
@@ -157,14 +173,35 @@ evidence/b2x/     配对 LOO 事后重算脚本
 高频感抗自动检测 `detect_L()` 并在模型内以 `jωL` 显式建模、
 逐点联合似然与 LOO、残差 / PPC / 峰位诊断。
 
-**尚未接入**（见 `docs/算法链路与数据预处理必要性评估.md`）：
-Lin-KK / K-K 因果性体检、低频扩散尾的显式路由、遮掩不合格点后重跑。
-项目内 `AutoECM/validate_fit.py:lin_kk()` 是可复用的现成实现（需 `impedance` 包）。
+**已接入**（本轮新增）：
+
+- **Lin-KK 门禁** `bm_kk.py`：分频段相对残差（按 `log f` 三分）+ μ 收敛性 +
+  残差结构判据（实/虚部 lag-1 自相关同时 > 0.5 才算系统性），
+  输出 `ok / warn / fail / unavailable` 四级，`gate` 模式下 `fail` 直接拒绝定 K。
+- **全参数相关矩阵** `bm_corr.py`：先 `match_components` 对齐编号再算 Pearson
+  （不对齐会得到假相关），尺度参数取对数；输出 `|ρ|≥0.9` / `0.7–0.9` 两级成对
+  清单与已知简并方向（R–τ 脊线、`R_inf`–`W` 补偿、`R_W`–`τ_D` 简并）。
+- **Ws/Wo 可分辨性** `bm_diff.diffusion_resolution()`：两核在 `ωτ_D≫1` 时同形，
+  先判 `f_min < f_D` 且带内最大相对差 > `tol`，否则报「不可分」，
+  不许用 elpd 差宣称有限长扩散。
+
+**仍缺**（见 `docs/bmdrt_改动清单与实施计划.md` 的 P2）：
+遮掩不合格点后重跑 KK、跨噪声实现的重复性统计、`(K, diffusion)` 三倍扫描
+正式纳入 `select_k`、`phi_trend.py` 的跨温度/循环趋势检查。
 
 > **KK 是事前门禁，不是事后诊断。** 见 `docs/手动拟合实践者建议_与BM-DRT对照评估.md`：
 > 数据不满足因果/线性/稳定时，增加 K 只会更会贴噪声，PSIS-LOO 只能在
-> 「似然假设成立」的前提下比较模型。本仓库目前诊断层很全（acf / 趋势 / PPC /
-> 峰位 / 脊线 / R̂ / ESS），但没有任何一道前置有效性检查。
+> 「似然假设成立」的前提下比较模型。
+
+实现上有两个坑必须记住（都是实测逼出来的）：
+
+1. **不要在 Lin-KK 之前扣 `jωL`。** `impedance.validation.fit_linKK` 的
+   设计矩阵已含自由串联电感列（`a_im[:, -1] = w/|Z|`），再扣一次是重复计入。
+   实测真实 2E 谱：原谱高/中/低 = 9.60/1.92/11.44 %，扣 `jωL` 后变成
+   10.78/2.20/11.44 %——**高频残差反而变差**。`estimate_L()` 只作诊断量。
+2. **低频扩散尾不要截断丢点。** 用 `add_cap=True`（同一频率网格加串联电容）
+   复验：原谱低段 11.44 % → 4.72 %，且中/高频同时改善；直接截尾会把
+   中段从 1.92 % 推到 4.33 %。截断点 `f_cut` 只作诊断，不真正丢数据。
 
 > 关于低频：本仓库**不使用 DCT**。DCT 是导纳域的电容时间分布，
 > 不是低频专用工具；在阻抗域正确做法是把
@@ -172,11 +209,17 @@ Lin-KK / K-K 因果性体检、低频扩散尾的显式路由、遮掩不合格�
 > 纳入同一套 LOO 模型比较。详见 `docs/低频数据是否用DCT_结论.md`。
 > **前置条件**：本批实测谱 `f_min ≈ 1 Hz`，而 `W_open/W_short` 只在
 > `f ≲ f_D = 1/(2πτ_D)` 才偏离半无限 Warburg；频段不够时三者不可分，
-> 应报告「不可分」而不是选出「最优扩散模型」（`bm_diff.py:39-42,503-511`）。
+> 应报告「不可分」而不是选出「最优扩散模型」。这条判据现在由
+> `bm_diff.diffusion_resolution()` 自动给出，结果写进
+> `real_*.json` 的 `diffusion_resolution`。
 
-**已知风险**：`bm_real.select_k()` 中的
-`pool = ok or usable or list(res_list)` 在全部模型被硬剔除时仍会输出相对最好结果；
-`report_2e.py` 也明确记录该批 117 条谱未做扩散对照。
+**已修复的风险**：`select_k()` 原来的 `pool = ok or usable or list(res_list)`
+在全部模型被硬剔除时仍会输出「相对最好」，等于把相对排序包装成最优 K。
+现在返回 `selection_status ∈ {ok, degraded, rejected, not_compared,
+rejected_by_kk}`，`rejected` 时报告与 JSON 都写明「不输出最优 K 的结论」。
+
+**仍存在的限制**：`report_2e.py` 记录该批 117 条谱未做扩散对照——这是
+`batch_2e.py` 没传 `--diffusion` 造成的，不是判据问题。
 
 ---
 
@@ -190,6 +233,7 @@ Lin-KK / K-K 因果性体检、低频扩散尾的显式路由、遮掩不合格�
 | `docs/EIS-DRT数据预处理_方法与文献.md` | 11 类预处理方法、作用、18 条文献、SOP |
 | `docs/幺的科研路_DRT阻抗数据处理方法整理.md` | RelaxIS 3 / Nova / EIS Spectrum Analyser 等工作流整理 |
 | `docs/手动拟合实践者建议_与BM-DRT对照评估.md` | KK 门禁、参数相关性与置信区间、CPE-n 物理含义、三类难谱，逐条对照本仓库代码 |
+| `docs/bmdrt_改动清单与实施计划.md` | 五份文档的待改项去重合并、P0/P1/P2 优先级、验收项与实施中修正的前提错误 |
 
 `evidence/b2x/paired_loo.py` 用于跨配置配对 LOO：
 `bmdrt.py auto --krange 1,1` 只跑一个模型，占位 `elpd_diff/dse` 需事后从 `samples.npz` 重算。
@@ -208,9 +252,10 @@ Lin-KK / K-K 因果性体检、低频扩散尾的显式路由、遮掩不合格�
 
 ## 9. 运行环境
 
-在 Python 3.11 / Windows 上验证，实际跑通版本：
+在 Python 3.10.7 / Windows 上验证（`D:\autoeis_env`），实际跑通版本：
 `numpy 2.2.6, scipy 1.15.3, jax/jaxlib 0.6.2, numpyro 0.19.0,
-arviz 0.23.4, matplotlib 3.10.9, pandas 2.3.3, openpyxl 3.1.5`。
+arviz 0.23.4, matplotlib 3.10.9, pandas 2.3.3, openpyxl 3.1.5,
+impedance 1.7.1`。
 
 `bmdrt.bat` 里写死了 `D:\autoeis_env\Scripts\python.exe`，
 找不到时回退到 `PATH` 上的 `python`；换机器请改这一行。

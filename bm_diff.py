@@ -470,6 +470,129 @@ def looks_like_warburg(sig, tol_pz=0.04, min_bound=0.30, min_out=1.0):
 
 
 # --------------------------------------------------------------------------
+# 模型比较的前提：这个频段能不能区分 Ws 与 Wo
+# --------------------------------------------------------------------------
+
+def diffusion_resolution(f, s=None, diffusion=None, tol: float = 0.02) -> dict:
+    """判断**本频段**能不能区分 W_short（透射）与 W_open（阻挡）。
+
+    为什么必须单独判
+    ----------------
+    `W_open = R_W·coth(z)/z`、`W_short = R_W·tanh(z)/z`，`z = sqrt(jωτ_D)`。
+    当 `ωτ_D ≫ 1` 时 `coth(z) ≈ tanh(z) ≈ 1`，两者都退化成
+    `R_W/z = A_W (jω)^(-1/2)` —— **在数据上完全同形**。弯曲只出现在
+    `f ≲ f_D = 1/(2πτ_D)`。所以：
+
+      · 若整条谱都在 `f ≫ f_D`，`none / Ws / Wo` 三个模型给出几乎相同的
+        阻抗，elpd 差多少都只是噪声，**不能用它宣称"证明了有限长扩散"**；
+      · 若 `f_min < f_D` 且两核在带内相对差 > tol，才真正可分辨。
+
+    这是"模型比较的前提检验"，和 K-K 门禁同一性质：**先确认比较有意义，
+    再比较**。不做这一步，`--diffusion both` 的 elpd 排名会被当成物理结论。
+
+    参数
+    ----
+    f        : 频率数组（Hz）
+    s        : 后验样本 dict；有 `tauD` 时用它算 f_D
+    diffusion: 本次实际启用的扩散项（None/none/Ws/Wo/both）
+    tol      : 两核在带内的最大相对差阈值，低于此值视为不可分
+
+    返回 dict（全部可 JSON 序列化）
+    ------------------------------
+    diffusion / f_min / f_max / tauD / f_D / below_fD / max_reldiff /
+    tauD_max_resolvable / tol / resolvable / level / note
+    """
+    f = np.asarray(f, float)
+    f = f[np.isfinite(f) & (f > 0)]
+    out = dict(diffusion=diffusion, f_min=(float(f.min()) if f.size else None),
+               f_max=(float(f.max()) if f.size else None),
+               tauD=None, f_D=None, below_fD=None, max_reldiff=None,
+               # 只有 τ_D 小到这个值以下，f_D 才会落进测量窗口
+               tauD_max_resolvable=(float(1.0 / (2 * np.pi * f.min()))
+                                    if f.size else None),
+               tol=float(tol), resolvable=False, level="unknown", note="")
+
+    if f.size == 0:
+        out["note"] = "没有有效频点，无法判断扩散项可分辨性"
+        return out
+
+    tauD = None
+    if s is not None and "tauD" in s:
+        v = np.asarray(s["tauD"], float)
+        v = v[np.isfinite(v) & (v > 0)]
+        if v.size:
+            tauD = float(np.median(v))
+    out["tauD"] = tauD
+
+    if tauD is not None:
+        out["f_D"] = float(1.0 / (2 * np.pi * tauD))
+        out["below_fD"] = bool(f.min() < out["f_D"])
+
+        # 两核在**本频段**的最大形状差异（R_W=1）。
+        #
+        # 用 `|Wo−Ws| / max(|Wo|,|Ws|)` 而不是 `/|Ws|`：
+        # 低频端 Wo → 1/(jωC) 会发散、Ws → R_W 有限，用 |Ws| 作分母会
+        # 得到 15000% 这种没有信息量的数（实测 τ_D=1e-3 s 时就是这样）。
+        # 除以较大者把指标压到 [0,1]：0 = 完全同形，1 = 完全不像。
+        z = np.sqrt(1j * 2 * np.pi * f * tauD)
+        wo = _coth_over_z(z)
+        ws = _tanh_over_z(z)
+        den = np.maximum(np.maximum(np.abs(wo), np.abs(ws)), 1e-300)
+        out["max_reldiff"] = float(np.max(np.abs(wo - ws) / den))
+
+    if diffusion in (None, "", "none"):
+        out["level"] = "no_diffusion"
+        out["note"] = (
+            "未启用扩散项。要判断需不需要，先跑 --diffusion Ws 拿到 τ_D 的后验；"
+            f"本频段只有在 τ_D ≲ {out['tauD_max_resolvable']:.3g} s"
+            f"（即 f_D ≳ {f.min():.3g} Hz）时才可能看到有限长扩散的弯曲，"
+            f"τ_D 更大时 Ws 与 Wo 在带内完全重合。")
+        return out
+
+    if tauD is None:
+        out["level"] = "unknown"
+        out["note"] = ("拿不到 τ_D 后验（模型里没有 tauD），无法判断 Ws/Wo 是否可分；"
+                       "不要用 elpd 差宣称有限长扩散")
+        return out
+
+    if out["max_reldiff"] <= tol:
+        dec = float(np.log10(f.min() / out["f_D"])) if out["f_D"] else float("nan")
+        where = (f"f_D = {out['f_D']:.3g} Hz 在窗口下界 {f.min():.3g} Hz 之下 "
+                 f"{dec:.1f} decade" if out["f_D"] < f.min()
+                 else f"f_D = {out['f_D']:.3g} Hz 高于窗口上界 {f.max():.3g} Hz")
+        out["level"] = "indistinguishable"
+        out["note"] = (
+            f"Ws 与 Wo 在 {f.min():.3g}–{f.max():.3g} Hz 内最大形状差异只有 "
+            f"{out['max_reldiff']:.2%}（阈值 {tol:.0%}）：{where}，"
+            f"整段都在 ωτ_D ≫ 1 的渐近区，**两个模型在本频段不可分**。"
+            f"此时 none/Ws/Wo 的 elpd 差不能当证据，只能报「不可分」。")
+        return out
+
+    if not out["below_fD"]:
+        # 走到这里说明带内还有 >tol 的差异，但都集中在窗口边缘：
+        # f_D 在窗口下方，弯曲的"拐点"本身没进来，只剩过渡段的尾巴。
+        # 这种情况不能宣称可分辨（拐点没测到，τ_D 的后验基本由高频尾定，
+        # Ws/Wo 的差别只体现在最低几个点上，抗噪能力极差）。
+        dec = float(np.log10(f.min() / out["f_D"])) if out["f_D"] else float("nan")
+        out["level"] = "indistinguishable"
+        out["note"] = (
+            f"带内最大差异 {out['max_reldiff']:.1%} 集中在窗口边缘，但 "
+            f"f_D = {out['f_D']:.3g} Hz 在窗口下界 {f.min():.3g} Hz 之下 "
+            f"{dec:.1f} decade——弯曲的拐点没进入窗口，τ_D 基本只由高频尾约束，"
+            f"按**不可分**处理（保守）。")
+        return out
+
+    out["resolvable"] = True
+    out["level"] = "resolvable"
+    out["note"] = (
+        f"f_D = {out['f_D']:.3g} Hz 落在窗口内（f_min = {f.min():.3g} Hz），"
+        f"两核在带内最大形状差异 {out['max_reldiff']:.1%} > {tol:.0%}："
+        f"本频段**可以**区分 Ws 与 Wo，elpd 比较有意义。"
+        f"仍要注意：可分辨 ≠ 数据里真有有限长扩散。")
+    return out
+
+
+# --------------------------------------------------------------------------
 # 自检
 # --------------------------------------------------------------------------
 

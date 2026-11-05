@@ -41,6 +41,9 @@ def main(mode: str) -> int:
     with (CSVDIR / "manifest.csv").open(encoding="utf-8-sig", newline="") as fh:
         man = {r["stem"]: r for r in csv.DictReader(fh)}
 
+    # KK 门禁拒绝的行：流程正常完成但没拟合，K 为空。必须单独数出来，
+    # 否则「有结果 JSON N/117」会把它悄悄吞掉，看起来像少跑了几条。
+    kk = [r for r in rows if str(r.get("fit_performed", "")).lower() == "false"]
     ok = [r for r in rows if r["K"] not in ("", None)]
     fig = [r for r in rows if r["fit_png"]]
     cir = [r for r in rows if r["circuit_png"]]
@@ -117,8 +120,10 @@ def main(mode: str) -> int:
       "可直接重画 Bode/Nyquist。\n")
 
     A("\n## 2. 批量运行结果\n")
-    A(f"- 有结果 JSON：{len(ok)} / {len(rows)}；诊断图 {len(fig)}、电路图 {len(cir)}、"
-      f"拟合曲线 {len(cur)}。\n"
+    A(f"- 拟合成功：{len(ok)} / {len(rows)}"
+      + (f"（另有 **{len(kk)} 条被 K-K 门禁拒绝**：数据不自洽，未拟合、不输出 K，"
+         "流程正常完成、不是运行失败）" if kk else "")
+      + f"；诊断图 {len(fig)}、电路图 {len(cir)}、拟合曲线 {len(cur)}。\n"
       f"- 累计拟合墙钟时间 {t_sum/60:.1f} 分钟（各 worker 并行，不是总等待时间）。\n"
       f"- 采样分级分布：{dict(sorted(grades.items(), key=lambda x: str(x[0])))}"
       "（2 = 严格通过，1 = 可用，0 = 不可用）。\n"
@@ -172,7 +177,12 @@ def main(mode: str) -> int:
       "3. 基础模型默认 `ζ=1`（ZARC 基底）、`diffusion=none`；"
       "低频 −45° 尾若要显式建模，需要单独跑 `--diffusion Ws/Wo` 对照，本批没做。\n"
       "4. 所有图内文字是英文（matplotlib 默认字体无 CJK 字形）；"
-      "中文说明在 `index.html` 和本文件里。\n")
+      "中文说明在 `index.html` 和本文件里。\n"
+      + (f"5. **{len(kk)} 条谱没过拟合前的 Lin-KK 门禁**（因果/线性/稳定自洽性），"
+         "已按规则拒绝定 K、未做拟合。它们不是「跑失败」，也不该用加 K 去救——"
+         "先查测量条件（漂移、感抗尾、接触不稳）。逐条状态见 "
+         "`summary_all.csv` 的 `fit_performed` / `kk_status` 两列。\n"
+         if kk else ""))
 
     A("\n## 5. 复现\n")
     A("```bash\n"

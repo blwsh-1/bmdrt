@@ -57,6 +57,18 @@ try:                                    # 扩散诊断是可选的；缺了只�
 except Exception:                       # pragma: no cover
     DIFF = None
 
+try:                                    # K-K 事前门禁；缺了只是少一道体检，不阻断拟合
+    from bm_kk import kk_check as _kk_check
+    from bm_kk import format_report as _kk_format_report
+except Exception:                       # pragma: no cover
+    _kk_check = None
+    _kk_format_report = None
+
+try:                                    # 全参数相关矩阵（"别只看误差"那一层）
+    import bm_corr as CORR
+except Exception:                       # pragma: no cover
+    CORR = None
+
 warnings.filterwarnings("ignore")
 
 import matplotlib
@@ -517,8 +529,14 @@ def init_values(pk, res, K, zeta_fixed=1.0):
 # 单个 K 的拟合
 # --------------------------------------------------------------------------
 
-def fit_one(f, Z, K, include_L, zeta, init=None, seed=0, kw=None, diffusion=None):
-    """跑一次 NUTS，返回全部指标（不打印、不画图）。"""
+def fit_one(f, Z, K, include_L, zeta, init=None, seed=0, kw=None, diffusion=None,
+            diag=None):
+    """跑一次 NUTS，返回全部指标（不打印、不画图）。
+
+    diag：事后诊断阈值（corr_strong / corr_medium / diff_resolution_tol），
+    由 config.json 的 diag 段传入；缺省时用模块内置默认值。
+    """
+    diag = diag or {}
     kw = dict(KW) if kw is None else dict(kw)
     kw["seed"] = seed
     t0 = time.time()
@@ -621,6 +639,20 @@ def fit_one(f, Z, K, include_L, zeta, init=None, seed=0, kw=None, diffusion=None
     n_frag = int(np.sum(w < 0.02 * tot))
     frac_neg = float(np.mean((s["phi"] * s["zeta"]) > 1.0))
 
+    # ---- 全参数相关矩阵（简并只在联合分布里可见，边际区间看不出来）----
+    # 用**已对齐**的 mm 取列：混合模型的编号在样本间会跳，不先对齐
+    # 会把两个不同的峰配成一对，得到假相关。
+    pc = (CORR.param_corr(s, include_L=include_L, mm=mm,
+                          strong=float(diag.get("corr_strong", CORR.STRONG)),
+                          medium=float(diag.get("corr_medium", CORR.MEDIUM)))
+          if CORR is not None else None)
+
+    # ---- 扩散项可分辨性：Ws 与 Wo 在 ωτ_D≫1 时同形，先判能不能分 ----
+    dres = (DIFF.diffusion_resolution(
+                f, s, diffusion,
+                tol=float(diag.get("diff_resolution_tol", 0.02)))
+            if DIFF is not None and hasattr(DIFF, "diffusion_resolution") else None)
+
     # ---- 模型比较 ----
     ll = loglik_matrix(s, f, Z, include_L)
     try:
@@ -643,7 +675,7 @@ def fit_one(f, Z, K, include_L, zeta, init=None, seed=0, kw=None, diffusion=None
         n_frag=n_frag, frac_neg=frac_neg,
         degeneracy=sig,
         n_warburg_like=int(sum(1 for s in sig if s["level"] != "no")),
-        diffusion=diffusion,
+        diffusion=diffusion, param_corr=pc, diffusion_resolution=dres,
         f_lo=float(f.min()), f_hi=float(f.max()), n_pts=int(f.size),
         zmax_obs=zmax_obs, p_diff_small=p_diff_small, diff_amp_key=diff_amp_key,
         idata=idata, elpd=elpd, elpd_se=elpd_se, bad_k=bad_k,
@@ -706,7 +738,12 @@ def select_k(res_list):
     2) 剩下的按 **elpd_loo 配对比较**排序，取最好。
     3) **简约优先**：若某个更小的 K 与最好者满足 `deficit < max(2, dse)`
        （差值落在不确定度内），取更小的 K。
-    4) 若全部被剔除，退到分级≥1 里最好的那个并明确报警——不给「最优」的假象。
+    4) 若全部被剔除，仍返回一个 dict（下游 report/plot/save_out 需要它），
+       但打上 `selection_status` 并在 note 首条写明「不输出最优 K 的结论」，
+       **绝不把「相对最好」包装成「最优」**：
+         ok         有 K 过完整硬筛选
+         degraded   只降到「可用」档（分级≥1 但被物理/峰位/LOO 规则剔除）
+         rejected   连「可用」都没有，结果只是相对排序、无物理意义
 
     为什么硬筛选**只认 p_peak_out_max、不认 p_out**：`p_out` 是给人看的
     兼容字段，峰位不可用时会退回 τ 口径；如果拿它做硬筛选，模型选择就
@@ -750,12 +787,17 @@ def select_k(res_list):
 
     usable = [r for r in res_list if r["grade"] >= 1]
     pool = ok or usable or list(res_list)
+    status = "ok" if ok else ("degraded" if usable else "rejected")
     if not ok:
         note.append("严格标准下没有 K 全过（分级≥1 但被物理有效性/峰位/LOO "
                     "规则剔除），已降级到「可用」档；下面的选择只是相对最好，"
                     "引用时必须说明它没过硬筛选。"
                     if usable else
                     "**没有任何 K 达到可用**，下面的选择只是相对最好，不能当结论。")
+    if status == "rejected":
+        note.insert(0, "**不输出最优 K 的结论**：所有候选 K 都被硬性剔除或采样不可用；"
+                       "下面的 elpd 排名仅是相对排序、无物理意义。请回查 K-K 门禁、"
+                       "噪声水平与模型基底，不要引用这个 K。")
 
     pool = sorted(pool, key=lambda r: (-r["elpd"] if np.isfinite(r["elpd"]) else 1e18))
     best = pool[0]
@@ -772,6 +814,7 @@ def select_k(res_list):
                     f"{deficit(small):.1f} ± {small['dse']:.1f}，"
                     f"小于 max(2, dse) → 按简约优先取 K={small['K']}")
         best = small
+    best["selection_status"] = status
     return best, note
 
 
@@ -782,6 +825,14 @@ def select_k(res_list):
 def report(res, include_L, zeta, f):
     r = res
     K = r["K"]
+    # 拟合前的 K-K 门禁结论要跟着结果一起出现，免得只看日志尾部就漏掉。
+    kk = r.get("kk")
+    if kk:
+        print(f"\n=== ⓪ K-K 事前门禁：{kk.get('status')} ===")
+        print(f"  {kk.get('reason', '')}")
+    st = r.get("selection_status")
+    if st in ("degraded", "rejected"):
+        print(f"  ** 模型选择状态 {st}：本结果不是「最优 K」的结论 **")
     tag = {2: "严格通过", 1: "可用（有瑕疵）", 0: "**不可用**"}[r["grade"]]
     print(f"\n=== 拟合（K={K}, ζ={'free' if zeta == 'free' else zeta}"
           f"{', +L' if include_L else ''}, 播种={'是' if r['seeded'] else '否'}, "
@@ -886,6 +937,23 @@ def report(res, include_L, zeta, f):
         else:
             print("  没有分量符合扩散尾指纹。")
 
+    # ---- 扩散项可分辨性：这是模型比较的**前提**，不是事后补充 ----
+    dres = r.get("diffusion_resolution")
+    if dres and dres.get("level") in ("resolvable", "indistinguishable"):
+        print("\n=== 扩散项可分辨性（Ws/Wo 能不能分） ===")
+        print(f"  {dres['note']}")
+        if dres["level"] == "indistinguishable":
+            print("  ** 本频段两个模型同形：elpd 差不能当「有限长扩散」的证据，"
+                  "只能报「不可分」**")
+
+    # ---- 参数相关：边际区间看不出的简并，只能从这里看 ----
+    pc = r.get("param_corr")
+    if pc:
+        print("\n=== 参数相关矩阵（简并只在联合分布里可见） ===")
+        print(CORR.format_report(pc) if CORR is not None else "")
+        print("  完整矩阵：python bm_corr.py <out>/real_*.json 同目录的 "
+              "*_samples.npz --matrix")
+
     print("\n=== 拟合优度（没有真值，地板只能用后验 σ） ===")
     print(f"  rms  实部 {r['rms_re']:.4g} Ω / σ {r['s_re']:.4g} = "
           f"{r['rms_re'] / r['s_re']:.2f}   虚部 {r['rms_im']:.4g} Ω / σ "
@@ -917,6 +985,36 @@ def judge(res, f, include_L):
     """把诊断翻成可执行的建议。真实数据没有真值，只能靠这些证据。"""
     r = res
     K, msg = r["K"], []
+    # KK 门禁是事前证据，排在所有事后诊断之前。
+    kk = r.get("kk")
+    if kk and kk.get("status") in ("warn", "fail", "unavailable"):
+        msg.append(f"**KK 门禁 {kk['status']}**：{kk.get('reason', '')}。"
+                   f"引用参数前先看分频段残差与 attribution；"
+                   f"似然/LOO 检验不了数据本身是否自洽。")
+    st = r.get("selection_status")
+    if st == "rejected":
+        msg.insert(0, "**模型选择被拒绝**：没有任何 K 通过硬性筛选，"
+                      "本次不给出「最优 K」，elpd 排名仅相对、无物理意义。")
+    elif st == "degraded":
+        msg.append("模型选择降级：只在「可用」档里做相对比较，"
+                   "引用 K 时须说明它没过硬筛选。")
+
+    # 参数简并：边际区间看着都窄，但两个参数其实只定出一个组合。
+    pc = r.get("param_corr") or {}
+    if pc.get("strong"):
+        who = "；".join(f"{p['a']}↔{p['b']}(ρ={p['rho']:+.2f})"
+                        for p in pc["strong"][:3])
+        msg.append(f"**参数强相关**：{who}。这些参数只能定出一个组合，"
+                   f"单独引用其中一个会被读成「已经定住」，实际没有。")
+
+    # 扩散项：先确认能不能分，再谈比较结果。
+    dres = r.get("diffusion_resolution") or {}
+    if dres.get("level") == "indistinguishable":
+        msg.append("**Ws/Wo 在本频段不可分**：" + dres.get("note", "")
+                   + " 不要用 elpd 差宣称「存在有限长扩散」。")
+    elif dres.get("level") == "resolvable":
+        msg.append("扩散项可分辨：" + dres.get("note", ""))
+
     q_re = r["rms_re"] / max(r["s_re"], 1e-12)
     q_im = r["rms_im"] / max(r["s_im"], 1e-12)
 
@@ -1147,6 +1245,30 @@ def prescreen_stage(f, Z):
     return pres, pk, pk_all, dt
 
 
+def _write_kk_reject(path, f, Z, kk, kk_mode):
+    """gate 模式且 K-K 判 fail：跳过整条拟合链，只落一份可机读的拒绝记录。
+
+    必须写 `real_<stem>.json`——`bmdrt.py` 的批量流程靠它判「流程跑完」，
+    不写会被记成「跑完但没结果」而误报 [FAIL]。`fit_performed=false`
+    就是批量流程区分「正常拒绝」与「真的拟合成功」的契约字段。
+    """
+    OUT.mkdir(exist_ok=True)
+    stem = Path(path).stem
+    js = OUT / f"real_{stem}.json"
+    rec = dict(
+        file=stem, n=int(f.size), f_min=float(f.min()), f_max=float(f.max()),
+        fit_performed=False, kk=kk, kk_mode=kk_mode,
+        k_selection_status="rejected_by_kk",
+        reason=kk.get("reason", ""),
+        K=None, sample_grade=None, components=[],
+        warnings=["**KK 门禁拒绝**：数据不自洽，本次未拟合，不输出最优 K。"],
+        k_selection=["**不输出最优 K 的结论**：拟合前 K-K 门禁判 fail。"],
+    )
+    js.write_text(json.dumps(rec, ensure_ascii=False, indent=2, default=float),
+                  encoding="utf-8")
+    return js
+
+
 def save_out(stem, f, Z, res, pres, include_L, zeta, tips, K_sel_note):
     OUT.mkdir(exist_ok=True)
     js = OUT / f"real_{stem}.json"
@@ -1182,6 +1304,13 @@ def save_out(stem, f, Z, res, pres, include_L, zeta, tips, K_sel_note):
         diag={r["name"]: {k: r[k] for k in ("rhat", "bulk", "tail")}
               for r in res["rows"]},
         k_selection=K_sel_note, warnings=tips,
+        # 事前门禁 / 模型选择状态 / 后处理诊断：全部「有则写、缺则跳过」，
+        # 保证旧结果文件与未启用新模块的调用方仍能读。
+        fit_performed=True,
+        kk=res.get("kk"),
+        k_selection_status=res.get("selection_status"),
+        param_corr=res.get("param_corr"),
+        diffusion_resolution=res.get("diffusion_resolution"),
         # 扩散项：写进 json 才能让 status / 事后复核不重跑就看得到
         diffusion=res.get("diffusion"),
         n_warburg_like=res.get("n_warburg_like", 0),
@@ -1212,7 +1341,8 @@ def save_out(stem, f, Z, res, pres, include_L, zeta, tips, K_sel_note):
                           for k, v in res["s"].items()
                           if k in ("Rw", "Aw", "Rwo", "tauD")},
     )
-    js.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    js.write_text(json.dumps(summary, ensure_ascii=False, indent=2,
+                             default=float), encoding="utf-8")
     np.savez_compressed(OUT / f"real_{stem}_samples.npz",
                         f=f, Zre=Z.real, Zim=Z.imag,
                         **{k: v for k, v in res["s"].items()
@@ -1222,7 +1352,13 @@ def save_out(stem, f, Z, res, pres, include_L, zeta, tips, K_sel_note):
 
 def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
         include_L=None, zeta="1.0", dry=False, quick=False, ta=None,
-        diffusion=None):
+        diffusion=None, kk_mode="gate", kk_opts=None, diag=None):
+    """kk_mode: gate(fail 即拒绝定 K) | warn(只报告) | off(不跑门禁)。
+    kk_opts 是传给 kk_check 的数值参数（c/max_M/res_tol/auto_L/...），
+    不在代码里写死，由 config.json 统一管。
+    diag 同理：事后诊断阈值（相关矩阵 / 扩散可分辨性），来自 config.json。
+    """
+    diag = diag or {}
     print(f"\n=== 读数据 {path} ===")
     f, Z = load_spectrum(path)
 
@@ -1233,6 +1369,27 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
         include_L = detect_L(f, Z)
         print(f"  电感项：{'需要（高频 −Im Z < 0）' if include_L else '不需要'}"
               f"（--L / --no-L 可覆盖）")
+
+    # ---- ⓪ K-K 事前门禁：读数据之后、DRT 预判之前 ------------------
+    # PSIS-LOO 只能在「似然假设成立」的前提下比较模型，检验不了假设本身。
+    # 所以这一步必须在任何拟合之前，且 fail 时直接拒绝定 K。
+    kk = None
+    if kk_mode != "off" and _kk_check is not None:
+        try:
+            kk = _kk_check(f, Z, include_L=include_L, **(kk_opts or {}))
+        except Exception as e:             # 门禁绝不能让主流程崩
+            kk = {"status": "unavailable",
+                  "reason": f"K-K 门禁异常，已跳过：{type(e).__name__}: {e}",
+                  "attribution": [], "n": int(f.size),
+                  "f_min": float(f.min()), "f_max": float(f.max())}
+        print("\n=== ⓪ K-K 事前门禁（拟合前） ===")
+        print(_kk_format_report(kk) if _kk_format_report is not None
+              else f"  {kk['status']}: {kk['reason']}")
+        if kk_mode == "gate" and kk.get("status") == "fail":
+            print("\n  ** 数据不自洽，拒绝定 K；本次不做拟合 **")
+            js = _write_kk_reject(path, f, Z, kk, kk_mode)
+            print(f"  结果：{js}")
+            return None
 
     pres, pk, pk_all, _ = prescreen_stage(f, Z)
     K_drt = max(1, min(len(pk), kmax))
@@ -1274,7 +1431,7 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
         init = init_values(pk, pres, K) if pk else None
         print(f"\n  --- K={K} 拟合中（播种={'是' if init else '否'}）---")
         r = fit_one(f, Z, K, include_L, zeta, init=init, kw=kw,
-                    diffusion=diffusion)
+                    diffusion=diffusion, diag=diag)
         print(f"      {r['t']:.0f}s  R̂max={r['rhat_max']:.3f} "
               f"bulk={r['bulk_min']:.0f} tail={r['tail_min']:.0f} "
               f"div={r['ndiv']} 触顶={r['tds']['frac_cap'] * 100:.1f}% "
@@ -1299,9 +1456,20 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
               "② elpd 最大 ③ 差 < max(2, dse) 取更小 K")
         for t in note:
             print(f"    · {t}")
-        print(f"  → **K={best['K']}**（只在 {ks[0]}..{ks[-1]} 内最优）")
+        st = best.get("selection_status", "ok")
+        if st == "rejected":
+            print("  → **没有可信的 K**：下面的 elpd 排序仅相对、无物理意义，"
+                  "不输出最优 K 结论")
+        else:
+            extra = "，且仅来自「可用」降级档" if st == "degraded" else ""
+            print(f"  → **K={best['K']}**（只在 {ks[0]}..{ks[-1]} 内最优{extra}）")
     else:
         best, note = res_list[0], []
+        best["selection_status"] = "not_compared"
+        print("  （只跑了一个 K，未做模型选择）")
+
+    if kk is not None:
+        best["kk"] = kk
 
     report(best, include_L, zeta, f)
     tips = judge(best, f, include_L)
@@ -1355,6 +1523,10 @@ def main():
                     help="加扩散项：none(默认) / Ws=半无限 / Wo=有限长阻挡 / both。"
                          "注意 Ws 与 Wo 的高频尾完全相同，both 只适合做"
                          "'是否真的存在有限长度'的对照，不适合当最终模型")
+    ap.add_argument("--kk", default="gate", choices=["gate", "warn", "off"],
+                    help="拟合前 Lin-KK 门禁：gate=判 fail 就拒绝定 K（默认）/ "
+                         "warn=只报告仍拟合 / off=完全跳过。"
+                         "数值阈值走 config.json 的 kk 段")
     a = ap.parse_args()
     if a.zeta == "free":
         print("** --zeta free：HN 的解析 DRT 在 ζφ>1 时会出负值，"
@@ -1362,7 +1534,7 @@ def main():
     diff = None if a.diffusion == "none" else a.diffusion
     run(a.csv, K_force=a.K, krange=a.krange, wide=a.wide, kmax=a.kmax,
         include_L=a.L, zeta=a.zeta, dry=a.dry, quick=a.quick, ta=a.ta,
-        diffusion=diff)
+        diffusion=diff, kk_mode=a.kk)
 
 
 if __name__ == "__main__":

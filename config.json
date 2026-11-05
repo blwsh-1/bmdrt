@@ -20,6 +20,24 @@
     "diffusion": "none"
   },
 
+  "kk": {
+    "_说明": "拟合前 Lin-KK 门禁。mode: gate=判 fail 就拒绝定 K / warn=只报告仍拟合 / off=跳过。c 是 mu 收敛阈值，res_tol 是分频段相对残差 RMS 阈值。auto_L 只做电感诊断不扣 jωL（Lin-KK 已含自由 L）；auto_tail 识别 -45 度扩散尾；auto_cap 用串联电容在同一频率网格复验，不丢数据点。",
+    "mode": "gate",
+    "c": 0.85,
+    "max_M": 50,
+    "res_tol": 0.05,
+    "auto_L": true,
+    "auto_tail": true,
+    "auto_cap": true
+  },
+
+  "diag": {
+    "_说明": "事后诊断阈值。corr_strong/corr_medium 是参数相关矩阵的两级阈值（|rho| 超过即列入报告）；diff_resolution_tol 是 Ws 与 Wo 在本频段的最大相对差阈值，低于它判「不可分」——elpd 差再大也不能当有限长扩散的证据。",
+    "corr_strong": 0.9,
+    "corr_medium": 0.7,
+    "diff_resolution_tol": 0.02
+  },
+
   "batch": {
     "_说明": "move_done=true 会把跑完的输入移到 archive/；skip_done=true 跳过已出结果的文件",
     "move_done": true,

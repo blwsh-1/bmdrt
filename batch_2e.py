@@ -86,13 +86,27 @@ def result_dir(root: Path, worker: int, stem: str) -> Path:
     return root / f"w{worker}" / stem
 
 
+def _is_kk_reject(js: Path) -> bool:
+    """结果 json 存在但 `fit_performed=false` = K-K 门禁正常拒绝，不是失败。
+
+    这个判断必须在这里做一次：拒绝记录**不会**有诊断图，若只看
+    `js.exists() and png.exists()` 就会把它记成 `fail(rc=0)`，
+    让整批退出码变红，而实际什么都没坏。
+    """
+    try:
+        return json.loads(js.read_text(encoding="utf-8")).get("fit_performed") is False
+    except Exception:
+        return False
+
+
 def _run_one(args) -> dict:
     root, worker, row, mode, timeout = args
     stem = row["stem"]
     d = result_dir(root, worker, stem)
     js = d / f"real_{stem}.json"
     png = d / f"real_{stem}.png"
-    if js.exists() and png.exists():
+    if js.exists() and (png.exists() or _is_kk_reject(js)):
+        # KK 拒绝也算法「已处理完」：它本来就不该有 png，不认这一点会每次重跑。
         return dict(stem=stem, status="skip", t=0.0, worker=worker)
 
     d.parent.mkdir(parents=True, exist_ok=True)
@@ -121,7 +135,12 @@ def _run_one(args) -> dict:
         rc = -9
         with log.open("a", encoding="utf-8") as fh:
             fh.write(f"\n[TIMEOUT] {timeout} s\n")
-    status = "ok" if (js.exists() and png.exists()) else f"fail(rc={rc})"
+    if js.exists() and png.exists():
+        status = "ok"
+    elif js.exists() and _is_kk_reject(js):
+        status = "kk_reject"          # 正常拒绝：不算失败，不计入成功拟合
+    else:
+        status = f"fail(rc={rc})"
     return dict(stem=stem, status=status, t=time.time() - t0, worker=worker)
 
 
@@ -137,7 +156,7 @@ def run_batch(mode: str, jobs: int, only: str | None, every: int | None,
               for j in range(jobs)]
     print(f"[batch_2e] mode={mode}  {len(rows)} 条谱  {jobs} 并发  out={root}")
     t0 = time.time()
-    done, bad, skipped = 0, [], 0
+    done, bad, skipped, kk_rej = 0, [], 0, 0
     with open(root / "progress.log", "a", encoding="utf-8") as pf:
         def worker_fn(group):
             return [_run_one(a) for a in group]
@@ -148,6 +167,8 @@ def run_batch(mode: str, jobs: int, only: str | None, every: int | None,
                     done += 1
                     if res["status"] == "skip":
                         skipped += 1
+                    elif res["status"] == "kk_reject":
+                        kk_rej += 1
                     elif res["status"] != "ok":
                         bad.append((res["stem"], res["status"]))
                     line = (f"[{done:3d}/{len(rows)}] {res['stem']:<28} "
@@ -156,8 +177,9 @@ def run_batch(mode: str, jobs: int, only: str | None, every: int | None,
                     print(line, flush=True)
                     pf.write(line + "\n")
                     pf.flush()
-    print(f"[batch_2e] 完成：{done - len(bad) - skipped} 新跑 / "
-          f"{skipped} 已存在跳过 / {len(bad)} 失败，总耗时 {time.time()-t0:.0f}s")
+    print(f"[batch_2e] 完成：{done - len(bad) - skipped - kk_rej} 新跑 / "
+          f"{kk_rej} KK 拒绝（未拟合）/ {skipped} 已存在跳过 / "
+          f"{len(bad)} 失败，总耗时 {time.time()-t0:.0f}s")
     for s, why in bad:
         print(f"    失败 {s}: {why}（看 out/2E_*/logs/{s}.log）")
     return 0 if not bad else 1
@@ -166,7 +188,8 @@ def run_batch(mode: str, jobs: int, only: str | None, every: int | None,
 # --------------------------------------------------------------------------
 # 汇总 / 图片 / 拟合曲线
 # --------------------------------------------------------------------------
-FIELDS = ["stem", "src", "sheet", "j_mA_cm2", "sampling", "K", "grade",
+FIELDS = ["stem", "src", "sheet", "j_mA_cm2", "sampling", "fit_performed",
+          "kk_status", "K", "grade",
           "elpd_loo", "rms_re", "rms_im", "sigma_re", "sigma_im", "acf",
           "p_peak_out_max", "p_tau_out_max", "frac_neg", "divergences",
           "rhat_max", "ess_bulk_min", "include_L", "n_outside", "t_fit_s",
@@ -211,6 +234,16 @@ def _collect(root: Path, mode: str) -> list[dict]:
                 rec["err"] = f"读 json 失败：{e}"
                 out.append(rec)
                 continue
+            # ---- K-K 门禁拒绝：保留成一行，但不参与任何拟合统计 ----
+            fp = j.get("fit_performed", True)
+            rec["fit_performed"] = fp
+            rec["kk_status"] = (j.get("kk") or {}).get("status") or ""
+            if not fp:
+                rec["judge"] = "KK 拒绝（未拟合）"
+                rec["reasons"] = (j.get("kk") or {}).get("reason", "") or "数据不自洽"
+                out.append(rec)
+                continue
+
             dg = j.get("diag") or {}
             rh = [v["rhat"] for v in dg.values()
                   if isinstance(v, dict) and np.isfinite(v.get("rhat", np.nan))]
@@ -359,8 +392,10 @@ def make_report(mode: str) -> int:
     n_cir = sum(1 for r in recs if r["circuit_png"])
     n_cur = sum(1 for r in recs if r["curve_csv"])
     grade2 = sum(1 for r in recs if r["grade"] == 2)
+    n_kk = sum(1 for r in recs if r["fit_performed"] is False)
     print(f"[batch_2e] 汇总 {len(recs)} 条：诊断图 {n_fit} / 电路图 {n_cir} / "
-          f"拟合曲线 {n_cur}；严格分级 2 的有 {grade2} 条")
+          f"拟合曲线 {n_cur}；严格分级 2 的有 {grade2} 条"
+          + (f"；KK 门禁拒绝 {n_kk} 条（未拟合）" if n_kk else ""))
     print(f"  图片目录：{figdir}")
     print(f"  图片索引：{figdir/'index.html'}")
 

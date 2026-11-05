@@ -28,7 +28,10 @@
 覆盖项（对 auto / watch 有效）：
     --krange 1,4   --wide   --kmax 6   --quick   --ta 0.95
     --L / --no-L   --zeta 1.0|free   --diffusion none|Ws|Wo|both
-    --no-move      --out DIR   --inbox DIR   --interval 30
+    --kk gate|warn|off    --no-move   --out DIR   --inbox DIR   --interval 30
+
+    --kk 默认 gate：拟合前先过 Lin-KK，判 fail 就写 fit_performed=false
+    的结果 json 并拒绝定 K（不是运行失败）。数值阈值在 config.json 的 kk 段。
 
     --diffusion 默认 none（与改动前逐位一致）。Ws=半无限 Warburg，
     Wo=有限长阻挡 Warburg。两者高频尾相同，both 只作对照，别当最终模型。
@@ -45,9 +48,12 @@
     bm_core.py          模型（HN 基底 + stick-breaking）、NUTS、诊断原语
     bm_experiments.py   R̂ / bulk & tail ESS / 树深触顶 / acf
     drt.py              传统 DRT 预判断（Tikhonov + 峰识别）
-    bm_real.py          主流程：读数据 → 预判断 → K 扫描 → 配对 LOO 选 K → 出图
+    bm_real.py          主流程：读数据 → KK 门禁 → 预判断 → K 扫描 → 配对 LOO 选 K → 出图
+    bm_kk.py            拟合前 Lin-KK 分级门禁（ok/warn/fail/unavailable）
+    bm_corr.py          全参数后验相关矩阵 + 90% 区间（可对 npz 单独重算）
     bm_circuit.py       等效电路图（把选中的模型画成电路，参数标在元件上）
     bm_diff.py          扩散元件（W_inf/W_open/W_short）+ HN↔Warburg 退化诊断
+                        + Ws/Wo 可分辨性（本频段能不能分）
     bm_check.py         数学自检（18 项）
     bm_bench.py         合成 benchmark
     bm_ident.py         可辨识性分析（bm_check 的峰位判据用它）
@@ -89,10 +95,17 @@ DEFAULTS = {
               "rejected": "rejected"},
     "fit": {"krange": None, "wide": False, "kmax": 5, "quick": False,
             "ta": None, "include_L": None, "zeta": "1.0"},
+    "kk": {"mode": "gate", "c": 0.85, "max_M": 50, "res_tol": 0.05,
+           "auto_L": True, "auto_tail": True, "auto_cap": True},
+    "diag": {"corr_strong": 0.90, "corr_medium": 0.70,
+             "diff_resolution_tol": 0.02},
     "batch": {"move_done": True, "skip_done": True, "min_points": 8,
               "min_decades": 1.0, "ext": [".csv", ".tsv", ".txt", ".dat"]},
     "watch": {"interval_s": 30},
 }
+
+# 只有这些键会传给 bm_kk.kk_check()；配置里多写别的键不会让门禁崩。
+KK_OPT_KEYS = ("c", "max_M", "res_tol", "auto_L", "auto_tail", "auto_cap")
 
 
 # --------------------------------------------------------------------------
@@ -197,7 +210,7 @@ def process_one(path: Path, cfg: dict) -> dict:
 
     rec = {"file": path.name, "stem": stem, "ok": False, "skip": False, "err": None,
            "outdir": str(outdir), "t_s": 0.0, "K": None, "grade": None,
-           "warnings": [], "note": ""}
+           "warnings": [], "note": "", "kk_rejected": False, "kk_status": None}
 
     t0 = time.time()
     log_path = outdir / "run.log"
@@ -222,17 +235,33 @@ def process_one(path: Path, cfg: dict) -> dict:
             try:
                 # 注意：run() 返回的是选中的结果 dict，不是文件路径。
                 # 结果文件名由 save_out 决定，这里是它的约定，别改一处忘另一处。
+                kkcfg = cfg.get("kk") or {}
+                kk_opts = {k: kkcfg[k] for k in KK_OPT_KEYS if k in kkcfg}
+                dcfg = cfg.get("diag") or {}
                 R.run(str(path), K_force=None,
                       krange=fit["krange"], wide=fit["wide"],
                       kmax=int(fit["kmax"]), include_L=fit["include_L"],
                       zeta=str(fit["zeta"]), quick=fit["quick"],
                       ta=fit["ta"],
                       diffusion=(None if str(fit.get("diffusion", "none")).lower()
-                                 in ("none", "", "null") else str(fit["diffusion"])))
+                                 in ("none", "", "null") else str(fit["diffusion"])),
+                      kk_mode=str(kkcfg.get("mode", "gate")),
+                      kk_opts=kk_opts, diag=dcfg)
                 js = outdir / f"real_{stem}.json"
                 rec["ok"] = js.exists()
                 rec["json"] = str(js) if js.exists() else None
-                if not js.exists():
+                if js.exists():
+                    # KK 拒绝 = 流程正常完成，不是崩溃，也不是一次成功拟合。
+                    try:
+                        d = json.loads(js.read_text(encoding="utf-8"))
+                        rec["kk_rejected"] = bool(d.get("fit_performed") is False)
+                        rec["kk_status"] = (d.get("kk") or {}).get("status")
+                        if rec["kk_rejected"]:
+                            print("\n=== KK 门禁拒绝：数据不自洽，未拟合（流程正常完成）===")
+                            fh.write("\n[KK-REJECT] 数据不自洽，未拟合\n")
+                    except Exception:
+                        pass
+                else:
                     rec["err"] = "跑完了但没写出结果 json"
             except KeyboardInterrupt:            # Ctrl-C 就该停，不吞
                 raise
@@ -270,18 +299,22 @@ def _enrich(rec: dict, outdir: Path, stem: str) -> dict:
         return rec
     try:
         d = json.loads(js.read_text(encoding="utf-8"))
+        fp = d.get("fit_performed", True)
         rec.update(K=d.get("K"), grade=d.get("sample_grade"),
                    elpd=d.get("elpd_loo"), elpd_diff=d.get("elpd_diff"),
                    dse=d.get("dse"), rms_re=d.get("rms_re"),
                    rms_im=d.get("rms_im"), sig_re=d.get("sigma_re"),
                    sig_im=d.get("sigma_im"), acf=d.get("acf"),
-                   cover=min(d.get("cover_re", 1.0), d.get("cover_im", 1.0)),
+                   cover=(min(d.get("cover_re", 1.0), d.get("cover_im", 1.0))
+                          if fp else None),
                    ndiv=d.get("divergences"),
                    n_comp=len(d.get("components", [])),
                    n_out=sum(1 for c in d.get("components", [])
                              if c.get("p_outside", 0) > 0.5),
                    warnings=d.get("warnings") or [],
-                   ksel=d.get("k_selection") or [])
+                   ksel=d.get("k_selection") or [],
+                   kk_status=(d.get("kk") or {}).get("status"),
+                   k_selection_status=d.get("k_selection_status"))
         rec["fig"] = str(outdir / f"real_{stem}.png")
     except Exception as e:
         rec["err"] = rec["err"] or f"读结果 json 失败：{e}"
@@ -303,6 +336,8 @@ def _verdict(r: dict) -> str:
         return "跳过"
     if not r["ok"]:
         return "失败"
+    if r.get("kk_rejected"):
+        return "KK 拒绝"
     if r.get("grade") == 0:
         return "采样不可用"
     if r.get("grade") == 1:
@@ -323,12 +358,16 @@ def write_summary(recs: list[dict], cfg: dict) -> Path:
                              ensure_ascii=False, indent=2), encoding="utf-8")
 
     md = out / "summary.md"
+    n_fit = sum(1 for r in recs if r["ok"] and not r.get("kk_rejected"))
+    n_kk = sum(1 for r in recs if r.get("kk_rejected"))
     lines = [f"# bmdrt 本次批次汇总", "",
              f"生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}　"
-             f"共 {len(recs)} 个文件：成功 {sum(1 for r in recs if r['ok'])}，"
+             f"共 {len(recs)} 个文件：拟合成功 {n_fit}，KK 拒绝 {n_kk}，"
              f"跳过 {sum(1 for r in recs if r.get('skip'))}，"
              f"失败 {sum(1 for r in recs if not r['ok'] and not r.get('skip'))}",
              "",
+             "> 「KK 拒绝」= 拟合前 Lin-KK 判不自洽，流程正常完成但不输出 K；"
+             "不计入拟合成功，也不算运行失败。", "",
              "> 全量状态（含以前跑过的）用 `python bmdrt.py status`；"
              "本文件只反映**最近一次**批处理。", ""]
     lines += ["| 文件 | K | 分级 | elpd | Δelpd±dse | rms/σ | PPC | 分量 | 耗时 | 判定 |",
@@ -337,6 +376,10 @@ def write_summary(recs: list[dict], cfg: dict) -> Path:
         if not r["ok"]:
             lines.append(f"| {r['file']} | – | – | – | – | – | – | – | "
                          f"{r['t_s']:.0f}s | **{_verdict(r)}**：{r['err'] or ''} |")
+            continue
+        if r.get("kk_rejected"):
+            lines.append(f"| {r['file']} | – | – | – | – | – | – | – | "
+                         f"{r['t_s']:.0f}s | **KK 拒绝**（未拟合） |")
             continue
         q = ""
         if r.get("rms_re") is not None and r.get("sig_re"):
@@ -357,6 +400,12 @@ def write_summary(recs: list[dict], cfg: dict) -> Path:
             lines.append(f"### {r['file']}　→ {_verdict(r)}")
             if not r["ok"]:
                 lines.append(f"- 错误：`{r['err']}`")
+                lines.append(f"- 日志：`{Path(r['outdir']) / 'run.log'}`")
+            elif r.get("kk_rejected"):
+                lines.append(f"- KK 门禁状态 `{r.get('kk_status')}`："
+                             f"数据不自洽，**未拟合、不输出 K**。")
+                for t in (r.get("ksel") or []):
+                    lines.append(f"- {t}")
                 lines.append(f"- 日志：`{Path(r['outdir']) / 'run.log'}`")
             else:
                 lines.append(f"- 选出的 K = {r.get('K')}，分级 {r.get('grade')}")
@@ -434,6 +483,8 @@ def _apply_cli(cfg: dict, opt: dict):
     for k in ("krange", "wide", "kmax", "quick", "ta", "zeta", "diffusion"):
         if opt.get(k) is not None:
             fit[k] = opt[k]
+    if opt.get("kk") is not None:
+        cfg.setdefault("kk", {})["mode"] = str(opt["kk"])
     if opt.get("L") is True:
         fit["include_L"] = True
     if opt.get("L") is False:
@@ -460,7 +511,8 @@ def cmd_auto(paths: list[str], opt: dict) -> int:
     print(f"  配置：K 范围 {'1..' + str(cfg['fit']['kmax']) if cfg['fit']['wide'] else (cfg['fit']['krange'] or '按 DRT 自动')}"
           f"　quick={cfg['fit']['quick']}　ta={cfg['fit']['ta'] or '默认 0.9'}"
           f"　L={cfg['fit']['include_L']}　ζ={cfg['fit']['zeta']}"
-          f"　扩散={cfg['fit'].get('diffusion', 'none')}")
+          f"　扩散={cfg['fit'].get('diffusion', 'none')}"
+          f"　KK={(cfg.get('kk') or {}).get('mode', 'gate')}")
 
     recs = []
     # skip_done 只在"没点名、扫 inbox"时才生效。用户明确点了一个文件，
@@ -488,9 +540,11 @@ def cmd_auto(paths: list[str], opt: dict) -> int:
     md = write_summary(recs, cfg)
     bad = [r for r in recs if not r["ok"] and not r.get("skip")]
     skip = [r for r in recs if r.get("skip")]
+    kk_rej = [r for r in recs if r.get("kk_rejected")]
     print(f"\n{'=' * 70}")
-    print(f"[bmdrt] 完成 {len(recs)} 个：成功 {len(recs) - len(bad) - len(skip)}，"
-          f"跳过 {len(skip)}，失败 {len(bad)}")
+    print(f"[bmdrt] 完成 {len(recs)} 个：拟合成功 "
+          f"{len(recs) - len(bad) - len(skip) - len(kk_rej)}，"
+          f"KK 拒绝 {len(kk_rej)}，跳过 {len(skip)}，失败 {len(bad)}")
     print(f"  汇总：{md}")
     print(f"  明细：{cfg['paths']['out'] / 'summary.json'}")
     for r in bad:
@@ -506,7 +560,7 @@ def cmd_watch(paths: list[str], opt: dict) -> int:
     inbox = cfg["paths"]["inbox"]
     print(f"[bmdrt] 监听 {inbox}，每 {iv:.0f}s 扫一次（Ctrl-C 停止）")
     print(f"  结果写 {cfg['paths']['out']}；成功的移入 archive/，被拒收的移入 rejected/")
-    n_ok = n_bad = n_skip = 0
+    n_ok = n_bad = n_skip = n_kk = 0
     try:
         while True:
             files = scan_inputs(paths, cfg)
@@ -515,7 +569,11 @@ def cmd_watch(paths: list[str], opt: dict) -> int:
             for p in todo:
                 print(f"\n[{datetime.now().strftime('%H:%M:%S')}] 发现 {p.name}")
                 r = process_one(p, cfg)
-                n_ok += int(r["ok"])
+                # KK 拒绝：流程完成但没拟合，既不算成功拟合也不算失败。
+                if r.get("kk_rejected"):
+                    n_kk += 1
+                else:
+                    n_ok += int(r["ok"])
                 n_skip += int(bool(r.get("skip")))
                 n_bad += int(not r["ok"] and not r.get("skip"))
                 if cfg["batch"]["move_done"] and p.parent.resolve() == inbox.resolve():
@@ -525,7 +583,8 @@ def cmd_watch(paths: list[str], opt: dict) -> int:
                         print(f"  → 已移入 {sub}/")
             time.sleep(iv)
     except KeyboardInterrupt:
-        print(f"\n[bmdrt] 停止。本次成功 {n_ok}，跳过 {n_skip}，失败 {n_bad}")
+        print(f"\n[bmdrt] 停止。本次拟合成功 {n_ok}，KK 拒绝 {n_kk}，"
+              f"跳过 {n_skip}，失败 {n_bad}")
         return 0
 
 
@@ -605,7 +664,7 @@ def parse_opts(argv: list[str]) -> tuple[list[str], dict]:
     """手写小解析器：没有子命令时，所有非选项参数都当成输入路径。"""
     opt = {"krange": None, "wide": None, "kmax": None, "quick": None,
            "ta": None, "zeta": None, "L": None, "no_move": False,
-           "out": None, "inbox": None, "interval": None,
+           "out": None, "inbox": None, "interval": None, "kk": None,
            "fit": False, "fast": False}
     paths, i = [], 0
     while i < len(argv):

@@ -25,6 +25,11 @@ def _is_info(w: str) -> bool:
 
 
 def _verdict(d: dict) -> str:
+    # KK 门禁拒绝：流程正常完成、但没拟合、不输出 K。
+    # 必须排在所有拟合指标之前判——这种记录里 grade/K 都是 None，
+    # 继续往下走会被误读成「采样不可用」。
+    if d.get("fit_performed") is False or d.get("kk_rejected"):
+        return "KK 拒绝"
     g = d.get("sample_grade", d.get("grade"))
     if g == 0:
         return "采样不可用"
@@ -63,6 +68,11 @@ def _from_result(js: Path) -> dict | None:
         return None
     return {"file": d.get("file", js.stem), "stem": js.stem, "ok": True,
             "skip": False, "err": None, "outdir": str(js.parent),
+            # 老结果没有 meta.json 时，KK 拒绝只能从这里读出来；不传下去
+            # 就会被 _verdict 当成「看警告」。
+            "fit_performed": d.get("fit_performed", True),
+            "kk_rejected": bool(d.get("fit_performed") is False),
+            "kk_status": (d.get("kk") or {}).get("status"),
             "t_s": d.get("t_fit_s", 0.0), "K": d.get("K"),
             "grade": d.get("sample_grade"), "elpd": d.get("elpd_loo"),
             "elpd_diff": d.get("elpd_diff"), "dse": d.get("dse"),
