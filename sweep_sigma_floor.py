@@ -248,8 +248,9 @@ def _write_report(rows, idx, floors, a, path: Path) -> Path:
                  f"K 取值 {ks}；状态 {sts}"
                  + (f"；PPC {min(cov):.2f}–{max(cov):.2f}" if cov else ""))
         if max(caps) < 0.05:
-            L.append(f"  - 所有档位触顶都 <5%：这条谱本来就没有 σ 塌陷问题，"
-                     f"地板对它的影响只体现在参数漂移上。")
+            L.append(f"  - 本次跑的所有档位触顶都 <5%。**注意这不能推出「这条谱本来"
+                     f"没有 σ 塌陷」**——只有跑过足够小的地板（≤1e-6）才能这么说；"
+                     f"没跑的话，只能说这些档位都压住了漏斗。")
         elif min(caps) < 0.05:
             good = [r["floor"] for r in sub if r["m"]["tree_cap"] < 0.05]
             L.append(f"  - 触顶降到 <5% 的最小地板：{min(good):.0e}"
