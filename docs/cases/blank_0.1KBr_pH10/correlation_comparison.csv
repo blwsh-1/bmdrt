@@ -1,0 +1,31 @@
+model,pair,rho
+K1_none,ln R_inf ~ ln w_1,-0.9574
+K1_none,ln w_1 ~ ln tau_1,-0.6202
+K1_none,ln R_inf ~ ln tau_1,0.7625
+K1_none,ln w_1 ~ phi_1,-0.8546
+K1_none,ln R_inf ~ phi_1,0.7805
+K1_cut1Hz,ln R_inf ~ ln w_1,-0.9300
+K1_cut1Hz,ln w_1 ~ ln tau_1,-0.4682
+K1_cut1Hz,ln R_inf ~ ln tau_1,0.6991
+K1_cut1Hz,ln w_1 ~ phi_1,-0.8593
+K1_cut1Hz,ln R_inf ~ phi_1,0.7588
+K2_none,ln R_inf ~ ln w_1,-0.8827
+K2_none,ln w_1 ~ ln tau_1,-0.2201
+K2_none,ln R_inf ~ ln tau_1,0.5914
+K2_none,ln w_1 ~ phi_1,-0.9090
+K2_none,ln R_inf ~ phi_1,0.8112
+K2_none,ln R_inf ~ ln w_2,0.0192
+K2_none,ln w_2 ~ ln tau_2,0.9367
+K2_none,ln R_inf ~ ln tau_2,-0.1612
+K2_none,ln w_2 ~ phi_2,-0.6004
+K2_none,ln R_inf ~ phi_2,-0.0919
+K2_Ws,ln R_inf ~ ln w_1,-0.8491
+K2_Ws,ln w_1 ~ ln tau_1,0.0013
+K2_Ws,ln R_inf ~ ln tau_1,0.4636
+K2_Ws,ln w_1 ~ phi_1,-0.9126
+K2_Ws,ln R_inf ~ phi_1,0.8210
+K2_Ws,ln R_inf ~ ln w_2,-0.1407
+K2_Ws,ln w_2 ~ ln tau_2,0.9540
+K2_Ws,ln R_inf ~ ln tau_2,-0.2779
+K2_Ws,ln w_2 ~ phi_2,-0.5580
+K2_Ws,ln R_inf ~ phi_2,-0.0571

@@ -407,6 +407,7 @@ not_compared, rejected_by_kk}`（旧结果文件里的 `ok` 是 `converged` 的�
 | `docs/ECM模拟数据回归测试报告.md` | 随机 3 组 + 分层对照的端到端回归、σ 地板敏感性与 full 档确认 |
 | `docs/审查意见处理与实施记录.md` | 三轮外部审查意见的逐条核对、代码整改与实验结论（含 §9 第三轮） |
 | `docs/v6_噪声模型第一轮审计与F0-F3对照.md` | v6 只读审计、三条路径耦合判定、F0–F3 对照、六项解锁条件逐项判定与第 4 步清单 |
+| `docs/cases/blank_0.1KBr_pH10/` | **真实 EIS 谱模型选择诊断案例**：基线四组对照、K=1/K=2 后验摘要、逐频点分量贡献、Pareto-k、2×3（`none/Ws/Wo` × K=1/2）统一比较、`K_SELECTION_AMBIGUOUS` 规格与 10 组离线回放。含 NPZ 后验样本与 `run.log` 全文，可离线重算 |
 
 `evidence/b2x/paired_loo.py` 用于跨配置配对 LOO：
 `bmdrt.py auto --krange 1,1` 只跑一个模型，占位 `elpd_diff/dse` 需事后从 `samples.npz` 重算。

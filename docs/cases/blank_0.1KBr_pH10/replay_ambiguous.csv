@@ -1,0 +1,11 @@
+case,kk,old_status,old_K,new_status,new_K_reference,cands,reason
+K1_none,ok,converged,1,ambiguous,2,"K=1: elpd=-119.5, P_out=0.00, grade=2, K=2: elpd=67.5, P_out=0.89, grade=2",K=2 的 LOO 优于 K=1（Δ=187.0 > 14.9），但其分量 P(峰出窗)=0.89 > 0.5
+K1_cut1Hz,ok,converged,1,ambiguous,2,"K=1: elpd=-24.8, P_out=0.00, grade=2, K=2: elpd=50.6, P_out=0.94, grade=2",K=2 的 LOO 优于 K=1（Δ=75.4 > 14.1），但其分量 P(峰出窗)=0.94 > 0.5
+K2_Ws,ok,converged,2,converged,2,"K=1: elpd=-8.0, P_out=0.00, grade=2, K=2: elpd=68.2, P_out=0.05, grade=2",Δ=76.2 > 14.2 且峰位在窗内，取 K=2
+K2_none,ok,not_compared,2,not_compared,2,K=2（单候选）,单候选，不涉及 K 比较
+G_K1_none,ok,not_compared,1,not_compared,1,"K=1（--krange K,K）",强制单 K，不涉及 K 比较
+G_K2_none,ok,not_compared,2,not_compared,2,"K=2（--krange K,K）",强制单 K，不涉及 K 比较
+G_K1_Ws,ok,not_compared,1,not_compared,1,"K=1（--krange K,K）",强制单 K，不涉及 K 比较
+G_K2_Ws,ok,not_compared,2,not_compared,2,"K=2（--krange K,K）",强制单 K，不涉及 K 比较
+G_K1_Wo,ok,not_compared,1,not_compared,1,"K=1（--krange K,K）",强制单 K，不涉及 K 比较
+G_K2_Wo,ok,not_compared,2,not_compared,2,"K=2（--krange K,K）",强制单 K，不涉及 K 比较

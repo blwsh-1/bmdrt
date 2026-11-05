@@ -1,0 +1,254 @@
+{
+  "case": "Blank_0.1KBr_pH10_EIS_PtCu_1.2V",
+  "created": "2026-11-05",
+  "note": "只读基线：本轮未修改任何 bmdrt 代码 / 参数 / 先验 / 种子",
+  "code": {
+    "repo": "D:\\eis训练数据\\bmdrt",
+    "head": "f745205ccf1731cfa4301f1df9b541294e811c0c",
+    "working_tree_clean": true,
+    "dirty_files": [],
+    "remote": "https://github.com/blwsh-1/dmdrt.git"
+  },
+  "env": {
+    "python": "D:/autoeis_env/Scripts/python.exe",
+    "numpy": "2.2.6",
+    "pandas": "2.3.3"
+  },
+  "config_snapshot": {
+    "fit": {
+      "_说明": "krange=null 表示按 DRT 预判断自动取 [K_drt-1, K_drt+1]；wide=true 则扫 1..kmax",
+      "krange": null,
+      "wide": false,
+      "kmax": 5,
+      "quick": false,
+      "ta": null,
+      "include_L": null,
+      "zeta": "1.0",
+      "diffusion": "none",
+      "sigma_floor": 0.0
+    },
+    "kk": {
+      "_说明": "拟合前 Lin-KK 门禁。mode: gate=判 fail 就拒绝定 K / warn=只报告仍拟合 / off=跳过。c 是 mu 收敛阈值，res_tol 是分频段相对残差 RMS 阈值。auto_L 只做电感诊断不扣 jωL（Lin-KK 已含自由 L）；auto_tail 识别 -45 度扩散尾；auto_cap 用串联电容在同一频率网格复验，不丢数据点。",
+      "mode": "gate",
+      "c": 0.85,
+      "max_M": 50,
+      "res_tol": 0.05,
+      "auto_L": true,
+      "auto_tail": true,
+      "auto_cap": true
+    },
+    "diag": {
+      "_说明": "事后诊断阈值。corr_strong/corr_medium 是参数相关矩阵的两级阈值（|rho| 超过即列入报告）；diff_resolution_tol 是 Ws 与 Wo 在本频段的最大相对差阈值，低于它判「不可分」——elpd 差再大也不能当有限长扩散的证据。",
+      "corr_strong": 0.9,
+      "corr_medium": 0.7,
+      "diff_resolution_tol": 0.02
+    },
+    "drt": {
+      "_说明": "DRT 去电感数据通道。DRT 是 Tikhonov 非负反演，表示不了 jωL，有感性尾时会在高频边缘长伪峰。deinduce=true 时按四道检查决定是否把 Z−jωL 交给 DRT；**BM-DRT 的似然始终用原始 Z**。min_share 是感抗在 f_max 处占 |Z| 的最小比例（低于它扣了白扣）；tol_stab 是高频 ImZ/ω 的离散度上限 (p90−p10)/median（超过说明高频尾不是干净 ωL）；min_gain 是去电感后 DRT 高频残差至少要降的比例；tol_neg 是扣除后高频 ImZ 允许变负的幅度（超过说明 L 估大、造出容性伪像）。",
+      "deinduce": true,
+      "n_hi": 5,
+      "min_share": 0.005,
+      "tol_stab": 0.35,
+      "min_gain": 0.2,
+      "tol_neg": 0.02
+    }
+  },
+  "prior_and_parameterization": {
+    "phi_prior": "Uniform(0.5, 1.0) —— 下界 0.5 是硬边界",
+    "zeta": "zeta_fixed=1.0 钉死，不是采样参数，故 phi*zeta == phi",
+    "omega": "2*pi*f",
+    "note": "慢分量 phi 后验 q05 ≈ 0.501 紧贴先验下界；phi≈0.5 不能单独当作扩散过程的独立证据"
+  },
+  "inputs": {
+    "cut1Hz_40pt.txt": {
+      "bytes": 3808,
+      "sha256": "dd223729a31262fcca4885a3c5c5e595176baff3a817949b9d954c53d3ef757e"
+    },
+    "original_50pt.txt": {
+      "bytes": 4739,
+      "sha256": "6e73bafb4feb047f2ac12fe59b438f4943d43b69199d644e64422486415c9e19"
+    }
+  },
+  "models": {
+    "K1_none": {
+      "label": "原运行 K=1",
+      "command": "bmdrt.py auto inbox/Blank_0.1KBr_pH10_EIS_PtCu_1.2V.txt  (config.json 原样；DRT 局部扫描 K=1,2)",
+      "source_dir": "D:\\eis训练数据\\bmdrt\\out\\Blank_0.1KBr_pH10_EIS_PtCu_1.2V",
+      "K": 1,
+      "k_selection_status": "converged",
+      "sample_grade": 2,
+      "f_min": 0.1,
+      "f_max": 10000.0,
+      "n": 50,
+      "include_L": false,
+      "diffusion": null,
+      "diffusion_params": {},
+      "sigma_floor": 0.0,
+      "rms_re": 0.6497890363467209,
+      "rms_im": 0.8707594971422764,
+      "sigma_re": 0.6764451935556788,
+      "sigma_im": 0.8790195544761383,
+      "acf": 0.91622828871415,
+      "trend_re_raw": 0.8712588121522415,
+      "trend_im_raw": 1.814845949964247,
+      "trend_sigma_re": 1.29,
+      "trend_sigma_im": 2.06,
+      "trend_null_percentile_rough": 100.0,
+      "trend_null_percentile_judgement": 100.0,
+      "p_diff_small": NaN,
+      "elpd_loo": -119.51953023175493,
+      "elpd_diff": 187.0211402836578,
+      "dse": 14.868903310486242,
+      "divergences": 0,
+      "tree_cap": 0.0,
+      "p_peak_out_max": 0.0,
+      "k_selection": [
+        "K=2 **剔除**：1 个分量 P(峰位出窗)>0.5"
+      ],
+      "warnings": [
+        "**参数强相关**：ln R_inf↔ln w_1(ρ=-0.96)。这些参数只能定出一个组合，单独引用其中一个会被读成「已经定住」，实际没有。",
+        "**残差有系统性弯曲**：趋势 2.06σ 位于白噪声零分布第 100.0 百分位（实 1.29σ / 虚 2.06σ）。这比 acf 直接——形状不对，不是随机误差。看分段表是哪段偏。"
+      ],
+      "files": [
+        "real_Blank_0.1KBr_pH10_EIS_PtCu_1.2V.json",
+        "real_Blank_0.1KBr_pH10_EIS_PtCu_1.2V_samples.npz",
+        "run.log"
+      ]
+    },
+    "K1_cut1Hz": {
+      "label": "低频截断 >=1 Hz",
+      "command": "bmdrt.py auto out/_diag_inputs/Blank_cut1Hz.txt --no-move --out out/_diag_cut1Hz --krange 1,2",
+      "source_dir": "D:\\eis训练数据\\bmdrt\\out\\_diag_cut1Hz\\Blank_cut1Hz",
+      "K": 1,
+      "k_selection_status": "converged",
+      "sample_grade": 2,
+      "f_min": 1.04811,
+      "f_max": 10000.0,
+      "n": 40,
+      "include_L": false,
+      "diffusion": null,
+      "diffusion_params": {},
+      "sigma_floor": 0.0,
+      "rms_re": 0.21781583158423895,
+      "rms_im": 0.42599436572966787,
+      "sigma_re": 0.2320152782820321,
+      "sigma_im": 0.4313935457705611,
+      "acf": 0.8612544141429997,
+      "trend_re_raw": 0.18093488578755654,
+      "trend_im_raw": 0.8736454053395271,
+      "trend_sigma_re": 0.78,
+      "trend_sigma_im": 2.03,
+      "trend_null_percentile_rough": 100.0,
+      "trend_null_percentile_judgement": 100.0,
+      "p_diff_small": NaN,
+      "elpd_loo": -24.75766339370525,
+      "elpd_diff": 75.40331970621637,
+      "dse": 14.098275987969764,
+      "divergences": 0,
+      "tree_cap": 0.0,
+      "p_peak_out_max": 0.0,
+      "k_selection": [
+        "K=2 **剔除**：1 个分量 P(峰位出窗)>0.5"
+      ],
+      "warnings": [
+        "**参数强相关**：ln R_inf↔ln w_1(ρ=-0.93)。这些参数只能定出一个组合，单独引用其中一个会被读成「已经定住」，实际没有。",
+        "**残差有系统性弯曲**：趋势 2.03σ 位于白噪声零分布第 100.0 百分位（实 0.78σ / 虚 2.03σ）。这比 acf 直接——形状不对，不是随机误差。看分段表是哪段偏。"
+      ],
+      "files": [
+        "real_Blank_cut1Hz.json",
+        "real_Blank_cut1Hz_samples.npz",
+        "run.log"
+      ]
+    },
+    "K2_none": {
+      "label": "强制 K=2（不加扩散）",
+      "command": "bmdrt.py auto out/_diag_inputs/Blank_K2.txt --no-move --out out/_diag_K2 --krange 2,2",
+      "source_dir": "D:\\eis训练数据\\bmdrt\\out\\_diag_K2\\Blank_K2",
+      "K": 2,
+      "k_selection_status": "not_compared",
+      "sample_grade": 2,
+      "f_min": 0.1,
+      "f_max": 10000.0,
+      "n": 50,
+      "include_L": false,
+      "diffusion": null,
+      "diffusion_params": {},
+      "sigma_floor": 0.0,
+      "rms_re": 0.08403824950396112,
+      "rms_im": 0.14935488907526093,
+      "sigma_re": 0.09056980014391658,
+      "sigma_im": 0.1540878963438545,
+      "acf": 0.5813992040291381,
+      "trend_re_raw": 0.06509939697492638,
+      "trend_im_raw": 0.1853780988227567,
+      "trend_sigma_re": 0.72,
+      "trend_sigma_im": 1.2,
+      "trend_null_percentile_rough": 100.0,
+      "trend_null_percentile_judgement": 99.7,
+      "p_diff_small": NaN,
+      "elpd_loo": 67.50161005190284,
+      "elpd_diff": 0.0,
+      "dse": NaN,
+      "divergences": 0,
+      "tree_cap": 0.0,
+      "p_peak_out_max": 0.892,
+      "k_selection": [],
+      "warnings": [
+        "**参数强相关**：ln τ_2↔ln w_2(ρ=+0.94)；ln w_1↔φ_1(ρ=-0.91)。这些参数只能定出一个组合，单独引用其中一个会被读成「已经定住」，实际没有。",
+        "**残差有系统性弯曲**：趋势 1.20σ 位于白噪声零分布第 99.7 百分位（实 0.72σ / 虚 1.20σ）。这比 acf 直接——形状不对，不是随机误差。看分段表是哪段偏。",
+        "**1 个分量大概率在窗口外**（#2 P=0.89，峰位口径）：这是「用窗口外分量吸收缺项」的典型症状，面积不可信。"
+      ],
+      "files": [
+        "real_Blank_K2.json",
+        "real_Blank_K2_samples.npz",
+        "run.log"
+      ]
+    },
+    "K2_Ws": {
+      "label": "K=2 + Ws",
+      "command": "bmdrt.py auto out/_diag_inputs/Blank_full_Ws.txt --no-move --out out/_diag_Ws --krange 1,2 --diffusion Ws",
+      "source_dir": "D:\\eis训练数据\\bmdrt\\out\\_diag_Ws\\Blank_full_Ws",
+      "K": 2,
+      "k_selection_status": "converged",
+      "sample_grade": 2,
+      "f_min": 0.1,
+      "f_max": 10000.0,
+      "n": 50,
+      "include_L": false,
+      "diffusion": "Ws",
+      "diffusion_params": {
+        "Rw": 0.07236007233247334,
+        "Aw": 1.0199735892963637
+      },
+      "sigma_floor": 0.0,
+      "rms_re": 0.08307453817937546,
+      "rms_im": 0.14655982596254508,
+      "sigma_re": 0.08963607827029542,
+      "sigma_im": 0.151898744742142,
+      "acf": 0.5368945910368379,
+      "trend_re_raw": 0.06213094235670313,
+      "trend_im_raw": 0.17384187716100713,
+      "trend_sigma_re": 0.69,
+      "trend_sigma_im": 1.14,
+      "trend_null_percentile_rough": 100.0,
+      "trend_null_percentile_judgement": 99.6,
+      "p_diff_small": 0.30233333333333334,
+      "elpd_loo": 68.18946618761586,
+      "elpd_diff": 0.0,
+      "dse": 0.0,
+      "divergences": 0,
+      "tree_cap": 0.0,
+      "p_peak_out_max": 0.04933333333333333,
+      "k_selection": [],
+      "warnings": [
+        "**参数强相关**：ln τ_2↔ln w_2(ρ=+0.95)；ln w_1↔φ_1(ρ=-0.91)。这些参数只能定出一个组合，单独引用其中一个会被读成「已经定住」，实际没有。",
+        "**残差有系统性弯曲**：趋势 1.14σ 位于白噪声零分布第 99.6 百分位（实 0.69σ / 虚 1.14σ）。这比 acf 直接——形状不对，不是随机误差。看分段表是哪段偏。"
+      ],
+      "files": [
+        "real_Blank_full_Ws.json",
+        "real_Blank_full_Ws_samples.npz",
+        "run.log"
+      ]
+    }
+  }
+}
