@@ -64,10 +64,12 @@ try:                                    # K-K 事前门禁；缺了只是少一�
     from bm_kk import kk_check as _kk_check
     from bm_kk import format_report as _kk_format_report
     from bm_kk import estimate_L as _kk_estimate_L
+    from bm_kk import lin_kk as _kk_lin_kk
 except Exception:                       # pragma: no cover
     _kk_check = None
     _kk_format_report = None
     _kk_estimate_L = None
+    _kk_lin_kk = None
 
 try:                                    # 全参数相关矩阵（"别只看误差"那一层）
     import bm_corr as CORR
@@ -205,10 +207,45 @@ def load_spectrum(path, fscale: float | None = None, zscale: float = 1.0):
     return f, Z
 
 
+L_SHARE_MIN = 0.01          # 感抗在 f_max 处占 |Z| 的最小比例（判据②）
+
+
 def detect_L(f, Z) -> bool:
-    """高频端 Im Z > 0 说明有感抗尾巴（−Im Z < 0）。取最高 3 点投票。"""
+    """是否需要串联电感 L。两条判据，任一成立即加。
+
+    ① **电感压过容性**：最高 3 点 Im Z > 0 过半。这是最干净的感抗尾，
+       原判据，保留。
+
+    ② **电感只部分抵消容性**：Im Z 仍为负，但 Lin-KK 自由拟合的串联
+       电感 `L_fit` 在 f_max 处的感抗 ωL 已占 |Z| 的 ≥ `L_SHARE_MIN`。
+       实测 Blank_0.1KBr_pH10_EIS_PtCu_1.2V：最高 3 点 Im Z 全负
+       （-2.38/-2.87/-3.41），旧判据判「不需要」；但 L_fit=9.06 μH，
+       ωL@1e4 = 0.57 Ω 占 |Z| 的 2.8%。加 L 后配对 PSIS-LOO
+       Δ=+24.18（dse=4.89，4.95×dse），逐点增益集中在 3.9e3–1e4 Hz
+       （+1.3 ~ +2.9）——这类「部分补偿」不能漏。
+
+    为什么用 Lin-KK 的 `L_fit` 而不是 `Im Z/ω` 的中位数：后者只在
+    Im Z > 0 的点上取（`estimate_L` 的取法），对判据②天然失效；
+    `L_fit` 是 Lin-KK 拟合向量里的自由元素，Im 全负时仍可估。两条
+    独立路径互验：本谱 L_fit=9.06 μH vs 加 L 后后验中位数 9.17 μH。
+    """
+    f = np.asarray(f, float)
+    Z = np.asarray(Z, complex)
     hi = np.argsort(f)[-3:]
-    return bool(np.mean(Z.imag[hi] > 0) >= 0.5)
+    if bool(np.mean(Z.imag[hi] > 0) >= 0.5):
+        return True
+    if _kk_lin_kk is None:              # 没有 KK 模块：只能按判据①
+        return False
+    try:
+        g = _kk_lin_kk(f, Z)
+    except Exception:                   # noqa: BLE001
+        return False
+    L_fit = g.get("L_fit")
+    if L_fit is None or not np.isfinite(L_fit) or L_fit <= 0:
+        return False
+    imax = int(np.argmax(f))
+    share = 2 * np.pi * f[imax] * float(L_fit) / max(abs(Z[imax]), 1e-300)
+    return bool(share >= L_SHARE_MIN)
 
 
 # --------------------------------------------------------------------------

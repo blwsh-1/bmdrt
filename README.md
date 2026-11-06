@@ -401,6 +401,7 @@ not_compared, rejected_by_kk}`（旧结果文件里的 `ok` 是 `converged` 的�
 | 文档 | 内容 |
 |------|------|
 | `DIFFUSION_PLAN.md` | 扩散扩展方案：数学、先验、测试矩阵、模型选择 |
+| `ADSORPTION_PROJECT.md` | **低频吸附电感元件立项书**：`R_ad∥L_ad` 定义、负 RC 恒等式、DRT 盲区、三区间可辨识性、M0–M6 里程碑与验收标准 |
 | `docs/cases/blank_0.1KBr_pH10/` | **真实 EIS 谱模型选择诊断案例**（最新版本）：四层可辨识性规格、逐频点 LOO 与配对 dse、精确 HN 参考频率贡献、2×3 统一比较、合成谱用例与历史回放。文档 / 脚本 / CSV / JSON 齐备；NPZ 与 run.log 按约定不入库 |
 
 `evidence/b2x/paired_loo.py` 用于跨配置配对 LOO：
