@@ -321,7 +321,10 @@ def main():
             print(f"    · {nm} K={K} ζ{tag}: acf={m['acf']:.2f}, rms/地板={m['ratio']:.2f}")
     print(f"  面积误差 <5%：{len(good_param)}/{len(rows)} 组")
     print("\n  注意：rms 到噪声底 ≠ 参数对。看 f0/面积误差列与'分量'列。")
+    # 有「贴不住」的组就返回非零，供 cmd_bench 透传退出码（审查 P2-2）。
+    return 1 if bad_fit else 0
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    sys.exit(main())

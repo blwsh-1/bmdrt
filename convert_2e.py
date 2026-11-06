@@ -110,7 +110,10 @@ def read_sheet(ws) -> dict:
         err_mod += abs(math.hypot(zr, zi) - zm) / max(zm, 1e-12)
     n = len(rec)
     err_same, err_flip, err_mod = err_same / n, err_flip / n, err_mod / n
-    flip = err_flip < err_same
+    # 只有翻号优势超过明确裕度才翻：高频近纯阻时两个误差都≈0，纯大小比较
+    # 会由噪声随机决定翻不翻，可能把感抗/容抗尾翻反，直接影响 detect_L
+    # （审查 P2-8）。
+    flip = (err_same - err_flip) >= 5.0
     phase_err = min(err_same, err_flip)
     if phase_err > 1.0 or err_mod > 0.01:
         raise ValueError(f"符号/幅值自检失败：相位差 {phase_err:.2f}°、"

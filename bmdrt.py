@@ -243,7 +243,7 @@ def process_one(path: Path, cfg: dict) -> dict:
                 return rec
 
             R.OUT = outdir                       # 图 / json / npz 都落到这个目录
-            R.NULL_CACHE = None                  # 换一份 f 就要重算零分布
+            R.NULL_CACHE = {}                    # 清空零分布缓存（按 f 分键，换谱自动重算）
             try:
                 # 注意：run() 返回的是选中的结果 dict，不是文件路径。
                 # 结果文件名由 save_out 决定，这里是它的约定，别改一处忘另一处。
@@ -276,8 +276,13 @@ def process_one(path: Path, cfg: dict) -> dict:
                         if rec["kk_rejected"]:
                             print("\n=== KK 门禁拒绝：数据不自洽，未拟合（流程正常完成）===")
                             fh.write("\n[KK-REJECT] 数据不自洽，未拟合\n")
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        # 读不出来 = 结果不可信，必须记失败；否则 KK 拒绝谱会被
+                        # 记成「拟合成功」并进 archive（审查 P2-10）。
+                        rec["ok"] = False
+                        rec["err"] = (f"结果 json 读取失败："
+                                      f"{type(e).__name__}: {e}")
+                        print(f"\n=== 结果 json 读取失败：{js} ===")
                 else:
                     rec["err"] = "跑完了但没写出结果 json"
             except KeyboardInterrupt:            # Ctrl-C 就该停，不吞
@@ -501,8 +506,14 @@ def _apply_cli(cfg: dict, opt: dict):
               "auto_mechanism", "auto_mechanism_full"):
         if opt.get(k) is not None:
             fit[k] = opt[k]
+    # --sigma-floor 之前不在拷贝列表里，命令行传参被静默忽略（审查 P2-3）。
+    if opt.get("sigma_floor") is not None:
+        fit["sigma_floor"] = float(opt["sigma_floor"])
     if fit.get("auto_mechanism_full"):
         fit["auto_mechanism"] = True          # full 隐含 auto
+    # --no-deinduce：关闭 DRT 去电感通道（README 宣传过但解析器里没有）
+    if opt.get("no_deinduce"):
+        cfg.setdefault("drt", {})["deinduce"] = False
     if opt.get("kk") is not None:
         cfg.setdefault("kk", {})["mode"] = str(opt["kk"])
     if opt.get("L") is True:
@@ -583,6 +594,7 @@ def cmd_watch(paths: list[str], opt: dict) -> int:
     print(f"[bmdrt] 监听 {inbox}，每 {iv:.0f}s 扫一次（Ctrl-C 停止）")
     print(f"  结果写 {cfg['paths']['out']}；成功的移入 archive/，被拒收的移入 rejected/")
     n_ok = n_bad = n_skip = n_kk = 0
+    recs: list[dict] = []
     try:
         while True:
             files = scan_inputs(paths, cfg)
@@ -591,6 +603,7 @@ def cmd_watch(paths: list[str], opt: dict) -> int:
             for p in todo:
                 print(f"\n[{datetime.now().strftime('%H:%M:%S')}] 发现 {p.name}")
                 r = process_one(p, cfg)
+                recs.append(r)
                 # KK 拒绝：流程完成但没拟合，既不算成功拟合也不算失败。
                 if r.get("kk_rejected"):
                     n_kk += 1
@@ -607,7 +620,12 @@ def cmd_watch(paths: list[str], opt: dict) -> int:
     except KeyboardInterrupt:
         print(f"\n[bmdrt] 停止。本次拟合成功 {n_ok}，KK 拒绝 {n_kk}，"
               f"跳过 {n_skip}，失败 {n_bad}")
-        return 0
+        # 退出前补写汇总（docstring 承诺过），失败有就返回非零，
+        # 别让 Ctrl-C 把失败掩盖成成功（审查 P2-10）。
+        if recs:
+            md = write_summary(recs, cfg)
+            print(f"  汇总：{md}")
+        return 0 if n_bad == 0 else 1
 
 
 def _pad(s, n: int, left: bool = True) -> str:
@@ -650,13 +668,14 @@ def cmd_check(paths: list[str], opt: dict) -> int:
     if opt.get("fit"):
         C.part_b(fast=bool(opt.get("fast")))
     C.summary()
-    return 0
+    # 有任一 FAIL 就返回非零，否则自动化按退出码门控会永远绿灯（审查 P2-2）。
+    nfail = sum(1 for _, v, _ in C._rows if v == C.NG)
+    return 0 if nfail == 0 else 1
 
 
 def cmd_bench(paths: list[str], opt: dict) -> int:
     import bm_bench as B
-    B.main()
-    return 0
+    return int(B.main() or 0)
 
 
 BUILTIN = {"auto": cmd_auto, "watch": cmd_watch, "list": cmd_list,
@@ -688,6 +707,7 @@ def parse_opts(argv: list[str]) -> tuple[list[str], dict]:
            "ta": None, "zeta": None, "L": None, "no_move": False,
            "out": None, "inbox": None, "interval": None, "kk": None,
            "auto_mechanism": None, "auto_mechanism_full": None,
+           "sigma_floor": None, "no_deinduce": False,
            "fit": False, "fast": False}
     paths, i = [], 0
     while i < len(argv):
@@ -701,6 +721,8 @@ def parse_opts(argv: list[str]) -> tuple[list[str], dict]:
             opt["quick"] = True
         elif a == "--no-move":
             opt["no_move"] = True
+        elif a == "--no-deinduce":
+            opt["no_deinduce"] = True
         elif a == "--auto-mechanism":
             opt["auto_mechanism"] = True
         elif a == "--auto-mechanism-full":
@@ -735,7 +757,7 @@ def parse_opts(argv: list[str]) -> tuple[list[str], dict]:
 
 
 def _alias(k: str) -> str:
-    return {"k": "kmax"}.get(k, k)
+    return {"k": "kmax", "sigma-floor": "sigma_floor"}.get(k, k)
 
 
 def main() -> int:

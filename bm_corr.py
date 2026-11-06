@@ -158,11 +158,18 @@ def param_corr(s: dict, include_L=None, mm=None, strong: float = STRONG,
     # 原尺度的分位数：对数尺度取的 ln 值要 exp 回去才是参数本身。
     q = np.percentile(X, [5, 50, 95], axis=0)
     for i in keep:
-        vals = np.exp(q[:, i]) if is_log[i] else q[:, i]
+        if is_log[i]:
+            vals = np.exp(q[:, i])
+            # 对数尺度算出的 sd 不能直接放进原尺度表：直接用 exp(X) 的样本
+            # 标准差，才是参数本身的离散度（审查 P2-4）。
+            sd_orig = float(np.std(np.exp(X[:, i])))
+        else:
+            vals = q[:, i]
+            sd_orig = float(sd[i])
         out["summary"].append(dict(
             name=names[i].replace("ln ", "", 1), q05=float(vals[0]),
             q50=float(vals[1]), q95=float(vals[2]),
-            sd=float(sd[i] if not is_log[i] else sd[i]), log=bool(is_log[i])))
+            sd=sd_orig, log=bool(is_log[i])))
     for i in fixed_idx:
         v = X[0, i]
         out["fixed"].append(dict(
@@ -217,7 +224,11 @@ def _why(a: str, b: str, rho: float) -> str:
 
     def kind(x):
         m = re.match(r"^(ln )?(τ|w|φ|ζ)_(\d+)$", x)
-        return (m.group(2), int(m.group(3))) if m else (x, 0)
+        if m:
+            return (m.group(2), int(m.group(3)))
+        # 非分量参数也要剥掉 "ln " 前缀，否则 "ln s_re"/"ln Rw"/"ln L"
+        # 永远对不上下面的已知简并分支，解释退化成泛泛"正相关"（审查 P2-5）。
+        return (x[3:] if x.startswith("ln ") else x, 0)
 
     ka, ia = kind(a)
     kb, ib = kind(b)

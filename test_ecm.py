@@ -283,7 +283,7 @@ def _run_forced(csv: Path, outdir: Path, cfg: dict, K: int, quiet: bool = False)
     sub = outdir / csv.stem
     sub.mkdir(parents=True, exist_ok=True)
     R.OUT = sub
-    R.NULL_CACHE = None
+    R.NULL_CACHE = {}
     t0 = time.time()
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf if quiet else sys.stdout):

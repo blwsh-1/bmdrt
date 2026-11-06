@@ -21,7 +21,12 @@ _NUM = re.compile(r"[-+0-9.eE]+")
 
 
 def _norm(s: str) -> str:
-    return re.sub(r"[^a-z0-9]", "", s.strip().lower())
+    s = s.strip().lower()
+    # 先区分 Z' / Z'' / |Z|：否则全被剥成 "z..."，Zre 与 Zim 两列同名，
+    # _pick 可能选错列或把幅值列当实部（审查 P2-9）。
+    s = s.replace("''", "im").replace('"', "im")   # Z'' → zim
+    s = s.replace("'", "re")                        # Z'  → zre
+    return re.sub(r"[^a-z0-9]", "", s)
 
 
 def _pick(names, exact, contains):

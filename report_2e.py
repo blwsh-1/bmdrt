@@ -41,6 +41,20 @@ def main(mode: str) -> int:
     with (CSVDIR / "manifest.csv").open(encoding="utf-8-sig", newline="") as fh:
         man = {r["stem"]: r for r in csv.DictReader(fh)}
 
+    # 这些「可核验事实」必须从 manifest 现算，不能写死：转换重跑后
+    # 117 / 0.00022° 会静默失真（审查 P2-10）。
+    n_man = len(man)
+    n_flip = sum(1 for m in man.values()
+                 if str(m.get("imag_flipped", "0")).strip().lower()
+                 not in ("0", "", "false"))
+    max_ph = max((_f(m.get("phase_err_deg")) or 0.0) for m in man.values())
+    max_mod = max((_f(m.get("mod_rel_err")) or 0.0) for m in man.values())
+    npt = Counter(int(_f(m.get("n")) or 0) for m in man.values())
+    npt_txt = (str(next(iter(npt))) if len(npt) == 1
+               else "/".join(str(k) for k in sorted(npt)))
+    n_j5 = sum(1 for m in man.values()
+               if float(_f(m.get("j_mA_cm2")) or 0.0) == 5.0)
+
     # KK 门禁拒绝的行：流程正常完成但没拟合，K 为空。必须单独数出来，
     # 否则「有结果 JSON N/117」会把它悄悄吞掉，看起来像少跑了几条。
     kk = [r for r in rows if str(r.get("fit_performed", "")).lower() == "false"]
@@ -89,17 +103,19 @@ def main(mode: str) -> int:
     L = []
     A = L.append
     A("# 2E 实测 EIS 批量拟合交付说明\n")
+    _sign_txt = (f"{n_flip}/{n_man} 条翻号（其余为真 Im Z）"
+                 if n_flip else
+                 f"{n_man} 条全部是真 Im Z（容性为负、高频感抗为正），无需翻号")
     A(f"- 数据来源：`EISmeasurements/2E*.xlsx` 共 13 个文件，每个 9 个电流密度"
-      " sheet（5 / 50 / 100 / 150 / 200 / 350 / 500 / 670 / 750 mA cm⁻²）= **117 条谱**，"
-      "每条 56 点、1 Hz – 100 kHz（5 decade）。\n"
+      " sheet（5 / 50 / 100 / 150 / 200 / 350 / 500 / 670 / 750 mA cm⁻²）= "
+      f"**{n_man} 条谱**，每条 {npt_txt} 点、1 Hz – 100 kHz（5 decade）。\n"
       "- 转换：`convert_2e.py` → `EISmeasurements/csv_2e/*.csv`（`f_Hz,Zre,Zim`）。"
       "Gamry 每个 sheet 前 97 行是仪器元数据，阻抗谱在 `ZCURVE` 段；数字存成文本，"
-      "已显式转 float。**虚部符号**用同行 `Zmod`/`Zphz` 自检：117 条全部是"
-      "真 Im Z（容性为负、高频感抗为正），无需翻号；相位最大误差 0.00022°、"
-      "|Z| 最大相对误差 5.4e-6。\n"
+      f"已显式转 float。**虚部符号**用同行 `Zmod`/`Zphz` 自检：{_sign_txt}；"
+      f"相位最大误差 {max_ph:.3g}°、|Z| 最大相对误差 {max_mod:.3g}。\n"
       f"- 采样档：**{mode}**。"
       + ("`n_warmup=800, n_samples=400, num_chains=2`（bm_real 的粗筛档）。"
-         "目的是在合理时间内给 117 条谱各出一套完整图；"
+         f"目的是在合理时间内给 {n_man} 条谱各出一套完整图；"
          "**elpd / 采样分级 / R̂ / ESS / divergence 不能当结论**，"
          "用 `python batch_2e.py --full --jobs 3` 全量重跑后才可引用。\n"
          if mode == "quick" else
@@ -152,7 +168,7 @@ def main(mode: str) -> int:
     A("\n".join(tab) + "\n")
 
     A("\n## 3. 这批数据本身的性质（解释结果，不是拟合失败）\n")
-    A(f"- 高频 3 点 `Im Z>0`（感抗尾）：**{n_ind}/117** 条 → 程序自动加 L。"
+    A(f"- 高频 3 点 `Im Z>0`（感抗尾）：**{n_ind}/{n_man}** 条 → 程序自动加 L。"
       "但按此前真实数据的经验，L 常是**装置/引线**而非元件，裁剪高频段后若 L 剧烈变化就应只当拟合装置。\n"
       f"- 低频相位：5 mA 组中位 {ph_by_j.get(5.0, float('nan')):.1f}°（明显扩散/电容尾），"
       f"其余 8 组的中位落在 {min(other_ph):.1f}° ~ {max(other_ph):.1f}°，"
@@ -163,9 +179,9 @@ def main(mode: str) -> int:
       f"{100*np.median([x['ripple'] for x in survey]):.0f}%，噪声与系统偏差相对信号不小。\n"
       "- 低频端没有走平 ⇒ DRT 的主峰落在窗口下方（全量试跑的 5 mA 谱峰位 0.04 Hz，"
       "比 f_min=1 Hz 低 1.4 decade），有限 K 的 HN 都要靠把 τ 推到边界去补这条尾巴。"
-      f"**所以 5 mA 组 13 条全部 `P(峰位出窗)>0.5` 是数据频率窗口决定的，不是 K 选错**；"
-      f"全批共 {n_out}/117 条出窗，其余电流密度组多为 0~1 条。\n"
-      f"- 按「高频 10 点内相邻 |Z| 跳变 >20% 或出现负 Re 点」判据，{n_outlier}/117 条有高频离群点，"
+      f"**所以 5 mA 组 {n_j5} 条全部 `P(峰位出窗)>0.5` 是数据频率窗口决定的，不是 K 选错**；"
+      f"全批共 {n_out}/{n_man} 条出窗，其余电流密度组多为 0~1 条。\n"
+      f"- 按「高频 10 点内相邻 |Z| 跳变 >20% 或出现负 Re 点」判据，{n_outlier}/{n_man} 条有高频离群点，"
       "这是原始谱里的离群点，转换时**没有删除**（保持数据原样），报告里应连同残差图一起看。\n")
 
     A("\n## 4. 使用限制（必须随图一起说明）\n")
@@ -186,7 +202,7 @@ def main(mode: str) -> int:
 
     A("\n## 5. 复现\n")
     A("```bash\n"
-      "python convert_2e.py                       # xlsx -> 117 CSV（含符号自检）\n"
+      f"python convert_2e.py                       # xlsx -> {n_man} CSV（含符号自检）\n"
       f"python batch_2e.py --{mode} --jobs 3        # 批量拟合\n"
       f"python batch_2e.py --report --{mode}       # 平铺图片 / 曲线 / 索引 / zip\n"
       f"python report_2e.py {mode}                 # 生成本文件\n"

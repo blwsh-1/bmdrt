@@ -609,7 +609,13 @@ def kk_check(f, Z, include_L=None, c: float = 0.85, max_M: int = 50,
             f"高频感抗尾：稳健估计 L={L_est:.3g} H；Lin-KK 已含自由串联电感 "
             f"L_fit={raw['L_fit']:.3g} H，故不再扣 jωL（重复计入会放大残差）")
     elif rms_clean["high"] > res_tol:
-        attr.append("高频段残差超阈，但高频无感抗点可归因，需人工复核")
+        # include_L=False 时 L_est 恒为 None，不能因此断言"无感抗点"——
+        # 那是"跳过诊断"，不是"数据没有感抗"（审查 P2-10）。
+        if include_L is False:
+            attr.append("高频段残差超阈：感抗诊断已被 include_L=False 关闭，"
+                        "未做归因，需人工复核")
+        else:
+            attr.append("高频段残差超阈，但高频无感抗点可归因，需人工复核")
     if rms_clean["low"] > res_tol:
         attr.append(f"低频段残差 {rms_clean['low']:.1%} 仍超阈："
                     f"窗口外扩散 / 阻截电极端点效应，定 K 时勿当作额外弧")

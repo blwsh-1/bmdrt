@@ -102,9 +102,9 @@ def main():
     for n, m in models.items():
         ll = R.loglik_matrix(m["s"], m["f"], m["Z"],
                              include_L=False, n_max=800)
-        # loo_pointwise 只返回 idata / elpd / se / pk>0.7 占比 / 逐点 elpd，
-        # 不返回逐点 pareto_k；从同一个 idata 再跑一次 az.loo 取逐点 k。
-        idata, elpd, se, pk_frac, pt = R.loo_pointwise(ll)
+        # loo_pointwise 返回 idata / elpd / se / pk>0.7 占比 / 逐点 elpd /
+        # 逐点 pareto_k（共 6 个，务必按 6 个解包）。
+        idata, elpd, se, pk_frac, pt, pk = R.loo_pointwise(ll)
         idatas[LABEL[n]] = idata
         with __import__("warnings").catch_warnings():
             __import__("warnings").simplefilter("ignore")

@@ -88,7 +88,7 @@ K_MAX = 5
 OUT = Path("figures")
 
 LOG2PI = float(np.log(2 * np.pi))
-NULL_CACHE = None    # 同一份 f 的零分布阈值只算一次
+NULL_CACHE: dict = {}    # f 网格字节 -> 零分布阈值（按网格分键，跨谱不串）
 
 
 # --------------------------------------------------------------------------
@@ -514,8 +514,15 @@ def resid_trend(res, f, deg: int = 2):
     return out
 
 
-def loglik_matrix(s, f, Z, include_L, n_max: int = 800):
+def loglik_matrix(s, f, Z, include_L, n_max: int = 800, sigma=None):
     """逐样本、**逐频率点**的对数似然，(n_draw, n_freq)。
+
+    sigma：固定噪声路径（`bm_core.fit(sigma=(s_re, s_im))`，σ 不进采样）下
+    必须由调用方显式传入的噪声标准差，标量或 (s_re, s_im) 元组均可。缺省时
+    优先用样本里的 `s_re`/`s_im`（主流程 σ 进采样，样本里一定有）；两者都没有
+    才回退到模块默认噪声 `B.SIGMA`（0.2 Ω），**绝不回退到 1e-3**——1e-3 与
+    真实噪声差两个量级，二次项会被放大 (0.2/1e-3)²≈4e4 倍，使 elpd /
+    Pareto-k / 模型比较全部失真且不报错（审查 P1-1）。
 
     每个频率点 j 是一个**联合观测**：同一频率的实部与虚部来自同一次复阻抗
     测量，必须一起留出、一起计入——
@@ -530,11 +537,24 @@ def loglik_matrix(s, f, Z, include_L, n_max: int = 800):
     """
     m = len(s["R_inf"])
     idx = np.linspace(0, m - 1, min(n_max, m)).astype(int)
+    # 解析调用方给的 σ：标量 / (s_re, s_im) / None（走样本或默认）
+    if sigma is not None:
+        if np.ndim(sigma) == 0:
+            _sr = _si = float(sigma)
+        else:
+            _sr, _si = float(sigma[0]), float(sigma[1])
+    else:
+        _sr = _si = None
     ll = np.empty((idx.size, f.size))
     for a, i in enumerate(idx):
         z = B.model_z(f, _params(s, i, include_L), include_L=include_L)
-        sr = float(s["s_re"][i]) if "s_re" in s else 1e-3
-        si = float(s["s_im"][i]) if "s_im" in s else 1e-3
+        if _sr is not None:                       # 调用方显式指定，最可信
+            sr, si = _sr, _si
+        elif "s_re" in s and "s_im" in s:         # 主流程：σ 进采样
+            sr = float(s["s_re"][i])
+            si = float(s["s_im"][i])
+        else:                                     # 固定噪声且未传参：模块默认
+            sr = si = float(B.SIGMA)
         lr = -0.5 * ((Z.real - z.real) / sr) ** 2 - np.log(sr) - 0.5 * LOG2PI
         li = -0.5 * ((Z.imag - z.imag) / si) ** 2 - np.log(si) - 0.5 * LOG2PI
         ll[a] = lr + li                      # 同一频率的实部+虚部一起算
@@ -571,13 +591,32 @@ def compare_models(res_list):
     ——因为两个模型在同一批点上犯的错高度相关。
 
     返回 DataFrame（按 elpd 降序），并把 elpd_diff/dse/weight 写回每个结果。
+
+    **先剔除 LOO 不可用的候选**（idata=None 或 elpd 非有限）：arviz 的
+    `compare` 在 ELPD 计算里遇到 None 会抛异常，把整条谱连同已算好的 K
+    一起报废（审查 P1-2）。被剔除的候选标 `compare_note` 并置 NaN，
+    由 `select_k` 的「LOO 不可用」分支统一处理，而不是连坐。
     """
     import arviz as az
-    pack = {f"K={r['K']}": r["idata"] for r in res_list}
+    ok = [r for r in res_list
+          if r.get("idata") is not None and np.isfinite(r.get("elpd", np.nan))]
+    ok_ids = {id(r) for r in ok}
+    for r in res_list:
+        if id(r) in ok_ids:
+            continue
+        r["elpd_diff"] = float("nan")
+        r["dse"] = float("nan")
+        r["weight"] = float("nan")
+        r["rank"] = float("nan")
+        r["compare_note"] = "LOO 不可用，未参与 az.compare"
+    if not ok:                                    # 全部 LOO 失败：返回空表
+        import pandas as pd
+        return pd.DataFrame()
+    pack = {f"K={r['K']}": r["idata"] for r in ok}
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         df = az.compare(pack, ic="loo", method="stacking", scale="log")
-    for r in res_list:
+    for r in ok:
         key = f"K={r['K']}"
         r["elpd_diff"] = float(df.loc[key, "elpd_diff"])
         r["dse"] = float(df.loc[key, "dse"])
@@ -806,8 +845,19 @@ def fit_one(f, Z, K, include_L, zeta, init=None, seed=0, kw=None, diffusion=None
     s_im = float(np.median(s["s_im"])) if "s_im" in s else np.nan
     bins = resid_bins(res, f)
     trend = resid_trend(res, f)
-    null = NULL_CACHE if NULL_CACHE is not None else null_thresholds(f)
-    globals()["NULL_CACHE"] = null
+    # 按 f 网格分键：watch/auto 在同一进程连续处理不同网格的谱时，不能把
+    # 第一条谱的零分布阈值套到第二条上（审查 P2-1）。
+    # 外部仍可能把 NULL_CACHE 重置成 None（bmdrt.py / test_ecm.py），
+    # 这里兜住：非 dict 就重建，避免 'NoneType' has no attribute 'get'。
+    _cache = NULL_CACHE
+    if not isinstance(_cache, dict):
+        _cache = {}
+        globals()["NULL_CACHE"] = _cache
+    _nkey = f.tobytes()
+    null = _cache.get(_nkey)
+    if null is None:
+        null = null_thresholds(f)
+        _cache[_nkey] = null
 
     # ---- 结构证据 ----
     tot = float(np.sum(w)) or 1.0

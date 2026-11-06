@@ -37,7 +37,7 @@ def load(tag: str):
     s = {k: z[k] for k in z.keys()}
     f, Z = z["f"], z["Zre"] + 1j * z["Zim"]
     ll = R.loglik_matrix(s, f, Z, False)
-    _, elpd, se, bad_k, pt = R.loo_pointwise(ll)
+    _, elpd, se, bad_k, pt, pk = R.loo_pointwise(ll)
     return dict(tag=tag, elpd=elpd, se=se, bad_k=bad_k, pt=pt, n=int(f.size))
 
 

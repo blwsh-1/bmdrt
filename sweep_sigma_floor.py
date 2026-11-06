@@ -147,7 +147,13 @@ def _unlock(m: dict, floor: float) -> dict:
         st = (m.get("sig_post") or {}).get("stack_max")
         out["sigma"] = ("N/A" if st is None
                         else ("COND" if st >= 0.10 else "PASS"))
-    out["corr"] = "PASS" if int(m.get("n_strong") or 0) == 0 else "COND"
+    # 第 6 项：README 口径是「无严重且**无法解释**的简并」，不是「没有任何强相关」。
+    # 有已知机制解释的强相关不该压成 COND（审查 P2-10）。旧 json 没有
+    # n_unexplained 时退回 n_strong，保持原判定。
+    _nu = m.get("n_unexplained")
+    if _nu is None:
+        _nu = int(m.get("n_strong") or 0)
+    out["corr"] = "PASS" if int(_nu) == 0 else "COND"
     vals = list(out.values())
     out["total"] = ("NOT YET" if "FAIL" in vals
                     else ("CONDITIONAL" if "COND" in vals else "PASS"))
@@ -190,6 +196,9 @@ def _metrics(res: dict | None, npz: Path | None = None,
                   float(res.get("cover_im") or 1.0)),
         R_inf=res.get("R_inf"),
         n_strong=len(strong), rho_max=rho_max,
+        # 有已知机制解释（why 非空）的强相关不算「无法解释的简并」。
+        n_unexplained=sum(1 for p in strong
+                          if not str(p.get("why") or "").strip()),
         strong_pairs=[(p.get("a"), p.get("b"), float(p.get("rho") or 0.0))
                       for p in strong],
         f0=[c.get("f0") for c in comps],

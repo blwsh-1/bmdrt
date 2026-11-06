@@ -109,10 +109,21 @@ def main(argv=None) -> int:
                     print(f"{str(L):10s} {fl:7.0e}  未拟合")
                     continue
                 z = m["zmax"] or 1.0
-                print(f"{str(L):10s} {fl:7.0e} {m['sigma_re'] / z:10.2e} "
-                      f"{m['sigma_im'] / z:10.2e} {m['rms_re']:10.2e} "
-                      f"{m['rms_im']:9.2e} {m['tree_cap']:6.1%} {m['div']:4d} "
-                      f"{m['grade']:4d}", flush=True)
+                # KK 拒绝谱 ok=True 但 tree_cap 等为 None，直接格式化会 TypeError
+                # 崩掉整个脚本（审查 P2-10）。逐项做 None 安全格式化。
+                _nan = float("nan")
+                sre, sim = m.get("sigma_re"), m.get("sigma_im")
+                rre, rim = m.get("rms_re"), m.get("rms_im")
+                tc, dv, gr = m.get("tree_cap"), m.get("div"), m.get("grade")
+                tc_s = f"{tc:6.1%}" if isinstance(tc, (int, float)) else "   n/a"
+                dv_s = f"{dv:4d}" if isinstance(dv, int) else " n/a"
+                gr_s = f"{gr:4d}" if isinstance(gr, int) else " n/a"
+                print(f"{str(L):10s} {fl:7.0e} "
+                      f"{(sre / z if sre is not None else _nan):10.2e} "
+                      f"{(sim / z if sim is not None else _nan):10.2e} "
+                      f"{(rre if rre is not None else _nan):10.2e} "
+                      f"{(rim if rim is not None else _nan):9.2e} "
+                      f"{tc_s} {dv_s} {gr_s}", flush=True)
 
     md = _report(rows, base / "INCLUDE_L.md")
     print(f"\n报告：{md}")

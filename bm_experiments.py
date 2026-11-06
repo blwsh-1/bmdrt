@@ -159,7 +159,9 @@ def tree_depth_stats(mc, max_depth):
     if "num_steps" not in ef:
         return None
     n = np.asarray(ef["num_steps"], float).ravel()
-    td = np.floor(np.log2(np.maximum(n, 1.0))).astype(int) + 1   # numpyro 文档公式
+    # ceil(log2(n))：n 恰为 2^d 时深度是 d，不是 d+1；否则 512 步(=2^9) 会被
+    # 误判成触顶 10，frac_cap 系统性虚高（审查 P2-6）。
+    td = np.ceil(np.log2(np.maximum(n, 1.0))).astype(int)
     return {"med": float(np.median(td)), "p95": float(np.percentile(td, 95)),
             "frac_cap": float(np.mean(td >= max_depth)), "max_depth": max_depth,
             "n": int(n.size)}
@@ -221,6 +223,15 @@ def z_chain_diag(ch, f, n_samp: int = 200):
     tau = np.exp(np.asarray(ch["ln_tau"], float))
     phi = np.asarray(ch["phi"], float)
     zeta = np.asarray(ch["zeta"], float)
+    # 扩散项：链级样本里是 Rw（Ω）与 Rwo/tauD，model_z 要的是 Aw 或 Rwo+tauD。
+    # 不补进来，diffusion="Ws"/"Wo" 时 Z(f) 诊断衡量的是不含扩散的曲线，
+    # 扩散参数慢混合会被"严格通过"掩盖（审查 P2-7）。
+    has_rw = "Rw" in ch
+    has_rwo = "Rwo" in ch and "tauD" in ch
+    Rw = np.asarray(ch["Rw"], float) if has_rw else None
+    Rwo = np.asarray(ch["Rwo"], float) if has_rwo else None
+    tauD = np.asarray(ch["tauD"], float) if has_rwo else None
+    omega_ref = 2 * np.pi * np.sqrt(np.min(f) * np.max(f))
     idx = np.linspace(0, ns - 1, min(n_samp, ns)).astype(int)
     nf = len(f)
     Zr = np.empty((nc, len(idx), nf))
@@ -229,6 +240,11 @@ def z_chain_diag(ch, f, n_samp: int = 200):
         for a, i in enumerate(idx):
             p = {"R_inf": Ri[c, i], "W": W[c, i], "pi": pich[c, i],
                  "tau": tau[c, i], "phi": phi[c, i], "zeta": zeta[c, i]}
+            if has_rw:
+                p["Aw"] = Rw[c, i] * np.sqrt(omega_ref)
+            if has_rwo:
+                p["Rwo"] = Rwo[c, i]
+                p["tauD"] = tauD[c, i]
             Zc = B.model_z(f, p, include_L=False)
             Zr[c, a] = Zc.real
             Zi[c, a] = Zc.imag
