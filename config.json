@@ -18,6 +18,8 @@
     "include_L": null,
     "zeta": "1.0",
     "diffusion": "none",
+    "auto_mechanism": false,
+    "auto_mechanism_full": false,
     "sigma_floor": 0.0
   },
 

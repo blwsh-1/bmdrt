@@ -100,7 +100,7 @@ def _is_kk_reject(js: Path) -> bool:
 
 
 def _run_one(args) -> dict:
-    root, worker, row, mode, timeout = args
+    root, worker, row, mode, timeout, auto_mech, auto_full = args
     stem = row["stem"]
     d = result_dir(root, worker, stem)
     js = d / f"real_{stem}.json"
@@ -118,6 +118,10 @@ def _run_one(args) -> dict:
            "--no-move"]
     if mode == "quick":
         cmd.append("--quick")
+    if auto_full:
+        cmd.append("--auto-mechanism-full")
+    elif auto_mech:
+        cmd.append("--auto-mechanism")
     env = os.environ.copy()
     # 每个 NUTS 进程限单线程 BLAS，避免 3 个进程各起 8 条线程互相踩
     env.update(OMP_NUM_THREADS="1", MKL_NUM_THREADS="1",
@@ -145,15 +149,16 @@ def _run_one(args) -> dict:
 
 
 def run_batch(mode: str, jobs: int, only: str | None, every: int | None,
-              timeout: int) -> int:
+              timeout: int, auto_mech: bool = False,
+              auto_full: bool = False) -> int:
     rows = tasks_from_manifest(only, every)
     if not rows:
         print("[batch_2e] 没有匹配的任务")
         return 1
     root = out_root(mode)
     root.mkdir(parents=True, exist_ok=True)
-    groups = [[(root, j, r, mode, timeout) for r in rows[j::jobs]]
-              for j in range(jobs)]
+    groups = [[(root, j, r, mode, timeout, auto_mech, auto_full)
+               for r in rows[j::jobs]] for j in range(jobs)]
     print(f"[batch_2e] mode={mode}  {len(rows)} 条谱  {jobs} 并发  out={root}")
     t0 = time.time()
     done, bad, skipped, kk_rej = 0, [], 0, 0
@@ -419,13 +424,19 @@ def main() -> int:
     ap.add_argument("--every", action="store_true",
                     help="每个源文件只取 1 条（用于严格采样抽检）")
     ap.add_argument("--timeout", type=int, default=None)
+    ap.add_argument("--auto-mechanism", action="store_true",
+                    help="none 残差仍有系统性时才补跑 Ws（默认关）")
+    ap.add_argument("--auto-mechanism-full", action="store_true",
+                    help="每条谱都补跑 Ws，用配对 LOO 决定（验证用，成本 +50%%）")
     ap.add_argument("--report", action="store_true", help="只重建汇总与图片")
     a = ap.parse_args()
     mode = "full" if a.full else "quick"
     if a.report:
         return make_report(mode)
     timeout = a.timeout or (1500 if mode == "full" else 600)
-    return run_batch(mode, a.jobs, a.only, a.every, timeout)
+    return run_batch(mode, a.jobs, a.only, a.every, timeout,
+                     auto_mech=bool(a.auto_mechanism),
+                     auto_full=bool(a.auto_mechanism_full))
 
 
 if __name__ == "__main__":

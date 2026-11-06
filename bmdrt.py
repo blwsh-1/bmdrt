@@ -28,10 +28,18 @@
 覆盖项（对 auto / watch 有效）：
     --krange 1,4   --wide   --kmax 6   --quick   --ta 0.95
     --L / --no-L   --zeta 1.0|free   --diffusion none|Ws|Wo|both
-    --kk gate|warn|off    --no-move   --out DIR   --inbox DIR   --interval 30
+    --kk gate|warn|off   --auto-mechanism / --auto-mechanism-full
+    --no-move   --out DIR   --inbox DIR   --interval 30
 
     --kk 默认 gate：拟合前先过 Lin-KK，判 fail 就写 fit_performed=false
     的结果 json 并拒绝定 K（不是运行失败）。数值阈值在 config.json 的 kk 段。
+
+    --auto-mechanism 默认关：先按 none 跑 K；只有 none 的残差仍有系统性
+    （acf>0.8 或最低频段 rms/σ>1.5）才在同一个 K 上补跑一次 Ws，用逐点配对
+    LOO 决定是否切换（Δ ≥ max(2, 1.5·dse)）；否则跳过，保持 none。
+    --auto-mechanism-full 强制每条谱都补跑 Ws（验证用，成本约 +50%）。
+    45° 指纹只作记录、不作门槛（真 Ws 可能既无 45°、KK 低频残差也不超阈）。
+    select_k 语义不变。
 
     --diffusion 默认 none（与改动前逐位一致）。Ws=半无限 Warburg，
     Wo=有限长阻挡 Warburg。两者高频尾相同，both 只作对照，别当最终模型。
@@ -95,7 +103,8 @@ DEFAULTS = {
               "rejected": "rejected"},
     "fit": {"krange": None, "wide": False, "kmax": 5, "quick": False,
             "ta": None, "include_L": None, "zeta": "1.0",
-            "sigma_floor": 0.0},
+            "sigma_floor": 0.0, "auto_mechanism": False,
+            "auto_mechanism_full": False},
     "kk": {"mode": "gate", "c": 0.85, "max_M": 50, "res_tol": 0.05,
            "auto_L": True, "auto_tail": True, "auto_cap": True},
     "drt": {"deinduce": True, "n_hi": 5, "min_share": 5e-3,
@@ -252,7 +261,9 @@ def process_one(path: Path, cfg: dict) -> dict:
                       kk_mode=str(kkcfg.get("mode", "gate")),
                       kk_opts=kk_opts, diag=dcfg,
                       drt_opts=drtcfg,
-                      sigma_floor=float(fit.get("sigma_floor", 0.0) or 0.0))
+                      sigma_floor=float(fit.get("sigma_floor", 0.0) or 0.0),
+                      auto_mechanism=bool(fit.get("auto_mechanism", False)),
+                      auto_mechanism_full=bool(fit.get("auto_mechanism_full", False)))
                 js = outdir / f"real_{stem}.json"
                 rec["ok"] = js.exists()
                 rec["json"] = str(js) if js.exists() else None
@@ -486,9 +497,12 @@ def _move_to(p: Path, sub: str, cfg: dict) -> Path:
 
 def _apply_cli(cfg: dict, opt: dict):
     fit = cfg["fit"]
-    for k in ("krange", "wide", "kmax", "quick", "ta", "zeta", "diffusion"):
+    for k in ("krange", "wide", "kmax", "quick", "ta", "zeta", "diffusion",
+              "auto_mechanism", "auto_mechanism_full"):
         if opt.get(k) is not None:
             fit[k] = opt[k]
+    if fit.get("auto_mechanism_full"):
+        fit["auto_mechanism"] = True          # full 隐含 auto
     if opt.get("kk") is not None:
         cfg.setdefault("kk", {})["mode"] = str(opt["kk"])
     if opt.get("L") is True:
@@ -518,6 +532,8 @@ def cmd_auto(paths: list[str], opt: dict) -> int:
           f"　quick={cfg['fit']['quick']}　ta={cfg['fit']['ta'] or '默认 0.9'}"
           f"　L={cfg['fit']['include_L']}　ζ={cfg['fit']['zeta']}"
           f"　扩散={cfg['fit'].get('diffusion', 'none')}"
+          f"　自动机制={cfg['fit'].get('auto_mechanism', False)}"
+          f"{'（全量）' if cfg['fit'].get('auto_mechanism_full') else ''}"
           f"　KK={(cfg.get('kk') or {}).get('mode', 'gate')}")
 
     recs = []
@@ -671,6 +687,7 @@ def parse_opts(argv: list[str]) -> tuple[list[str], dict]:
     opt = {"krange": None, "wide": None, "kmax": None, "quick": None,
            "ta": None, "zeta": None, "L": None, "no_move": False,
            "out": None, "inbox": None, "interval": None, "kk": None,
+           "auto_mechanism": None, "auto_mechanism_full": None,
            "fit": False, "fast": False}
     paths, i = [], 0
     while i < len(argv):
@@ -684,6 +701,10 @@ def parse_opts(argv: list[str]) -> tuple[list[str], dict]:
             opt["quick"] = True
         elif a == "--no-move":
             opt["no_move"] = True
+        elif a == "--auto-mechanism":
+            opt["auto_mechanism"] = True
+        elif a == "--auto-mechanism-full":
+            opt["auto_mechanism_full"] = True
         elif a == "--fit":
             opt["fit"] = True
         elif a == "--fast":

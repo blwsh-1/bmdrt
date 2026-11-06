@@ -1011,6 +1011,209 @@ def select_k(res_list, exploratory: bool = False):
     return best, note
 
 
+# --------------------------------------------------------------------------
+# 扩散家族的外层选择（独立于 select_k）
+# --------------------------------------------------------------------------
+# 设计边界（2026-11-06）：
+#   · `select_k()` 只做「给定 diffusion 配置下的 K 选择」，语义与规则不动；
+#   · 「要不要加 W」是**外层**决策，由下面的 `diffusion_gate` +
+#     `select_mechanism` 完成，输出 none / Ws / uncertain；
+#   · 默认只比 none vs Ws；Wo 保留手动对照（频窗不足时 Ws/Wo 不可分辨）。
+
+def _finite(x):
+    """None / NaN / inf 都返回 False；避免 np.isfinite(None) 抛 TypeError。"""
+    try:
+        return bool(np.isfinite(float(x)))
+    except (TypeError, ValueError):
+        return False
+
+
+def _paired_loo_diff(a, b):
+    """两个模型逐点 LOO 的配对差（b − a），用于跨扩散家族比较。
+
+    口径与 `pointwise_loo.py` 一致：Δ = Σd_i、dse = √(N·Var(d_i))。
+    **不能**直接拿 `select_k()` 里的 `elpd_diff/dse`：那是 az.compare
+    相对全局最优的口径，跨家族时基准不同，且不是配对差。
+    """
+    pa, pb = a.get("pointwise_elpd"), b.get("pointwise_elpd")
+    if pa is None or pb is None:
+        return None
+    pa, pb = np.asarray(pa, float), np.asarray(pb, float)
+    if pa.shape != pb.shape or pa.size < 2:
+        return None
+    if not (np.isfinite(pa).all() and np.isfinite(pb).all()):
+        return None
+    d = pb - pa
+    return dict(delta=float(np.sum(d)),
+                dse=float(np.sqrt(d.size * np.var(d, ddof=1))),
+                n=int(d.size))
+
+
+def _drt_evidence(pres, pk):
+    """把 DRT 预判里与低频弛豫有关的量摘出来，作为可复核证据。
+
+    **只记录，不参与决策**：低频宽峰既可能是窗口外扩散，也可能是阻截电极
+    或未闭合弧；算法能说的是「这里有一个多宽的峰、占多少面积、端部有没有
+    堆积」，不能直接说「是 Warburg」。
+    """
+    if not pres or not pk:
+        return None
+    rt = float(pres.get("R_total") or 0.0)
+    peaks = [dict(f_peak_hz=float(p["f_peak_Hz"]),
+                  r_ohm=float(p["R_ohm"]),
+                  width_dec=float(p["width_dec"]),
+                  area_frac=(float(p["R_ohm"]) / rt if rt > 0 else None))
+             for p in pk]
+    low = min(peaks, key=lambda p: p["f_peak_hz"]) if peaks else None
+    edge = pres.get("edge_low_frac")
+    return dict(n_peaks=len(peaks), lowest_freq_peak=low,
+                edge_low_frac=(float(edge) if edge is not None else None),
+                note="低频峰宽/面积/端部堆积是候选证据，不能单独判 Warburg")
+
+
+def _none_needs_ws(res, acf_thr: float = 0.8, low_snr_thr: float = 1.5):
+    """拟合后门控：none 的残差是否还有「加 W 能救」的系统性。
+
+    比 45° 指纹可靠，且**零额外拟合成本**——用的都是 none 已经算出来的量：
+      · 残差 lag-1 自相关（`acf`）：平滑系统性偏差 → 高；
+      · 最低频段 rms/σ：低频偏离超过噪声 1.5 倍 → 值得补跑 Ws。
+
+    标定（117 条 2E）：acf>0.8 占 3%、低频 rms/σ>1.5 占 25%，组合 28%。
+    目标谱（无 W）acf=0.38、低频 1.05 → 跳过；模拟 Ws 谱 acf=0.86 → 触发。
+    """
+    acf = abs(float(res.get("acf") or 0.0))
+    # 兼容两种来源：`fit_one` 内部用 s_re/s_im，落盘 JSON 用 sigma_re/sigma_im。
+    s_re = float(res.get("s_re", res.get("sigma_re", 0.0)) or 0.0)
+    s_im = float(res.get("s_im", res.get("sigma_im", 0.0)) or 0.0)
+    # 同样兼容：内部叫 bins，落盘 JSON 叫 resid_bins。
+    bins = res.get("bins") or res.get("resid_bins") or []
+    low = 0.0
+    if bins and s_re > 0 and s_im > 0:
+        b = bins[0]
+        low = max(float(b.get("rms_re", 0.0)) / s_re,
+                  float(b.get("rms_im", 0.0)) / s_im)
+    return (acf > acf_thr or low > low_snr_thr,
+            dict(acf=acf, low_rms_over_sigma=low,
+                 acf_thr=acf_thr, low_snr_thr=low_snr_thr))
+
+
+def diffusion_gate(kk, none_best, pres=None, pk=None):
+    """门控：只决定「要不要补跑 Ws」，不做模型比较、不改 K。
+
+    证据顺序（弱 → 强）：
+      1. KK 低频尾 45° 候选（`bm_kk.diffusion_tail_candidate`，必要不充分）；
+      2. none 拟合后的 `n_warburg_like`（HN 分量是否已在替扩散）。
+
+    `n_warburg_like > 0` 时**不进入**比较：这是「简并」警告，不是加 W 的
+    理由——加 Ws 只会和宽 HN 抢同一段自由度，Δelpd 通常很小甚至为负。
+    自动层应输出 uncertain，建议人工对照。
+    """
+    tail = ((kk or {}).get("tail") or {})
+    nw = int(none_best.get("n_warburg_like", 0) or 0)
+    g = dict(enter=False, status="no_candidate", reason="",
+             kk_tail=dict(is_candidate=bool(tail.get("is_candidate")),
+                          slope_ny=tail.get("slope_ny"),
+                          slope_z=tail.get("slope_z")),
+             drt=_drt_evidence(pres, pk),
+             n_warburg_like=nw)
+    if nw > 0:
+        g.update(status="degenerate",
+                 reason=f"none 的 HN 已有 {nw} 个分量呈 Warburg 退化指纹；"
+                        f"加 Ws 与宽 HN 不可分辨，不自动切换，建议人工对照")
+        return g
+    if not tail.get("is_candidate"):
+        g.update(status="no_candidate",
+                 reason="KK 低频尾不是 45° 候选（必要不充分），不触发 Ws")
+        return g
+    g.update(enter=True, status="candidate",
+             reason="KK 低频尾 45° 候选，进入 none vs Ws 比较")
+    return g
+
+
+def select_mechanism(none_res, ws_res, gate, exploratory=False):
+    """外层选择器：none vs Ws。**不修改 `select_k()` 的语义**。
+
+    规则（取严，全部可复核）：
+      · 切换门槛 `Δ ≥ max(2, 1.5·dse)`；
+      · 物理护栏（Ws 采样 / Pareto-k / 幅值不可辨识 / HN 简并）触发 → 不切换；
+      · `Δ < 0`（Ws 更差）→ none；
+      · `0 ≤ Δ < 门槛` → uncertain（**合法输出**，不硬选）。
+
+    护栏：
+      · Ws 采样分级 0 / Pareto-k>0.7 超 10% / LOO 不可用；
+      · `p_diff_small > 0.5`（扩散幅值大量 <1e-3·|Z|max，不可辨识）。
+
+    `diffusion_resolution.resolvable=False` **只记录、不降级**：它判的是
+    Ws 与 Wo 的可分辨性，不是「加不加 W」。默认只选 Ws 时用它一票否决，
+    会把大量本来能加扩散的谱打成 uncertain；要判 Wo 时才需要这条。
+    """
+    out = dict(choice="none", status="not_tested", reason="", gate=gate,
+               delta=None, dse=None, threshold=None, guards={}, note=[])
+    if ws_res is None:
+        out.update(status="fit_missing", reason="Ws 未拟合，保持 none")
+        return out
+
+    guards = {
+        "ws_grade0": ws_res.get("grade") == 0,
+        "ws_bad_k": float(ws_res.get("bad_k") or 0) > 0.10,
+        "ws_loo_unavailable": not _finite(ws_res.get("elpd")),
+        "diff_amp_unidentifiable": (_finite(ws_res.get("p_diff_small"))
+                                    and float(ws_res["p_diff_small"]) > 0.5),
+        # 简并：none 的 HN 已经在替扩散。即使 Δ 显著也不自动切，
+        # 因为这是「Ws 与宽 HN 抢同一段自由度」的结构问题，应人工对照。
+        "hn_degenerate": gate.get("status") == "degenerate",
+    }
+    out["guards"] = guards
+    dres = ws_res.get("diffusion_resolution") or {}
+    out["ws_resolvable"] = dres.get("resolvable")
+    if dres and dres.get("resolvable") is False:
+        out["note"].append("Ws/Wo 在当前频窗不可分辨：可以加 Ws，但不能据此"
+                           "宣称有限长扩散（Wo）；要判 Wo 需更宽频窗")
+
+    cmp = _paired_loo_diff(none_res, ws_res)
+    if cmp is None:
+        out.update(status="comparison_incomplete",
+                   reason="两个家族没有可配对的逐点 LOO，保持 none")
+        return out
+    out.update(delta=cmp["delta"], dse=cmp["dse"], n=cmp["n"])
+    thr = max(2.0, 1.5 * cmp["dse"])
+    out["threshold"] = thr
+
+    if guards.get("hn_degenerate"):
+        out.update(choice="none", status="degenerate",
+                   reason="none 的 HN 已呈 Warburg 退化指纹，Ws 与宽 HN 不可分辨；"
+                          "即使 Δ 显著也建议人工对照，不自动切换")
+        return out
+    if any(guards.values()):
+        bad = [k for k, v in guards.items() if v]
+        why = []
+        if guards.get("diff_amp_unidentifiable"):
+            why.append("Ws 幅值大量 <1e-3·|Z|max（谱图无 45° 拖尾 / 扩散被抑制），"
+                       "强行加 W 只会让 Aw 不可辨识、参数失去物理意义")
+        if guards.get("ws_grade0") or guards.get("ws_bad_k") \
+                or guards.get("ws_loo_unavailable"):
+            why.append("Ws 采样/LOO 不健康")
+        out.update(choice="none", status="guard_degraded",
+                   reason="不加 W：" + "；".join(why or ["未过物理/采样护栏"])
+                          + f"（guards: {'、'.join(bad)}）")
+        return out
+    if cmp["delta"] < 0:
+        out.update(choice="none", status="ws_worse",
+                   reason=f"Δelpd(Ws−none)={cmp['delta']:.2f} < 0，保持 none")
+        return out
+    if cmp["delta"] >= thr:
+        out.update(choice="Ws", status="switched",
+                   reason=f"Δelpd(Ws−none)={cmp['delta']:.2f} ≥ "
+                          f"max(2, 1.5·dse)={thr:.2f}（dse={cmp['dse']:.2f}），"
+                          f"切换到 Ws")
+        return out
+    out.update(choice="none", status="uncertain",
+               reason=f"Δelpd(Ws−none)={cmp['delta']:.2f} 为正但未达 "
+                      f"{thr:.2f}（dse={cmp['dse']:.2f}）；证据不足，"
+                      f"保持 none，报告保留手动对照建议")
+    return out
+
+
 def component_review(res, f):
     """拟合后的**组分可辨识性审查**（与 K 选择分离，不改变 K）。
 
@@ -1658,6 +1861,7 @@ def save_out(stem, f, Z, res, pres, include_L, zeta, tips, K_sel_note):
         component_review=res.get("component_review"),
         param_corr=res.get("param_corr"),
         diffusion_resolution=res.get("diffusion_resolution"),
+        auto_mechanism=res.get("auto_mechanism"),
         # DRT 去电感通道的决策（used/L/四道检查/扣前后残差）+ 噪声地板
         drt_deinduce=res.get("drt_deinduce"),
         sigma_floor=res.get("sigma_floor"),
@@ -1704,7 +1908,8 @@ def save_out(stem, f, Z, res, pres, include_L, zeta, tips, K_sel_note):
 def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
         include_L=None, zeta="1.0", dry=False, quick=False, ta=None,
         diffusion=None, kk_mode="gate", kk_opts=None, diag=None,
-        drt_opts=None, sigma_floor=0.0):
+        drt_opts=None, sigma_floor=0.0, auto_mechanism=False,
+        auto_mechanism_full=False):
     """kk_mode: gate(fail 即拒绝定 K) | warn(只报告) | off(不跑门禁)。
     kk_opts 是传给 kk_check 的数值参数（c/max_M/res_tol/auto_L/...），
     不在代码里写死，由 config.json 统一管。
@@ -1801,51 +2006,101 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
         print(f"  K 上界 {kmax} 是人为设定，选出的 K 只在这个范围内最优；"
               f"--wide 扫 1..{kmax}，--krange a,b 自定义")
 
-    res_list = []
-    for K in ks:
-        init = init_values(pk, pres, K) if pk else None
-        print(f"\n  --- K={K} 拟合中（播种={'是' if init else '否'}）---")
-        r = fit_one(f, Z, K, include_L, zeta, init=init, kw=kw,
-                    diffusion=diffusion, diag=diag, sigma_floor=sigma_floor)
-        print(f"      {r['t']:.0f}s  R̂max={r['rhat_max']:.3f} "
-              f"bulk={r['bulk_min']:.0f} tail={r['tail_min']:.0f} "
-              f"div={r['ndiv']} 触顶={r['tds']['frac_cap'] * 100:.1f}% "
-              f"→ 分级 {r['grade']}")
-        _ppm = r["p_peak_out_max"]
-        _ppms = f"{_ppm:.2f}" if np.isfinite(_ppm) else "—（不可用）"
-        print(f"      elpd={r['elpd']:.1f}  "
-              f"rms/σ={r['rms_re'] / r['s_re']:.2f}/{r['rms_im'] / r['s_im']:.2f}  "
-              f"acf={r['acf']:.2f}  P(峰位出窗)max={_ppms}"
-              f"  φζ>1 占比={r['frac_neg'] * 100:.1f}%")
-        res_list.append(r)
+    def _fit_ks(diffusion_use, tag="", k_list=None):
+        """给定扩散家族，跑 K 扫描 + select_k。select_k 的语义不动。
 
-    if len(res_list) > 1:
-        df = compare_models(res_list)
-        print("\n=== ③ 配对比较（az.compare / PSIS-LOO，逐点相减） ===")
-        cols = [c for c in ("rank", "elpd_loo", "elpd_diff", "dse", "weight", "p_loo")
-                if c in df.columns]
-        print(df[cols].to_string(float_format=lambda v: f"{v:.1f}"))
-        best, note = select_k(res_list, exploratory=bool(quick))
-        print("\n  规则：① 采样/物理硬门禁（分级0 / φζ>1 超 1% /"
-              " Pareto-k>0.7 超 10% / LOO 不可用）"
-              " ② 合格候选按配对 LOO 排序 ③ 差 < max(2, dse) 取更小 K"
-              " ④ P(峰位出窗) 不再淘汰 K，移到组分可辨识性审查")
-        for t in note:
-            print(f"    · {t}")
-        st = best.get("selection_status", "converged")
-        if st == "rejected":
-            print("  → **没有可信的 K**：下面的 elpd 排序仅相对、无物理意义，"
-                  "不输出最优 K 结论")
-        elif st == "exploratory":
-            print(f"  → 探索性结果 K={best['K']}（quick 档，**不是模型选择结论**；"
-                  f"正式档重跑后再引用）")
+        `k_list` 非空时只跑这些 K（跨家族补跑 Ws 用：固定 none 选出的 K，
+        不重扫，成本约 +1 次拟合）。
+        """
+        res_list = []
+        for K in (list(k_list) if k_list else ks):
+            init = init_values(pk, pres, K) if pk else None
+            print(f"\n  --- K={K} 拟合中（播种={'是' if init else '否'}"
+                  f"{('，' + tag) if tag else ''}）---")
+            r = fit_one(f, Z, K, include_L, zeta, init=init, kw=kw,
+                        diffusion=diffusion_use, diag=diag,
+                        sigma_floor=sigma_floor)
+            print(f"      {r['t']:.0f}s  R̂max={r['rhat_max']:.3f} "
+                  f"bulk={r['bulk_min']:.0f} tail={r['tail_min']:.0f} "
+                  f"div={r['ndiv']} 触顶={r['tds']['frac_cap'] * 100:.1f}% "
+                  f"→ 分级 {r['grade']}")
+            _ppm = r["p_peak_out_max"]
+            _ppms = f"{_ppm:.2f}" if np.isfinite(_ppm) else "—（不可用）"
+            print(f"      elpd={r['elpd']:.1f}  "
+                  f"rms/σ={r['rms_re'] / r['s_re']:.2f}/{r['rms_im'] / r['s_im']:.2f}  "
+                  f"acf={r['acf']:.2f}  P(峰位出窗)max={_ppms}"
+                  f"  φζ>1 占比={r['frac_neg'] * 100:.1f}%")
+            res_list.append(r)
+
+        if len(res_list) > 1:
+            df = compare_models(res_list)
+            print(f"\n=== ③ 配对比较（az.compare / PSIS-LOO，逐点相减"
+                  f"{('，' + tag) if tag else ''}） ===")
+            cols = [c for c in ("rank", "elpd_loo", "elpd_diff", "dse", "weight", "p_loo")
+                    if c in df.columns]
+            print(df[cols].to_string(float_format=lambda v: f"{v:.1f}"))
+            best, note = select_k(res_list, exploratory=bool(quick))
+            print("\n  规则：① 采样/物理硬门禁（分级0 / φζ>1 超 1% /"
+                  " Pareto-k>0.7 超 10% / LOO 不可用）"
+                  " ② 合格候选按配对 LOO 排序 ③ 差 < max(2, dse) 取更小 K"
+                  " ④ P(峰位出窗) 不再淘汰 K，移到组分可辨识性审查")
+            for t in note:
+                print(f"    · {t}")
+            st = best.get("selection_status", "converged")
+            if st == "rejected":
+                print("  → **没有可信的 K**：下面的 elpd 排序仅相对、无物理意义，"
+                      "不输出最优 K 结论")
+            elif st == "exploratory":
+                print(f"  → 探索性结果 K={best['K']}（quick 档，**不是模型选择结论**；"
+                      f"正式档重跑后再引用）")
+            else:
+                extra = "，且仅来自「可用」降级档" if st == "degraded" else ""
+                print(f"  → **K={best['K']}**（只在 {ks[0]}..{ks[-1]} 内最优{extra}）")
         else:
-            extra = "，且仅来自「可用」降级档" if st == "degraded" else ""
-            print(f"  → **K={best['K']}**（只在 {ks[0]}..{ks[-1]} 内最优{extra}）")
-    else:
-        best, note = res_list[0], []
-        best["selection_status"] = "not_compared"
-        print("  （只跑了一个 K，未做模型选择）")
+            best, note = res_list[0], []
+            best["selection_status"] = "not_compared"
+            print("  （只跑了一个 K，未做模型选择）")
+        return best, note, res_list
+
+    best, note, res_list = _fit_ks(diffusion)
+
+    # ---- ③c 外层机制选择：none vs Ws（独立于 select_k）----
+    # 只有默认 none 且显式 --auto-mechanism 才触发；手动 --diffusion Ws/Wo
+    # 时保持原行为，不叠加自动层。
+    auto_mech = None
+    if auto_mechanism and diffusion is None:
+        gate = diffusion_gate(kk, best, pres=pres, pk=pk)
+        need, ev = _none_needs_ws(best)
+        print("\n=== ③c 机制比较（none vs Ws，独立于 select_k） ===")
+        print(f"  门控证据：{gate['status']} — {gate['reason']}（只记录，不决策）")
+        print(f"  none 残差：acf={ev['acf']:.2f}，低频 rms/σ="
+              f"{ev['low_rms_over_sigma']:.2f}（阈值 {ev['acf_thr']:.1f} / "
+              f"{ev['low_snr_thr']:.1f}）")
+        if not need and not auto_mechanism_full:
+            auto_mech = dict(choice="none", status="skipped_by_residual",
+                             reason="none 已拟合到噪声水平（残差无系统性），"
+                                    "补跑 Ws 不可能显著改善，跳过",
+                             gate=gate, residual=ev, delta=None, dse=None,
+                             threshold=None, guards={}, note=[])
+            print(f"  → 跳过 Ws：{auto_mech['reason']}")
+        else:
+            k_fixed = int(best["K"])
+            why = "强制全量" if auto_mechanism_full else "残差有系统性"
+            print(f"  补跑 Ws：固定 K={k_fixed}（{why}；不重扫 K，"
+                  f"成本约 +1 次拟合）")
+            best_ws, note_ws, _ = _fit_ks("Ws", tag=f"Ws/K={k_fixed}",
+                                          k_list=[k_fixed])
+            auto_mech = select_mechanism(best, best_ws, gate,
+                                         exploratory=bool(quick))
+            auto_mech["residual"] = ev
+            print(f"\n  → 机制选择：{auto_mech['status']} — "
+                  f"{auto_mech['reason']}")
+            for t in auto_mech.get("note", []):
+                print(f"    · {t}")
+            if auto_mech["choice"] == "Ws":
+                print("  → 采用 Ws 家族结果（K 固定为 none 选出的 K）")
+                best, note = best_ws, note_ws
+    best["auto_mechanism"] = auto_mech
 
     if kk is not None:
         best["kk"] = kk
