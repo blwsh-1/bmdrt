@@ -1,0 +1,7 @@
+run_id,family,K,kk_status,sample_grade,divergences,tree_cap,rhat_max,ess_bulk,ess_tail,source
+G_K1_none,none,1,ok,2,0,0,1.001,838,1093,grid run.log + real_*.json
+G_K2_none,none,2,ok,2,0,0,1.004,902,1162,grid run.log + real_*.json
+G_K1_Ws,Ws,1,ok,2,0,0,1.003,723,773,grid run.log + real_*.json
+G_K2_Ws,Ws,2,ok,2,0,0,1.009,627,656,grid run.log + real_*.json
+G_K1_Wo,Wo,1,ok,2,0,0,1.004,910,1109,grid run.log + real_*.json
+G_K2_Wo,Wo,2,ok,2,0,0,1.002,626,724,grid run.log + real_*.json

@@ -68,26 +68,60 @@ def parse_log(p: Path):
 # --------------------------------------------------------------------------
 # v2 状态机（纯函数）
 # --------------------------------------------------------------------------
+def decide_mechanism(mech_diffs, controls_missing=False, controls_complete=True):
+    """机制可辨识性纯函数（第 4 轮审查修订）。
+
+    mech_diffs 元素为 (delta, dse, direction)；也兼容旧的 (delta, dse) 二元组。
+    严格顺序：先查数据完整性，再查 controls，最后才判显著性与方向。
+    缺失/非有限 dse 绝不落入 evidence_for_model_preference。
+    """
+    if not mech_diffs:
+        return "not_tested"
+    for item in mech_diffs:
+        if len(item) == 2:
+            delta, dse = item
+        else:
+            delta, dse = item[0], item[1]
+        if not (np.isfinite(delta) and np.isfinite(dse)) or dse <= 0:
+            return "comparison_incomplete"
+    if controls_missing or not controls_complete:
+        return "not_tested"
+    sig = []
+    for item in mech_diffs:
+        delta, dse = item[0], item[1]
+        direction = item[2] if len(item) > 2 else "unknown"
+        if abs(delta) >= dse:
+            sig.append(direction)
+    if not sig:
+        return "ambiguous"
+    if len(set(sig)) > 1:
+        return "preference_conflict"
+    return "evidence_for_model_preference"
+
+
 def decide(kk_status, cands, pair, n_candidates_planned, removed,
            controls_done, controls_missing, mech_diffs, family="none",
-           pair_dse=None):
+           pairwise_comparisons=None, controls_complete=True):
     """四层判定。cands 已过滤为「采样合格」的候选。
 
-    审查修订（2026-11-06）：
-    - k_reference 统一取 LOO 最优候选，且返回完整模型标识 {family,K,elpd}；
-      无可用 LOO 时返回 None（不再用 max(K) 代替）。
-    - 配对 dse 缺失/非有限时禁止严格 converged。
-    - Δ 不显著、候选不完整 → K_SELECTION_AMBIGUOUS（不再「取小 K 当 converged」）。
-    - 多 K 时与「最强较低 K 竞争者」比较，而不是 min(cands)。
+    第 4 轮审查修订：
+    - 机制判定交给纯函数 decide_mechanism()（缺失 dse -> comparison_incomplete，
+      显著方向相反 -> preference_conflict）。
+    - 配对证据改为 pairwise_comparisons[(best, lower_star)] 映射，直接读取该配对的
+      delta / dse / thr / n_observations / comparison_type，不再用单一标量 pair_dse，
+      也不再用两个汇总 ELPD 相减代替配对 Δ。
+    - k_reference 增加 role 字段，与 replay_identifiability.py 语义一致。
     """
     reasons = []
+    pairwise_comparisons = pairwise_comparisons or {}
 
     def make_ref(cc):
         if not cc or any(not np.isfinite(c.get("elpd", np.nan))
                          for c in cc.values()):
             return None
         K = max(cc, key=lambda k: cc[k]["elpd"])
-        return dict(family=family, K=int(K), elpd=float(cc[K]["elpd"]))
+        return dict(family=family, K=int(K), elpd=float(cc[K]["elpd"]),
+                    role="prediction_reference_only")
 
     k_ref = make_ref(cands)
 
@@ -97,11 +131,6 @@ def decide(kk_status, cands, pair, n_candidates_planned, removed,
         or c.get("cap", 1) >= 0.01 or c.get("rhat", 9) > 1.01
         or min(c.get("bulk", 0), c.get("tail", 0)) < 400
         for c in cands.values())
-
-    # 配对 dse 唯一来源：pairwise_dse.csv 中实际参与比较的那一对
-    # （best 与 K_lower*），不再从所有比较里取 max。
-    dse = float(pair_dse) if pair_dse is not None else float("nan")
-    dse_ok = bool(np.isfinite(dse)) and dse > 0
 
     # 第一层：K 选择
     if kk_status == "fail":
@@ -117,32 +146,35 @@ def decide(kk_status, cands, pair, n_candidates_planned, removed,
         lowers = [K for K in cands if K < best]
         lower_star = (max(lowers, key=lambda K: cands[K]["elpd"])
                       if lowers else None)
-        delta = (cands[best]["elpd"] - cands[lower_star]["elpd"]
-                 if lower_star is not None else float("inf"))
-        thr = max(TH["elpd_abs"], TH["elpd_k"] * (dse if dse_ok else 0))
+        key = (best, lower_star)
+        rec = pairwise_comparisons.get(key) or pairwise_comparisons.get(
+            (lower_star, best))
         incomplete = len(cands) < n_candidates_planned
         if incomplete:
             k_status = "K_SELECTION_AMBIGUOUS"
             reasons.append("候选集合不完整（不能当作完整比较的结论）")
-        elif not dse_ok:
+        elif rec is None:
             k_status = "K_SELECTION_AMBIGUOUS"
-            reasons.append("配对 dse 缺失/非有限，禁止严格 converged")
-        elif delta <= thr:
-            k_status = "K_SELECTION_AMBIGUOUS"
-            reasons.append(f"与最强较低 K 竞争者 Δ={delta:.1f} ≤ thr={thr:.1f}")
+            reasons.append(f"缺少 {key} 的配对证据，禁止严格 converged")
         else:
-            k_status = "converged"
-            reasons.append(f"与最强较低 K 竞争者 Δ={delta:.1f} > thr={thr:.1f}")
+            delta, dse = float(rec["delta"]), float(rec["dse"])
+            thr = float(rec["thr"])
+            if not (np.isfinite(delta) and np.isfinite(dse) and dse > 0):
+                k_status = "K_SELECTION_AMBIGUOUS"
+                reasons.append("配对 Δ/dse 缺失或非有限，禁止严格 converged")
+            elif delta <= thr:
+                k_status = "K_SELECTION_AMBIGUOUS"
+                reasons.append(f"配对 Δ={delta:.1f} ≤ thr={thr:.1f}")
+            else:
+                k_status = "converged"
+                reasons.append(f"配对 Δ={delta:.1f} > thr={thr:.1f} "
+                               f"(n_obs={rec.get('n_observations')}, "
+                               f"{rec.get('comparison_type')})")
 
-    # 第二层：机制三态
-    if controls_missing:
-        mech = "not_tested"
-    elif mech_diffs and all(abs(d) < dse for d, dse in mech_diffs):
-        mech = "ambiguous"
-    elif mech_diffs:
-        mech = "evidence_for_model_preference"
-    else:
-        mech = "not_tested"
+    # 第二层：机制（纯函数）
+    mech = decide_mechanism(mech_diffs,
+                            controls_missing=bool(controls_missing),
+                            controls_complete=controls_complete)
 
     # 第三/四层：本脚本不重算（由 replay_identifiability.py 负责）
     return dict(k_selection_status=k_status,
@@ -176,9 +208,16 @@ def build_cases():
                    or min(c.get("bulk", 0), c.get("tail", 0)) < 400)
             if not bad:
                 ok[K] = c
+        prow = pw.loc[f"{name} / K2-K1"]
+        prec = dict(delta=float(prow.delta), dse=float(prow.dse),
+                    thr=float(prow.thr),
+                    n_observations=int(prow.n_observations),
+                    comparison_type=str(prow.comparison_type),
+                    source=str(prow.source))
         r = decide(info["kk_status"], ok, info["pair"], nplan,
                    info["removed"], done, [], [],
-                   pair_dse=float(pw.loc[f"{name} / K2-K1", "dse"]))
+                   pairwise_comparisons={(2, 1): prec, (1, None): prec},
+                   controls_complete=True)
         allc = info["cands"]
         elpd_txt = ", ".join(f"K={K}: {c.get('elpd', float('nan')):.1f}"
                              for K, c in sorted(allc.items()))

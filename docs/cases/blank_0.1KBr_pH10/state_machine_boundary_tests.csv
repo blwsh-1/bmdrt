@@ -1,0 +1,24 @@
+test,expected,actual,passed,detail
+mechanism: 空比较 -> not_tested,not_tested,not_tested,True,
+mechanism: 缺失 dse(NaN) -> comparison_incomplete,comparison_incomplete,comparison_incomplete,True,
+mechanism: dse=0 -> comparison_incomplete,comparison_incomplete,comparison_incomplete,True,
+mechanism: delta=NaN -> comparison_incomplete,comparison_incomplete,comparison_incomplete,True,
+mechanism: 二元组缺失 dse 也拦截,comparison_incomplete,comparison_incomplete,True,
+mechanism: 全不显著 -> ambiguous,ambiguous,ambiguous,True,
+mechanism: 显著同向 -> evidence_for_model_preference,evidence_for_model_preference,evidence_for_model_preference,True,
+mechanism: 显著反向 -> preference_conflict,preference_conflict,preference_conflict,True,
+mechanism: controls_missing -> not_tested,not_tested,not_tested,True,
+mechanism: controls_complete=False -> not_tested,not_tested,not_tested,True,
+mechanism: 缺失优先于显著判定,comparison_incomplete,comparison_incomplete,True,
+"decide: 多 K 用 (3,2) 配对而非 (3,1)",converged,converged,True,"配对 Δ=30.0 > thr=10.0 (n_obs=50, K_selection)"
+decide: k_reference 取 LOO 最优 K=3,3,3,True,
+decide: k_reference 含 role,prediction_reference_only,prediction_reference_only,True,
+decide: 缺配对证据 -> 不 converged,K_SELECTION_AMBIGUOUS,K_SELECTION_AMBIGUOUS,True,"缺少 (3, 2) 的配对证据，禁止严格 converged"
+decide: 机制缺失 dse -> comparison_incomplete,comparison_incomplete,comparison_incomplete,True,
+gate: 完整诊断 -> effective,True,True,True,[]
+gate: 缺 R-hat/ESS 日志 -> 无效,False,False,True,"['rhat_max', 'ess_bulk', 'ess_tail']"
+gate: 缺诊断被记录,True,True,True,"['rhat_max', 'ess_bulk', 'ess_tail']"
+gate: tree_cap 缺失 -> 无效,False,False,True,['tree_cap']
+gate: tree_cap 缺失被记录,True,True,True,['tree_cap']
+gate: grade 缺失 -> 无效,False,False,True,['sample_grade']
+gate: KK warn -> 无效,False,False,True,False

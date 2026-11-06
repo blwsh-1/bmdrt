@@ -25,9 +25,6 @@ import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parent
-REPO = next((q for q in [ROOT, *ROOT.parents] if (q / "bm_core.py").exists()),
-            Path(r"D:/eis训练数据/bmdrt"))
-sys.path.insert(0, str(REPO))
 TH = dict(p_out=0.50, elpd_abs=2.0, elpd_k=2.0, rho_degen=0.90,
           cd_rel_width=0.50)
 
@@ -54,41 +51,62 @@ def corr_rho(js, a, b):
 
 
 def cd_relative_width(name):
-    p = glob.glob(str(ROOT / "results" / name / "*_samples.npz"))[0]
-    z = np.load(p, allow_pickle=True)
+    g = glob.glob(str(ROOT / "results" / name / "*_samples.npz"))
+    if not g:
+        return None                      # 原始数据未随包发布时，不伪造通过
+    z = np.load(g[0], allow_pickle=True)
     if "tauD" not in z or "Rwo" not in z:
         return None
     cd = np.asarray(z["tauD"], float) / np.maximum(np.asarray(z["Rwo"], float), 1e-300)
     return float((q(cd, 95) - q(cd, 5)) / q(cd, 50))
 
 
-def from_grid_log(run_id):
-    """从网格 run.log 的收敛诊断行补 R-hat / bulk ESS / tail ESS。"""
-    import glob, re
-    g = sorted(glob.glob(str(REPO / "out/_grid" / run_id / "**" / "run.log"),
-                         recursive=True))
-    if not g:
-        return None, None, None
-    txt = Path(g[0]).read_text(encoding="utf-8", errors="replace")
-    m = re.search(r"R̂max=([\d.]+)\s+bulk=([\d.]+)\s+tail=([\d.]+)", txt)
-    return (float(m.group(1)), float(m.group(2)), float(m.group(3))) if m else (None, None, None)
+def load_diagnostics():
+    """优先读随包发布的 control_diagnostics.csv；独立环境无需仓库 run.log。"""
+    p = ROOT / "control_diagnostics.csv"
+    if not p.exists():
+        return {}
+    return {r["run_id"]: r.to_dict()
+            for _, r in pd.read_csv(p).iterrows()}
 
 
-def gate_of(js, run_id):
-    """单个 control 的完整严格有效性（含 KK、R-hat、bulk/tail ESS）。"""
+def gate_of(js, row):
+    """fail-closed：任一必要诊断缺失/非有限 -> effective=False。
+
+    不再把 None 跳过，也不再把缺失的 tree_cap 当成 0（通过）。
+    """
+    missing = []
+
+    def need(name, v):
+        if v is None:
+            missing.append(name); return None
+        if isinstance(v, (int, float, np.floating)) and not np.isfinite(float(v)):
+            missing.append(name); return None
+        return v
+
     kk = (js.get("kk") or {}).get("status")
-    rhat, bulk, tail = from_grid_log(run_id)
+    grade = need("sample_grade", js.get("sample_grade"))
+    div = need("divergences", js.get("divergences"))
+    cap = need("tree_cap", js.get("tree_cap"))
+    rhat = need("rhat_max", row.get("rhat_max") if row else None)
+    bulk = need("ess_bulk", row.get("ess_bulk") if row else None)
+    tail = need("ess_tail", row.get("ess_tail") if row else None)
+    if kk is None:
+        missing.append("kk.status")
     checks = dict(
-        kk_ok=(kk == "ok"),
-        grade_ok=(int(js.get("sample_grade") or 0) >= 2),
-        div_ok=(int(js.get("divergences") or 0) == 0),
-        cap_ok=(float(js.get("tree_cap") or 0) < 0.01),
+        kk_ok=(None if kk is None else kk == "ok"),
+        grade_ok=(None if grade is None else int(grade) >= 2),
+        div_ok=(None if div is None else int(div) == 0),
+        cap_ok=(None if cap is None else float(cap) < 0.01),
         rhat_ok=(None if rhat is None else float(rhat) <= 1.01),
-        ess_ok=(None if bulk is None else min(float(bulk), float(tail)) >= 400),
+        ess_ok=(None if (bulk is None or tail is None)
+                else min(float(bulk), float(tail)) >= 400),
         rhat_value=rhat, ess_bulk=bulk, ess_tail=tail,
     )
-    return checks, all(v for v in checks.values()
-                    if isinstance(v, (bool, np.bool_)))
+    effective = (not missing) and all(v is True for k, v in checks.items()
+                                      if k in ("kk_ok", "grade_ok", "div_ok",
+                                               "cap_ok", "rhat_ok", "ess_ok"))
+    return checks, effective, missing
 
 
 def main():
@@ -104,21 +122,25 @@ def main():
              "Wo": ("G_K1_Wo", "G_K2_Wo")}
 
     # ---- 1. 逐 control 严格门控 ----
+    diag = load_diagnostics()
     controls_done, controls_missing, gate_detail = [], [], {}
     for d, pair in names.items():
         for K, run_id in zip((1, 2), pair):
             js = read_json(run_id)
-            checks, effective = gate_of(js, run_id)
-            gate_detail[f"{d}/K={K}"] = checks
+            checks, effective, missing = gate_of(js, diag.get(run_id))
+            gate_detail[f"{d}/K={K}"] = dict(checks,
+                                             missing_diagnostics=missing)
             controls_done.append(dict(
                 family=d, K=K, data_sha256=data_sha,
                 status=js.get("k_selection_status"), run_id=run_id,
                 effective=effective, checks=checks,
+                missing_diagnostics=missing,
                 p_peak_out_max=js.get("p_peak_out_max")))
-    kk_all_ok = all(c["checks"]["kk_ok"] for c in controls_done)
-    grade_all_ok = all(c["checks"]["grade_ok"] for c in controls_done)
+    kk_all_ok = all(c["checks"]["kk_ok"] is True for c in controls_done)
+    grade_all_ok = all(c["checks"]["grade_ok"] is True for c in controls_done)
     n_effective = sum(bool(c["effective"]) for c in controls_done)
-    controls_complete = (not controls_missing) and n_effective == len(controls_done)
+    controls_complete = ((not controls_missing)
+                         and n_effective == len(controls_done) and kk_all_ok)
 
     # ---- 2. K 选择（comparison_type = K_selection）----
     k_rows, k_stable = [], True
@@ -217,7 +239,13 @@ def main():
         kk_all_ok=kk_all_ok, grade_all_ok=grade_all_ok,
         controls_complete=controls_complete,
         controls_effective=n_effective, controls_total=len(controls_done),
-        mechanism_pareto_k_caveat="尚待高 Pareto-k 敏感性复核（见 pareto_k_sensitivity.csv）",
+        mechanism_pareto_k_sensitive=True,
+        mechanism_evidence_level="exploratory",
+        mechanism_pareto_k_caveat=(
+            "完整频段 PSIS-LOO 下 Ws/Wo/none 的差异均未超过配对 dse；"
+            "删除高 Pareto-k 频点的敏感性分析中 Ws-Wo 判定翻转，"
+            "说明该结论对单个频点敏感。当前 ambiguous 属探索性判断，"
+            "待 91.03 Hz 的 moment matching / 精确 LOO 复核"),
         dse_source="pairwise_dse.csv（逐频点 LOO 差值；comparison_type 区分阈值规则）",
         gate_detail=json.dumps(gate_detail, ensure_ascii=False),
         evidence_k="; ".join(f"{r['diffusion']}: Δ={r['delta']:.1f} > {r['thr']:.1f} "

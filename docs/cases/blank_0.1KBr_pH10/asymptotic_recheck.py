@@ -74,6 +74,7 @@ def main():
             rec[f"three_exact_{tag}"] = bool(
                 cv(A_exact) < c_w and cv(A_exact) < c_t and abs(r) > RHO_MIN)
             rec[f"asymptotic_valid_{tag}"] = bool(np.median(x) > 10)
+            rec[f"P_omega_tau_gt10_{tag}"] = float(np.mean(x > 10))
         # 第四层状态只由精确 HN 幅值的稳定性决定；渐近有效性另列记录，不混用。
         ok1, ok2 = rec["three_exact_fmin"], rec["three_exact_geom"]
         rec["verdict"] = ("reference_frequency_stable" if ok1 and ok2

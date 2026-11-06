@@ -47,10 +47,19 @@ def main():
         # pivot 后 index 是 10 个模型频率的并集（合成用例点数不同），
         # 必须只保留两模型都有的频点，否则 len(d) 会把 NaN 行算进 N，dse 被放大。
         d = (elp[a] - elp[b]).dropna()
-        bad = ((pk[a] > PK_LIMIT) | (pk[b] > PK_LIMIT)).reindex(d.index).fillna(False)
+        pk_a = pk[a].reindex(d.index)
+        pk_b = pk[b].reindex(d.index)
+        pk_missing = (pk_a.isna() | pk_b.isna()
+                      | ~np.isfinite(pk_a.astype(float))
+                      | ~np.isfinite(pk_b.astype(float)))
+        sensitivity_incomplete = bool(pk_missing.any())
+        missing_points = [float(f) for f in d.index[pk_missing]]
+        bad = ((pk_a > PK_LIMIT) | (pk_b > PK_LIMIT)).fillna(False)
         n0, delta0, dse0, thr0, v0 = calc(d, r.comparison_type)
         kept = d[~bad]
         n1, delta1, dse1, thr1, v1 = calc(kept, r.comparison_type)
+        if sensitivity_incomplete:
+            v1 = "sensitivity_incomplete"
         bad_fs = [float(f) for f in d.index[bad]]
         rows.append(dict(
             pair=r.pair, comparison_type=r.comparison_type,
@@ -60,6 +69,8 @@ def main():
             high_pk_contribution=float(d[bad].sum()) if bad.any() else 0.0,
             n_kept=n1, delta_kept=delta1, dse_kept=dse1, thr_kept=thr1,
             verdict_kept=v1,
+            sensitivity_incomplete=sensitivity_incomplete,
+            missing_pk_points=",".join(f"{x:.4g}" for x in missing_points),
             conclusion_unchanged=(v0 == v1),
         ))
     out = pd.DataFrame(rows)
