@@ -69,34 +69,100 @@ def parse_log(p: Path):
 # v2 状态机（纯函数）
 # --------------------------------------------------------------------------
 def decide_mechanism(mech_diffs, controls_missing=False, controls_complete=True):
-    """机制可辨识性纯函数（第 4 轮审查修订）。
+    """机制可辨识性纯函数（v5.1 修订）。
 
-    mech_diffs 元素为 (delta, dse, direction)；也兼容旧的 (delta, dse) 二元组。
-    严格顺序：先查数据完整性，再查 controls，最后才判显著性与方向。
-    缺失/非有限 dse 绝不落入 evidence_for_model_preference。
+    mech_diffs 元素为 (delta, dse, direction)；二元组 (delta, dse) 仍兼容，
+    但按 delta 符号自动推导方向（A>B / B>A），不再让 "unknown" 参与显著偏好判断。
+    严格顺序：空比较 -> 完整性 -> controls -> 显著性与方向。
     """
     if not mech_diffs:
         return "not_tested"
+    norm = []
     for item in mech_diffs:
         if len(item) == 2:
-            delta, dse = item
+            delta, dse, direction = item[0], item[1], None
         else:
-            delta, dse = item[0], item[1]
+            delta, dse, direction = item[0], item[1], item[2]
         if not (np.isfinite(delta) and np.isfinite(dse)) or dse <= 0:
             return "comparison_incomplete"
+        if direction not in ("A>B", "B>A"):
+            direction = "A>B" if delta > 0 else ("B>A" if delta < 0 else "unknown")
+        norm.append((delta, dse, direction))
     if controls_missing or not controls_complete:
         return "not_tested"
-    sig = []
-    for item in mech_diffs:
-        delta, dse = item[0], item[1]
-        direction = item[2] if len(item) > 2 else "unknown"
-        if abs(delta) >= dse:
-            sig.append(direction)
+    sig = [direction for delta, dse, direction in norm if abs(delta) >= dse]
+    if any(d == "unknown" for d in sig):
+        return "comparison_incomplete"
     if not sig:
         return "ambiguous"
     if len(set(sig)) > 1:
         return "preference_conflict"
     return "evidence_for_model_preference"
+
+
+def normalize_pair(pairwise_comparisons, key):
+    """按 (best, lower_star) 取配对记录；若只有反向记录，同步反转 Δ / direction / 端点。
+
+    返回 (rec_or_none, reversed_flag)。dse / thr / n_observations 对方向对称，保持不变。
+    """
+    pc = pairwise_comparisons or {}
+    rec = pc.get(key)
+    if rec is not None:
+        return dict(rec), False
+    rev_key = (key[1], key[0])
+    rec = pc.get(rev_key)
+    if rec is None:
+        return None, False
+    out = dict(rec)
+    try:
+        out["delta"] = -float(out["delta"])
+    except (KeyError, TypeError, ValueError):
+        pass
+    d = out.get("direction")
+    if d == "A>B":
+        out["direction"] = "B>A"
+    elif d == "B>A":
+        out["direction"] = "A>B"
+    for a, b in (("K_a", "K_b"), ("model_a", "model_b")):
+        if a in out and b in out:
+            out[a], out[b] = out[b], out[a]
+    return out, True
+
+
+def validate_pair_record(rec, key):
+    """配对证据整体校验（v5.1 P0）：任何一项不满足都不能输出严格 converged。"""
+    if rec is None:
+        return False, "缺少配对记录"
+    required = ("delta", "dse", "thr", "comparison_type",
+                "n_observations", "K_a", "K_b")
+    for k in required:
+        if k not in rec:
+            return False, f"配对记录缺字段 {k}"
+    try:
+        delta, dse, thr = (float(rec["delta"]), float(rec["dse"]),
+                           float(rec["thr"]))
+    except (TypeError, ValueError):
+        return False, "配对记录数值不可解析"
+    if not all(np.isfinite(x) for x in (delta, dse, thr)):
+        return False, "delta/dse/thr 含非有限值（含 thr=NaN）"
+    if dse <= 0:
+        return False, "dse <= 0"
+    if thr < 0:
+        return False, "thr < 0"
+    if str(rec["comparison_type"]) != "K_selection":
+        return False, "comparison_type 不是 K_selection"
+    try:
+        n = int(rec["n_observations"])
+    except (TypeError, ValueError):
+        return False, "n_observations 无效"
+    if n <= 0:
+        return False, "n_observations <= 0"
+    try:
+        if int(rec["K_a"]) != key[0] or int(rec["K_b"]) != key[1]:
+            return False, "配对方向与 model_a/model_b(K_a/K_b) 不一致"
+    except (TypeError, ValueError):
+        return False, "K_a/K_b 不可解析"
+    return True, "ok"
 
 
 def decide(kk_status, cands, pair, n_candidates_planned, removed,
@@ -147,29 +213,28 @@ def decide(kk_status, cands, pair, n_candidates_planned, removed,
         lower_star = (max(lowers, key=lambda K: cands[K]["elpd"])
                       if lowers else None)
         key = (best, lower_star)
-        rec = pairwise_comparisons.get(key) or pairwise_comparisons.get(
-            (lower_star, best))
+        rec, reversed_pair = normalize_pair(pairwise_comparisons, key)
+        valid, why = validate_pair_record(rec, key)
         incomplete = len(cands) < n_candidates_planned
         if incomplete:
             k_status = "K_SELECTION_AMBIGUOUS"
             reasons.append("候选集合不完整（不能当作完整比较的结论）")
-        elif rec is None:
+        elif not valid:
             k_status = "K_SELECTION_AMBIGUOUS"
-            reasons.append(f"缺少 {key} 的配对证据，禁止严格 converged")
+            reasons.append(f"配对证据无效：{why}，禁止严格 converged")
         else:
-            delta, dse = float(rec["delta"]), float(rec["dse"])
-            thr = float(rec["thr"])
-            if not (np.isfinite(delta) and np.isfinite(dse) and dse > 0):
-                k_status = "K_SELECTION_AMBIGUOUS"
-                reasons.append("配对 Δ/dse 缺失或非有限，禁止严格 converged")
-            elif delta <= thr:
+            delta, dse, thr = (float(rec["delta"]), float(rec["dse"]),
+                               float(rec["thr"]))
+            if delta <= thr:
                 k_status = "K_SELECTION_AMBIGUOUS"
                 reasons.append(f"配对 Δ={delta:.1f} ≤ thr={thr:.1f}")
             else:
                 k_status = "converged"
                 reasons.append(f"配对 Δ={delta:.1f} > thr={thr:.1f} "
-                               f"(n_obs={rec.get('n_observations')}, "
-                               f"{rec.get('comparison_type')})")
+                               f"(n_obs={rec['n_observations']}, "
+                               f"{rec['comparison_type']}"
+                               + ("，反向配对已规范化" if reversed_pair else "")
+                               + ")")
 
     # 第二层：机制（纯函数）
     mech = decide_mechanism(mech_diffs,
@@ -213,10 +278,12 @@ def build_cases():
                     thr=float(prow.thr),
                     n_observations=int(prow.n_observations),
                     comparison_type=str(prow.comparison_type),
-                    source=str(prow.source))
+                    source=str(prow.source), K_a=2, K_b=1,
+                    model_a=str(prow.model_a), model_b=str(prow.model_b),
+                    direction=str(prow.direction))
         r = decide(info["kk_status"], ok, info["pair"], nplan,
                    info["removed"], done, [], [],
-                   pairwise_comparisons={(2, 1): prec, (1, None): prec},
+                   pairwise_comparisons={(2, 1): prec},
                    controls_complete=True)
         allc = info["cands"]
         elpd_txt = ", ".join(f"K={K}: {c.get('elpd', float('nan')):.1f}"

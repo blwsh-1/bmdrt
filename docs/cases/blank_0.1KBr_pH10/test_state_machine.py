@@ -76,9 +76,13 @@ def main():
 
     # ---- decide: 多 K 配对映射 ----
     pc = {(3, 2): dict(delta=30.0, dse=4.0, thr=10.0,
-                       n_observations=50, comparison_type="K_selection"),
+                       n_observations=50, comparison_type="K_selection",
+                       K_a=3, K_b=2, model_a="X_K3", model_b="X_K2",
+                       direction="A>B"),
           (3, 1): dict(delta=300.0, dse=40.0, thr=80.0,
-                       n_observations=50, comparison_type="K_selection")}
+                       n_observations=50, comparison_type="K_selection",
+                       K_a=3, K_b=1, model_a="X_K3", model_b="X_K1",
+                       direction="A>B")}
     cands3 = {1: cand(-100.0), 2: cand(10.0), 3: cand(40.0)}
     r = SM.decide("ok", cands3, {}, 3, [], ["none"], [],
                   [(0.2, 0.6, "A>B")], pairwise_comparisons=pc)
@@ -115,6 +119,82 @@ def main():
     js = full_js(); js["kk"] = {"status": "warn"}
     checks, eff, missing = RI.gate_of(js, full_row())
     check("gate: KK warn -> 无效", False, eff, str(checks["kk_ok"]))
+
+    # ---- v5.1 反例：配对证据整体校验 / 反向配对 / 机制方向 ----
+    def prec(**kw):
+        base = dict(delta=10.0, dse=1.0, thr=5.0,
+                    comparison_type="K_selection", n_observations=50,
+                    K_a=2, K_b=1, model_a="X_K2", model_b="X_K1",
+                    direction="A>B")
+        base.update(kw)
+        return base
+
+    def kstatus(pc):
+        return SM.decide("ok", {1: cand(0.0), 2: cand(10.0)}, {}, 2,
+                         [], ["none"], [], [],
+                         pairwise_comparisons=pc)["k_selection_status"]
+
+    check("v5.1: 合法配对 -> converged", "converged",
+          kstatus({(2, 1): prec()}))
+    check("v5.1: thr=NaN -> 不得 converged", "K_SELECTION_AMBIGUOUS",
+          kstatus({(2, 1): prec(thr=NAN)}))
+    _r = prec(); _r.pop("thr")
+    check("v5.1: 缺 thr -> 不抛 KeyError 且拒绝", "K_SELECTION_AMBIGUOUS",
+          kstatus({(2, 1): _r}))
+    check("v5.1: comparison_type 错误 -> 拒绝", "K_SELECTION_AMBIGUOUS",
+          kstatus({(2, 1): prec(comparison_type="mechanism")}))
+    check("v5.1: dse=0 -> 拒绝", "K_SELECTION_AMBIGUOUS",
+          kstatus({(2, 1): prec(dse=0.0)}))
+    check("v5.1: thr<0 -> 拒绝", "K_SELECTION_AMBIGUOUS",
+          kstatus({(2, 1): prec(thr=-1.0)}))
+    check("v5.1: n_observations=0 -> 拒绝", "K_SELECTION_AMBIGUOUS",
+          kstatus({(2, 1): prec(n_observations=0)}))
+    check("v5.1: n_observations 非整数 -> 拒绝", "K_SELECTION_AMBIGUOUS",
+          kstatus({(2, 1): prec(n_observations="bad")}))
+    check("v5.1: K_a/K_b 方向不符 -> 拒绝", "K_SELECTION_AMBIGUOUS",
+          kstatus({(2, 1): prec(K_a=1, K_b=2)}))
+    check("v5.1: delta=NaN -> 拒绝", "K_SELECTION_AMBIGUOUS",
+          kstatus({(2, 1): prec(delta=NAN)}))
+    check("v5.1: 缺配对记录 -> 拒绝", "K_SELECTION_AMBIGUOUS", kstatus({}))
+    # 反向配对 (1,2) Δ=-10，规范化后应为 (2,1) Δ=+10
+    rev = prec(delta=-10.0, K_a=1, K_b=2, model_a="X_K1", model_b="X_K2",
+               direction="B>A")
+    norm, flag = SM.normalize_pair({(1, 2): rev}, (2, 1))
+    check("v5.1: 反向配对 Δ 反号", 10.0, float(norm["delta"]), str(flag))
+    check("v5.1: 反向配对方向反转", "A>B", norm["direction"])
+    check("v5.1: 反向配对 K_a/K_b 交换", (2, 1),
+          (int(norm["K_a"]), int(norm["K_b"])))
+    check("v5.1: 反向配对可用且判 converged", "converged",
+          kstatus({(1, 2): rev}))
+    ok, why = SM.validate_pair_record(prec(thr=NAN), (2, 1))
+    check("v5.1: validate 直接拒绝 thr=NaN", False, ok, why)
+    ok, why = SM.validate_pair_record(prec(comparison_type="mechanism"), (2, 1))
+    check("v5.1: validate 直接拒绝错误类型", False, ok, why)
+
+    # 机制二元组方向：按 Δ 符号推导，不让 unknown 参与显著偏好
+    check("v5.1: 二元组同向 -> 有方向偏好", "evidence_for_model_preference",
+          SM.decide_mechanism([(2, 1), (3, 1)]))
+    check("v5.1: 二元组反向 -> preference_conflict", "preference_conflict",
+          SM.decide_mechanism([(2, 1), (-3, 1)]))
+    check("v5.1: 二元组不显著 -> ambiguous", "ambiguous",
+          SM.decide_mechanism([(0.2, 1), (0.3, 1)]))
+    check("v5.1: 显式 unknown 方向按 Δ 推导", "preference_conflict",
+          SM.decide_mechanism([(2, 1, "unknown"), (-3, 1, "unknown")]))
+
+    # ---- 用例 2 正向（状态机层）：两候选都合格、KK ok、Δ 不显著 ----
+    pos = prec(delta=0.4, dse=0.5, thr=2.0)   # Δ=0.4 < thr=max(2,2*dse)
+    r_pos = SM.decide("ok", {1: cand(0.0), 2: cand(0.4)}, {}, 2,
+                      [], ["none"], [], [], pairwise_comparisons={(2, 1): pos})
+    check("用例2正向: 两候选合格 + Δ<2dse -> K_SELECTION_AMBIGUOUS",
+          "K_SELECTION_AMBIGUOUS", r_pos["k_selection_status"], r_pos["reasons"])
+    check("用例2正向: 未走候选不完整分支", True,
+          "候选集合不完整" not in r_pos["reasons"], r_pos["reasons"])
+    check("用例2正向: k_reference 仍指向 LOO 最优", 2,
+          json.loads(r_pos["k_reference"])["K"])
+    # 反向对照：Δ 显著 -> converged
+    big = prec(delta=30.0, dse=4.0, thr=10.0)
+    check("用例2反向: Δ 显著 -> converged", "converged",
+          kstatus({(2, 1): big}))
 
     df = pd.DataFrame(rows)
     df.to_csv(ROOT / "state_machine_boundary_tests.csv", index=False)

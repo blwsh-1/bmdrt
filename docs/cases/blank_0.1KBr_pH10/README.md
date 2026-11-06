@@ -281,7 +281,9 @@ cp "$CASE/inputs/cut1Hz_40pt.txt"   out/_diag_inputs/Blank_cut1Hz.txt
 | `replay_identifiability.py` / `replay_identifiability.csv` | v2 回放：本案例 `converged`(K=2) + 机制 `ambiguous` |
 | `第3-4步_合成谱验证与历史回归.md` | 用例 2/2b/4/4b 合成谱验证 + 76 条历史回放离线回归（措辞已按审查意见降级） |
 | `v2_state_machine.py` / `v2_case_tests.csv` / `v2_history_regression.csv` | 四层判定纯函数、用例实测、历史逐条重判（含 `change_reason`） |
-| `test_state_machine.py` / `state_machine_boundary_tests.csv` | 状态机纯函数边界测试（23/23 PASS） |
+| `test_state_machine.py` / `state_machine_boundary_tests.csv` | 状态机纯函数边界测试（**48/48 PASS**） |
+| `case2_positive_real.py` / `case2_positive.csv` | 用例 2 正向：状态机层通过；真实谱层 4 组固定噪声仍未成立 |
+| `审查意见处理_v5.1.md` | v5.1 修订逐条回应（配对校验、反向符号、机制方向、用例 2） |
 | `control_diagnostics.csv` / `export_control_diagnostics.py` | 六组 control 门控诊断摘要（随包，可独立复现门控） |
 | `审查意见处理_第4轮.md` | 第 4 轮审查逐条回应（状态机暂缓冻结） |
 | `审查意见处理_v2修订.md` | 审查意见逐条回应、P0 修订、B₂ 量纲复核、近简并构造负面结果 |

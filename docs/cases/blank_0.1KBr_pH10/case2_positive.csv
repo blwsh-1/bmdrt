@@ -1,0 +1,5 @@
+case,f0s,w2,noise,fixed_sigma,kk_status,kk_ok,grade_K1,grade_K2,rhat_max,ess_bulk_min,divergences,all_candidates_qualified,n_observations,delta,dse,thr,delta_not_significant,sm_k_selection_status,positive_case_established,note
+case2_positive_real,1000/100 Hz,5,0.02,1.61454,ok,True,2,0,1.0473,87.9656,57,False,50,0.669585,0.444672,2,True,K_SELECTION_AMBIGUOUS,False,固定噪声仅为测试设置，未改算法代码/先验/阈值
+case2_positive_real,1000/300 Hz,8,0.02,1.61506,ok,True,2,0,1.66603,4.92347,37,False,50,-0.077478,0.230269,2,True,K_SELECTION_AMBIGUOUS,False,固定噪声仅为测试设置，未改算法代码/先验/阈值
+case2_positive_real,1000/500 Hz,10,0.02,1.61524,ok,True,2,0,1.09364,22.5156,53,False,50,-0.274717,0.217731,2,True,K_SELECTION_AMBIGUOUS,False,固定噪声仅为测试设置，未改算法代码/先验/阈值
+case2_positive_real,1000/700 Hz,4,0.02,1.61557,ok,True,2,0,1.67546,4.82896,42,False,50,-0.311055,0.221121,2,True,K_SELECTION_AMBIGUOUS,False,固定噪声仅为测试设置，未改算法代码/先验/阈值

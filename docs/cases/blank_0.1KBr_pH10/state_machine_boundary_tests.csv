@@ -13,7 +13,7 @@ mechanism: 缺失优先于显著判定,comparison_incomplete,comparison_incomple
 "decide: 多 K 用 (3,2) 配对而非 (3,1)",converged,converged,True,"配对 Δ=30.0 > thr=10.0 (n_obs=50, K_selection)"
 decide: k_reference 取 LOO 最优 K=3,3,3,True,
 decide: k_reference 含 role,prediction_reference_only,prediction_reference_only,True,
-decide: 缺配对证据 -> 不 converged,K_SELECTION_AMBIGUOUS,K_SELECTION_AMBIGUOUS,True,"缺少 (3, 2) 的配对证据，禁止严格 converged"
+decide: 缺配对证据 -> 不 converged,K_SELECTION_AMBIGUOUS,K_SELECTION_AMBIGUOUS,True,配对证据无效：缺少配对记录，禁止严格 converged
 decide: 机制缺失 dse -> comparison_incomplete,comparison_incomplete,comparison_incomplete,True,
 gate: 完整诊断 -> effective,True,True,True,[]
 gate: 缺 R-hat/ESS 日志 -> 无效,False,False,True,"['rhat_max', 'ess_bulk', 'ess_tail']"
@@ -22,3 +22,28 @@ gate: tree_cap 缺失 -> 无效,False,False,True,['tree_cap']
 gate: tree_cap 缺失被记录,True,True,True,['tree_cap']
 gate: grade 缺失 -> 无效,False,False,True,['sample_grade']
 gate: KK warn -> 无效,False,False,True,False
+v5.1: 合法配对 -> converged,converged,converged,True,
+v5.1: thr=NaN -> 不得 converged,K_SELECTION_AMBIGUOUS,K_SELECTION_AMBIGUOUS,True,
+v5.1: 缺 thr -> 不抛 KeyError 且拒绝,K_SELECTION_AMBIGUOUS,K_SELECTION_AMBIGUOUS,True,
+v5.1: comparison_type 错误 -> 拒绝,K_SELECTION_AMBIGUOUS,K_SELECTION_AMBIGUOUS,True,
+v5.1: dse=0 -> 拒绝,K_SELECTION_AMBIGUOUS,K_SELECTION_AMBIGUOUS,True,
+v5.1: thr<0 -> 拒绝,K_SELECTION_AMBIGUOUS,K_SELECTION_AMBIGUOUS,True,
+v5.1: n_observations=0 -> 拒绝,K_SELECTION_AMBIGUOUS,K_SELECTION_AMBIGUOUS,True,
+v5.1: n_observations 非整数 -> 拒绝,K_SELECTION_AMBIGUOUS,K_SELECTION_AMBIGUOUS,True,
+v5.1: K_a/K_b 方向不符 -> 拒绝,K_SELECTION_AMBIGUOUS,K_SELECTION_AMBIGUOUS,True,
+v5.1: delta=NaN -> 拒绝,K_SELECTION_AMBIGUOUS,K_SELECTION_AMBIGUOUS,True,
+v5.1: 缺配对记录 -> 拒绝,K_SELECTION_AMBIGUOUS,K_SELECTION_AMBIGUOUS,True,
+v5.1: 反向配对 Δ 反号,10.0,10.0,True,True
+v5.1: 反向配对方向反转,A>B,A>B,True,
+v5.1: 反向配对 K_a/K_b 交换,"(2, 1)","(2, 1)",True,
+v5.1: 反向配对可用且判 converged,converged,converged,True,
+v5.1: validate 直接拒绝 thr=NaN,False,False,True,delta/dse/thr 含非有限值（含 thr=NaN）
+v5.1: validate 直接拒绝错误类型,False,False,True,comparison_type 不是 K_selection
+v5.1: 二元组同向 -> 有方向偏好,evidence_for_model_preference,evidence_for_model_preference,True,
+v5.1: 二元组反向 -> preference_conflict,preference_conflict,preference_conflict,True,
+v5.1: 二元组不显著 -> ambiguous,ambiguous,ambiguous,True,
+v5.1: 显式 unknown 方向按 Δ 推导,preference_conflict,preference_conflict,True,
+用例2正向: 两候选合格 + Δ<2dse -> K_SELECTION_AMBIGUOUS,K_SELECTION_AMBIGUOUS,K_SELECTION_AMBIGUOUS,True,配对 Δ=0.4 ≤ thr=2.0
+用例2正向: 未走候选不完整分支,True,True,True,配对 Δ=0.4 ≤ thr=2.0
+用例2正向: k_reference 仍指向 LOO 最优,2,2,True,
+用例2反向: Δ 显著 -> converged,converged,converged,True,
