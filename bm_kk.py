@@ -34,6 +34,27 @@ inevitable contributions from the measurement system"。返回值
 而直接截掉最低 25% 频点反而让中段 1.92% → 4.33%、高频 1.92%→14.83%。
 所以本门禁只用 `add_cap` 复验，`f_cut` 仅作诊断记录、不真正截断。
 
+M 阶数怎么选：μ 早停会造成假阳性
+--------------------------------
+`impedance.validation` 官方的 `linKK` 用 `while mu > c: M += 1` 选 RC 阶数。
+μ 不是残差，而是 `calc_mu(R_k) = 1 − Σ|R_k<0| / Σ|R_k≥0|`，衡量 RC 系数里
+负值的比例（过拟合信号）。这个停止条件在**含大电感、|Z| 很小**的 2E 谱上
+会过早触发：实测 `2EMC2-1_0200mA.csv`（56 点、1–1e5 Hz、|Z|≈0.01 Ω）
+在 M=4 就因出现负 R_k 得到 μ=0.565 而停，RC 链严重欠拟合 → 中段相对残差
+14.72%、ac1 0.97/0.93，被下面的「系统性」判据误判成谱不自洽、拒绝定 K。
+同一份数据继续加阶：M=6 → 2.51%、M=8 → 1.02%、M=9 → 0.83%。
+所以 M 改为**残差驱动**：
+
+    score(M) = rms_all(M) · (1 + 0.02·M)      # 每多一阶要求残差至少改善约 2%
+
+取 score 最小的 M，并加三道数值护栏：
+  · M ≤ min(max_M, (n−2)//2)（参数个数不超过点数的一半）；
+  · 残差突然放大 3 倍（或非有限）→ 停止，不采用该 M；
+  · 连续 5 阶相对改善 < 2% → 停止扫描。
+μ 仍返回，但**只作过拟合参考**（μ<0.1 时在归因里提示），不再决定 M，
+也不再参与 `kk_check` 的分级。实测 118 条 2E 谱：旧 μ 早停 → fail 68 条；
+新规则 → fail 4 条（其余 warn 为端部归因，不拦拟合）。
+
 分级判定的关键：中段才是主证据
 ------------------------------
     1. 原谱做 Lin-KK，按 **log f 三分**统计复相对残差 RMS；
@@ -50,16 +71,17 @@ inevitable contributions from the measurement system"。返回值
        端部超阈但能归因 / μ 未收敛 → warn。
        有电感、有扩散尾这类纯信息性备注**不**改变 status。
 
-    实测标定（`examples/example_caseE.csv` 派生合成谱）：
-    谱                        中段残差   中段 ac1(re/im)     判定
-    干净 caseE                0.65%     -0.57/-0.13        ok
-    实部鼓包 0.10R            2.89%     +0.52/+0.93        ok（低于阈值）
-    实部鼓包 0.20R            5.50%     +0.72/+0.96        fail（系统性）
-    实部鼓包 0.40R           15.13%     +0.90/+0.83        fail（残差过大）
-    低频漂移 0.10R           17.01%     +0.83/+0.97        fail（残差过大）
-    加噪 Wo-only (caseG)      8.53%     +0.71/+0.09        warn（噪声，非系统性）
-    真实 2E                   1.84%     +0.84/+0.83        warn（端部归因）
-    注意 μ 在这些非因果谱上仍然 ≈0.80「收敛」，所以 μ 只能当次要信号。
+    实测标定（本仓库复现：`examples/example_caseE.csv` + 实部鼓包
+    exp(−½((log f−log f0)/0.25)²)，幅度按 R=Re 跨度计）：
+    谱                        中段残差   判定
+    干净 caseE                0.7%      ok
+    实部鼓包 0.10R            2.6%      ok
+    实部鼓包 0.20R            4.9%      ok（低于阈值）
+    实部鼓包 0.40R            8.6%      fail（系统性 + 残差过大）
+    低频漂移 0.10R            1.5%      ok（本构造较弱）
+    加噪 1%|Z|                 1.0%      ok
+    注意：鼓包幅度/宽度与旧版标定不同，数值不能逐行对比；
+    关键次序不变——「0.40R 仍 fail，干净/小扰动/噪声不 fail」。
 
 用法
 ----
@@ -110,7 +132,9 @@ def _eval_linkk(elements, ts, f):
 
 
 def lin_kk(f, Z, c: float = 0.85, max_M: int = 50,
-           fit_type: str = "complex", add_cap: bool = False) -> dict:
+           fit_type: str = "complex", add_cap: bool = False,
+           elbow: float = 0.02, patience: int = 5,
+           blowup: float = 3.0) -> dict:
     """线性 Kramers-Kronig 检验，返回 M / mu / Z_fit / 实虚部相对残差。
 
     绕开 impedance.py 1.7.1 在 numpy 2.x 下的两个兼容问题：
@@ -118,21 +142,53 @@ def lin_kk(f, Z, c: float = 0.85, max_M: int = 50,
     ② eval_linKK 本身用 repr 拼字符串，同样崩。
     `fit_linKK` / `get_tc_distribution` 是纯 numpy 运算，可以直接用。
 
-    额外回传 `L_fit`（Lin-KK 自己拟出的串联电感）与 `C_fit`（add_cap 时）。
+    **M 不再用官方的 `while mu > c` 早停**（见模块 docstring）：改为扫描
+    M=1..M_hi，取 `rms_all·(1+elbow·M)` 最小者，带数值病态与停滞护栏。
+    `c` 只用来标注 `mu_converged`，不参与选阶，也不参与门禁分级。
+
+    额外回传 `L_fit`（Lin-KK 自己拟出的串联电感）、`C_fit`（add_cap 时）、
+    `mu_overfit`（μ<0.1，RC 系数大量负值）与 `M_scanned`（实际扫了几阶）。
     """
     from impedance.validation import fit_linKK, get_tc_distribution
 
     f = np.asarray(f, float)
     Z = np.asarray(Z, complex)
-    M, mu, elements, ts = 0, 1.0, None, None
-    while mu > c and M < max_M:
-        M += 1
-        ts = get_tc_distribution(f, M)
-        elements, mu = fit_linKK(f, ts, M, Z, fit_type, add_cap)
-    if elements is None:                       # 理论上只在 max_M=0 时发生
+    n = f.size
+    # 参数个数 M+2（add_cap 再 +1）不超过点数的一半，避免设计矩阵病态。
+    m_hi = int(min(max_M, max(4, (n - 2) // 2)))
+    zabs = np.maximum(np.abs(Z), EPS)
+    hist = []
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        for M in range(1, m_hi + 1):
+            try:
+                ts = get_tc_distribution(f, M)
+                elements, mu = fit_linKK(f, ts, M, Z, fit_type, add_cap)
+                Z_fit = _eval_linkk(elements, ts, f)
+            except Exception:                  # 单个 M 病态不影响其它阶
+                continue
+            err = (Z - Z_fit) / zabs
+            r_all = float(np.sqrt(np.mean(np.abs(err) ** 2)))
+            if not np.isfinite(r_all):
+                continue
+            # 数值病态护栏：残差相对已见过的最好值突然放大 → 停。
+            if hist and r_all > blowup * min(h["r_all"] for h in hist):
+                break
+            hist.append({"M": M, "mu": mu, "elements": elements, "ts": ts,
+                         "err": err, "r_all": r_all})
+            # 停滞护栏：连续 patience 阶相对改善 < 2% → 停。
+            if M >= 8 and len(hist) >= patience + 1:
+                r0 = hist[-(patience + 1)]["r_all"]
+                if r0 > 0 and (r0 - r_all) / r0 < 0.02:
+                    break
+    if not hist:
         raise RuntimeError("Lin-KK 没有产生拟合结果")
-    Z_fit = _eval_linkk(elements, ts, f)
-    err = (Z - Z_fit) / np.maximum(np.abs(Z), EPS)
+
+    # 肘部：全谱残差 × 复杂度惩罚。比"取最小残差"更简约，也避免为了
+    # 端部最后一点残差把 M 推到数值病态区。
+    pick = min(hist, key=lambda h: h["r_all"] * (1.0 + elbow * h["M"]))
+    elements, ts, err = pick["elements"], pick["ts"], pick["err"]
+    mu = pick["mu"]
     L_fit = float(elements[-1])
     C_fit = None
     if add_cap and elements.size == ts.size + 3 and elements[-2] != 0:
@@ -140,10 +196,12 @@ def lin_kk(f, Z, c: float = 0.85, max_M: int = 50,
     # 纯电阻这类退化谱上 calc_mu 可能给出 -inf / nan；对外用 None，
     # 避免 JSON 里出现 Infinity / NaN，也让报告能写 "n/a"。
     mu_val = float(mu) if np.isfinite(mu) else None
-    return {"M": M, "mu": mu_val, "Z_fit": Z_fit,
+    return {"M": pick["M"], "mu": mu_val, "Z_fit": Z - err * zabs,
             "res_re": err.real, "res_im": err.imag,
-            # 非有限 μ 只出现在 M 太小的退化谱上，不构成"不自洽"的证据。
+            # 非有限 μ 只出现在退化谱上，不构成"不自洽"的证据。
             "mu_converged": bool(mu <= c) if np.isfinite(mu) else True,
+            "mu_overfit": bool(np.isfinite(mu) and mu < 0.1),
+            "M_scanned": len(hist), "M_hi": m_hi,
             "L_fit": L_fit, "C_fit": C_fit, "add_cap": bool(add_cap)}
 
 
@@ -436,7 +494,7 @@ def kk_check(f, Z, include_L=None, c: float = 0.85, max_M: int = 50,
     返回 dict（全部可 JSON 序列化）：
         status        ok | warn | fail | unavailable
         reason        人类可读结论
-        mu / M / mu_converged
+        mu / M / mu_converged（μ 只作过拟合参考）/ mu_overfit / M_scanned
         rms_raw       原谱 高/中/低/全频段 相对残差 RMS
         rms_cap       add_cap 复验的残差（未触发则 None）
         rms_clean     仅低频段取 raw / cap 更优者，中/高频仍用 raw
@@ -453,11 +511,12 @@ def kk_check(f, Z, include_L=None, c: float = 0.85, max_M: int = 50,
     判定口径（保守，避免把正常谱全拒）：
       · 中段 > res_tol 且 实/虚部残差同时系统性 → fail
       · 中段 > 2*res_tol                       → fail（无论结构）
-      · μ 未收敛 且 全谱残差 > res_tol         → fail
       · 中段 > res_tol 但非系统性              → warn（噪声 / 表达力不足）
-      · 端部超阈 / μ 未收敛                    → warn（写明归因）
+      · 端部超阈                               → warn（写明归因）
       · 其余                                   → ok
       · impedance 缺失 / Lin-KK 抛异常         → unavailable（只警告不中断）
+    μ 不参与分级：它只反映 RC 系数正负号，既可能因欠拟合偏高，也可能因
+    过拟合偏低；μ<0.1 时在 attribution 里提示"残差判据可能偏松"。
     """
     f = np.asarray(f, float)
     Z = np.asarray(Z, complex)
@@ -465,6 +524,7 @@ def kk_check(f, Z, include_L=None, c: float = 0.85, max_M: int = 50,
     f, Z = f[order], Z[order]
 
     base = dict(status="ok", reason="", mu=None, M=None, mu_converged=None,
+                mu_overfit=None, M_scanned=None,
                         rms_raw=None, rms_cap=None, rms_clean=None,
                 residual_structure=None, res_tol=float(res_tol),
                 L_fit=None, L_est=None, f_cut=None, tail_slope=None, tail=None,
@@ -492,6 +552,8 @@ def kk_check(f, Z, include_L=None, c: float = 0.85, max_M: int = 50,
         return base
     rms_raw = _band_rms(raw, f)
     base.update(mu=raw["mu"], M=raw["M"], mu_converged=raw["mu_converged"],
+                mu_overfit=raw.get("mu_overfit"),
+                M_scanned=raw.get("M_scanned"),
                 L_fit=raw["L_fit"], rms_raw=rms_raw)
 
     # ---- 端部诊断量（不改写数据）----
@@ -516,7 +578,6 @@ def kk_check(f, Z, include_L=None, c: float = 0.85, max_M: int = 50,
     if rms_cap is not None:
         rms_clean["low"] = min(rms_raw["low"], rms_cap["low"])
     base["rms_clean"] = rms_clean
-    mu_ok = bool(raw["mu_converged"])
     struct = _residual_structure(f, raw)
     base["residual_structure"] = struct
     mu_txt = (f"μ={base['mu']:.2f}" if base["mu"] is not None else "μ=n/a")
@@ -555,6 +616,9 @@ def kk_check(f, Z, include_L=None, c: float = 0.85, max_M: int = 50,
     if rms_clean["high"] > res_tol and L_est is not None:
         attr.append(f"高频段残差 {rms_clean['high']:.1%} 仍超阈："
                     f"局部感抗未被单一 L 完全吸收，定 K 时勿当作额外弧")
+    if raw.get("mu_overfit"):
+        attr.append(f"μ={base['mu']:.2f} <0.1：RC 系数出现大量负值，接近过拟合，"
+                    f"残差判据可能偏松，引用结论前需人工复核")
     base["attribution"] = attr
 
     # ---- 分级 ----
@@ -572,12 +636,6 @@ def kk_check(f, Z, include_L=None, c: float = 0.85, max_M: int = 50,
                     reason=f"中段相对残差 {mid:.1%} > {res_tol:.1%} 且{why}；"
                            f"{sys_txt}，与端部电感/扩散无关 → 谱不自洽，拒绝定 K")
         return base
-    if not mu_ok and rms_clean["all"] > res_tol:
-        base.update(status="fail",
-                    reason=f"Lin-KK {mu_txt} 未收敛到 {c} 且全谱残差 "
-                           f"{rms_clean['all']:.1%} > {res_tol:.1%} "
-                           f"→ 谱不自洽，拒绝定 K")
-        return base
     if mid_bad:
         base.update(status="warn",
                     reason=f"中段残差 {mid:.1%} > {res_tol:.1%}，但 {sys_txt} "
@@ -585,10 +643,10 @@ def kk_check(f, Z, include_L=None, c: float = 0.85, max_M: int = 50,
                            f"表达力不足，**不能判定谱不自洽**；继续拟合但需看残差图",
                     attribution=attr + [f"中段残差超阈但非系统性：{sys_txt}"])
         return base
-    if end_bad or not mu_ok:
+    if end_bad:
         base.update(status="warn",
                     reason=f"中段残差 {mid:.1%} ≤ {res_tol:.1%} 正常，"
-                           f"但端部/收敛性需归因（见 attribution）→ 可拟合，"
+                           f"但端部需归因（见 attribution）→ 可拟合，"
                            f"引用参数时须说明端部处理")
         return base
     base.update(status="ok",
@@ -605,7 +663,8 @@ def format_report(g: dict) -> str:
     if g.get("mu") is not None:
         r = g["rms_raw"] or {}
         c = g["rms_clean"] or {}
-        lines.append(f"    μ={g['mu']:.3f}  M={g['M']}  "
+        lines.append(f"    μ={g['mu']:.3f}  M={g['M']}"
+                     f"（M 由残差肘部选择；μ 仅作过拟合参考）  "
                      f"相对残差 RMS 高/中/低 = "
                      f"{r.get('high', float('nan')):.2%}/"
                      f"{r.get('mid', float('nan')):.2%}/"
