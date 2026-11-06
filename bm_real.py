@@ -25,6 +25,9 @@
      对 K ∈ {K_drt−1, K_drt, K_drt+1} 各拟合一次，用 PSIS-LOO（elpd）
      比较，同时报 rms/σ、残差 acf、碎片/窗口外分量数、R̂/ESS/divergences。
      选择规则写在 `select_k()` 里，是显式的、可复核的。
+     2026-11-06 起分为两层：K 只由「采样/物理硬门禁 + 合格候选的配对 LOO」决定；
+     峰位出窗、窗口内贡献、参数简并、残差结构、LOO 稳健性由
+     `component_review()` 在拟合后单独报告，不再淘汰 K。
 
 为什么不能"DRT 定 K 再让贝叶斯验证"
 ------------------------------------
@@ -555,7 +558,8 @@ def loo_pointwise(ll):
         r = az.loo(idata, pointwise=True)
     pt = np.asarray(r.loo_i.values).ravel()
     pk = np.asarray(r.pareto_k.values).ravel()
-    return idata, float(r.elpd_loo), float(r.se), float(np.mean(pk > 0.7)), pt
+    return (idata, float(r.elpd_loo), float(r.se),
+            float(np.mean(pk > 0.7)), pt, pk)
 
 
 def compare_models(res_list):
@@ -717,7 +721,7 @@ def fit_one(f, Z, K, include_L, zeta, init=None, seed=0, kw=None, diffusion=None
     # f0 = 1/(2πτ) 是**参数特征频率**，不是 DRT 实际峰位（ζ≠1 时差 2%~25%）。
     # 以前只存一个 p_out、还叫"P(窗口外)"，等于把两个口径混成一个字段。
     #   p_tau_out  : P(f_τ ∉ [f_lo, f_hi])      —— 参数口径
-    #   p_peak_out : P(f_peak ∉ [f_lo, f_hi])   —— 物理峰位口径（模型选择用这个）
+    #   p_peak_out : P(f_peak ∉ [f_lo, f_hi])   —— 物理峰位口径（现只用于组分审查）
     f0_s = mm["f0"][:, o]
     p_tau_out = np.mean((f0_s < f.min()) | (f0_s > f.max()), axis=0)
 
@@ -780,7 +784,7 @@ def fit_one(f, Z, K, include_L, zeta, init=None, seed=0, kw=None, diffusion=None
 
     # **展示字段**与**模型选择字段**必须分开：
     #   p_out          —— 兼容旧接口/给人看的统一出口，峰位不可用时退回 τ
-    #   p_peak_out_max —— 只给 select_k 用，峰位不可用时是 NaN，**绝不回退**
+    #   p_peak_out_max —— 只给 component_review 用，不再参与 K 硬筛选； NaN 记为 uncertain，**绝不回退**
     # 早先 select_k 直接读 p_out，等于在峰位诊断不可用时悄悄换成 τ 口径
     # 完成硬筛选，与文档写的"降级不是等价"矛盾。
     p_out = np.where(np.isfinite(p_peak_out), p_peak_out, p_tau_out)
@@ -827,9 +831,11 @@ def fit_one(f, Z, K, include_L, zeta, init=None, seed=0, kw=None, diffusion=None
     # ---- 模型比较 ----
     ll = loglik_matrix(s, f, Z, include_L)
     try:
-        idata, elpd, elpd_se, bad_k, _ = loo_pointwise(ll)
+        idata, elpd, elpd_se, bad_k, pt, pk = loo_pointwise(ll)
     except Exception as e:
-        idata, elpd, elpd_se, bad_k = None, float("nan"), float("nan"), float("nan")
+        idata, elpd, elpd_se, bad_k, pt, pk = (None, float("nan"),
+                                               float("nan"), float("nan"),
+                                               None, None)
         print(f"    （LOO 失败：{type(e).__name__}: {e}）")
 
     r = dict(
@@ -851,6 +857,7 @@ def fit_one(f, Z, K, include_L, zeta, init=None, seed=0, kw=None, diffusion=None
         f_lo=float(f.min()), f_hi=float(f.max()), n_pts=int(f.size),
         zmax_obs=zmax_obs, p_diff_small=p_diff_small, diff_amp_key=diff_amp_key,
         idata=idata, elpd=elpd, elpd_se=elpd_se, bad_k=bad_k,
+        pointwise_elpd=pt, pareto_k=pk,
         elpd_diff=0.0, dse=float("nan"), weight=float("nan"), rank=1,
         rhat_max=max(x["rhat"] for x in rows),
         tail_min=min(x["tail"] for x in rows),
@@ -909,12 +916,14 @@ def select_k(res_list, exploratory: bool = False):
 
     状态取值：exploratory | converged | degraded | rejected
 
-    1) **硬性剔除**（任一触发即淘汰）：
+    1) **硬性剔除**（任一触发即淘汰）——只管「这个候选能否可靠参与比较」：
        · 采样分级 0（R̂/ESS/divergence/触顶 任一越线）
-       · **物理峰位口径** `p_peak_out_max > 0.5`；峰位诊断不可用（NaN）时
-         也淘汰，**绝不退回 τ 口径**（见下）
        · `frac_neg > bm_diff.NONPHYS_TOL`（φζ>1 的样本占比超容忍上限）
        · LOO 近似不可靠（Pareto-k>0.7 超 10%）、LOO 不可用
+       **注意：`P(峰位出窗)` 已从硬筛选中彻底移出**（2026-11-06 审查意见）。
+       峰位出窗是「组分的物理可辨识性」问题，不是「模型预测能力」问题：
+       一个分量峰位在窗口外，仍可能对窗口内阻抗有显著贡献。
+       它改由拟合后的 `component_review()` 单独报告，不淘汰 K。
     2) 剩下的按 **elpd_loo 配对比较**排序，取最好。
     3) **简约优先**：若某个更小的 K 与最好者满足 `deficit < max(2, dse)`
        （差值落在不确定度内），取更小的 K。
@@ -922,14 +931,13 @@ def select_k(res_list, exploratory: bool = False):
        但打上 `selection_status` 并在 note 首条写明「不输出最优 K 的结论」，
        **绝不把「相对最好」包装成「最优」**：
          converged  有 K 过完整硬筛选（旧结果文件里写作 "ok"）
-         degraded   只降到「可用」档（分级≥1 但被物理/峰位/LOO 规则剔除）
+         degraded   只降到「可用」档（分级≥1 但被物理/LOO 规则剔除）
          rejected   连「可用」都没有，结果只是相对排序、无物理意义
          exploratory quick 档专属，见函数开头说明
 
-    为什么硬筛选**只认 p_peak_out_max、不认 p_out**：`p_out` 是给人看的
-    兼容字段，峰位不可用时会退回 τ 口径；如果拿它做硬筛选，模型选择就
-    不知道自己在用另一套口径，等于悄悄换了判据。峰位诊断不可用本身
-    就是一个结论（这个模型没法用物理峰位评估），应当淘汰而不是绕过。
+    峰位口径说明：`p_out` 是兼容展示字段（峰位不可用会退回 τ 口径），
+    `p_peak_out` 才是物理峰位口径。两者现在都**只用于组分审查**，
+    不再参与 K 的硬筛选；峰位诊断不可用（NaN）在组分状态里记为 `uncertain`。
 
     注意：这里的「最好」只在**扫过的 K 范围**内成立，不是全局最优。
     """
@@ -940,13 +948,9 @@ def select_k(res_list, exploratory: bool = False):
         if r["grade"] == 0:
             hard += r["grade_loose"]
 
+        # 峰位出窗不再淘汰 K；只记录，交给 component_review() 做组分审查。
         ppm = r.get("p_peak_out_max", float("nan"))
-        if not np.isfinite(ppm):
-            hard.append("物理峰位诊断不可用（φζ>1 样本过多）；"
-                        "不能用 τ 口径代替完成硬筛选")
-        elif ppm > 0.5:
-            hard.append(f"{int(np.nansum(np.asarray(r['p_peak_out']) > 0.5))} "
-                        f"个分量 P(峰位出窗)>0.5")
+        r["peak_out_for_review"] = (float(ppm) if np.isfinite(ppm) else None)
 
         fn = r.get("frac_neg", float("nan"))
         if np.isfinite(fn) and fn > tol:
@@ -972,7 +976,7 @@ def select_k(res_list, exploratory: bool = False):
     # 旧结果文件里的 "ok" 视为 converged 的别名，读的时候不用改。
     status = "converged" if ok else ("degraded" if usable else "rejected")
     if not ok:
-        note.append("严格标准下没有 K 全过（分级≥1 但被物理有效性/峰位/LOO "
+        note.append("严格标准下没有 K 全过（分级≥1 但被物理有效性/LOO "
                     "规则剔除），已降级到「可用」档；下面的选择只是相对最好，"
                     "引用时必须说明它没过硬筛选。"
                     if usable else
@@ -1005,6 +1009,124 @@ def select_k(res_list, exploratory: bool = False):
         status = "exploratory"
     best["selection_status"] = status
     return best, note
+
+
+def component_review(res, f):
+    """拟合后的**组分可辨识性审查**（与 K 选择分离，不改变 K）。
+
+    审查意见 2026-11-06：`P(峰位出窗)` 不再是 K 的硬剔除条件。
+    K 由合格候选之间的配对 LOO 决定；峰位、窗口内贡献、参数简并、
+    残差结构、LOO 稳健性在这里单独报告，分别产出「预测选择」与
+    「组分/物理可辨识性」两类结论。
+
+    返回 dict（全部可 JSON 序列化），由 save_out 落盘、run 打印、judge 引用。
+    """
+    K = int(res["K"])
+    p = np.asarray(res.get("p_peak_out", []), float)
+    states = {}
+    for i in range(K):
+        v = p[i] if i < p.size else float("nan")
+        key = f"component_{i + 1}"
+        if not np.isfinite(v):
+            states[key] = "uncertain"
+        elif v > 0.5:
+            states[key] = "out_of_window"
+        elif v > 0.05:
+            states[key] = "uncertain"
+        else:
+            states[key] = "in_window"
+
+    # 窗口内阻抗贡献：后验中位数参数在 f_min 与几何中心处的分量贡献。
+    contrib = []
+    try:
+        sm = res["s"]
+        mm = B.match_components(sm)
+        o = np.argsort(-np.median(mm["f0"], axis=0))
+        w = np.median(mm["w"][:, o], axis=0)
+        tau = np.median(mm["tau"][:, o], axis=0)
+        phi = np.median(mm["phi"][:, o], axis=0)
+        zeta = np.median(mm["zeta"][:, o], axis=0)
+
+        def zcomp(freqs):
+            x = np.maximum(2 * np.pi * np.asarray(freqs, float)[:, None]
+                           * tau[None, :], 1e-300)
+            mag = np.exp(phi[None, :] * np.log(x))
+            ang = phi[None, :] * (np.pi / 2)
+            den = 1.0 + mag * (np.cos(ang) + 1j * np.sin(ang))
+            return w[None, :] / den ** zeta[None, :]
+
+        f_lo, f_geo = float(np.min(f)), float(np.sqrt(np.min(f) * np.max(f)))
+        z_lo, z_geo = zcomp([f_lo])[0], zcomp([f_geo])[0]
+        tot_lo = float(res["R_inf"]) + z_lo.sum()
+        tot_geo = float(res["R_inf"]) + z_geo.sum()
+        for i in range(K):
+            contrib.append(dict(
+                component=i + 1, state=states[f"component_{i + 1}"],
+                p_peak_out=(float(p[i]) if i < p.size and np.isfinite(p[i])
+                            else None),
+                f0_hz=float(res["f0"][i]), w_ohm=float(res["w"][i]),
+                zk_re_at_fmin=float(z_lo[i].real),
+                zk_im_at_fmin=float(z_lo[i].imag),
+                frac_abs_at_fmin=float(abs(z_lo[i]) / max(abs(tot_lo), 1e-300)),
+                frac_im_at_fmin=float(z_lo[i].imag / max(abs(tot_lo.imag), 1e-300)),
+                frac_abs_at_geom=float(abs(z_geo[i]) / max(abs(tot_geo), 1e-300)),
+            ))
+    except Exception as e:
+        contrib.append(dict(error=f"{type(e).__name__}: {e}"))
+
+    pc = res.get("param_corr") or {}
+    deg = res.get("degeneracy") or []
+    bounds = [float(d.get("at_bound", 0)) for d in deg]
+    strong = [dict(a=x["a"], b=x["b"], rho=float(x["rho"]))
+              for x in (pc.get("strong") or [])]
+    param = dict(
+        strong_pairs=strong, n_strong=len(strong),
+        max_at_bound=(max(bounds) if bounds else None),
+        level=("degenerate" if (strong or (bounds and max(bounds) > 0.10))
+               else "identified"),
+    )
+
+    nl = res.get("null") or {}
+    zr = float(res["trend"]["re"] / max(res["s_re"], 1e-12))
+    zi = float(res["trend"]["im"] / max(res["s_im"], 1e-12))
+    p_tr = (float(np.mean(nl["trend"] < max(zr, zi))) if "trend" in nl else None)
+    p_acf = (float(np.mean(nl["acf"] < res["acf"])) if "acf" in nl else None)
+    residual = dict(
+        acf=float(res["acf"]), trend_re_sigma=zr, trend_im_sigma=zi,
+        trend_percentile=p_tr, acf_percentile=p_acf,
+        ppc_re=float(res["pp"]["cover_re"]),
+        ppc_im=float(res["pp"]["cover_im"]),
+        systematic=bool((p_tr is not None and p_tr > 0.99)
+                        or (p_acf is not None and p_acf > 0.99)),
+    )
+
+    pk, pt = res.get("pareto_k"), res.get("pointwise_elpd")
+    if pk is not None and pt is not None:
+        pk, pt = np.asarray(pk, float), np.asarray(pt, float)
+        bad = pk > 0.7
+        kept = pt[~bad]
+        loo = dict(
+            available=True,
+            pareto_k_max=float(np.nanmax(pk)),
+            n_gt_07=int(bad.sum()), frac_gt_07=float(bad.mean()),
+            high_influence_freqs=[float(x) for x in np.asarray(f)[bad]],
+            elpd_all=float(pt.sum()),
+            elpd_excl_high_k=(float(kept.sum()) if kept.size else None),
+            elpd_shift=(float(kept.sum() - pt.sum()) if kept.size else None),
+            note="删除高 Pareto-k 点仅是敏感性检查，不是精确 LOO / moment matching",
+        )
+    else:
+        loo = dict(available=False)
+
+    return dict(
+        component_identifiability=states,
+        window_contribution=contrib,
+        parameter_identifiability=param,
+        residual_review=residual,
+        loo_robustness=loo,
+        separation_note=("K 选择由合格候选之间的配对 LOO 决定；峰位出窗只进入"
+                         "组分可辨识性审查，不再淘汰 K，也不放宽采样硬门禁。"),
+    )
 
 
 # --------------------------------------------------------------------------
@@ -1194,6 +1316,20 @@ def judge(res, f, include_L):
         msg.append("模型选择降级：只在「可用」档里做相对比较，"
                    "引用 K 时须说明它没过硬筛选。")
 
+    cr = r.get("component_review") or {}
+    cid = cr.get("component_identifiability") or {}
+    oow = [k for k, v in cid.items() if v == "out_of_window"]
+    unc = [k for k, v in cid.items() if v == "uncertain"]
+    if oow or unc:
+        parts = []
+        if oow:
+            parts.append("、".join(oow) + " 峰位大概率在窗口外")
+        if unc:
+            parts.append("、".join(unc) + " 峰位状态不确定")
+        msg.append("**组分可辨识性受限**（不影响上面的 K 选择）：" + "；".join(parts)
+                   + "。请结合窗口内阻抗贡献、参数简并与扩散对照判断，"
+                     "不要把该分量解释成已确定的独立物理弛豫过程。")
+
     # 参数简并：边际区间看着都窄，但两个参数其实只定出一个组合。
     pc = r.get("param_corr") or {}
     if pc.get("strong"):
@@ -1247,8 +1383,8 @@ def judge(res, f, include_L):
                    f"但趋势只有 {z:.2f}σ。频率是对数分布，acf 只当辅助，"
                    f"以分段表和趋势为准。")
 
-    # 这里用**峰位口径**（条件概率）给提示，与 select_k 的硬筛选同一口径。
-    # 峰位诊断不可用（NaN）时不再退回 τ 口径糊过去，而是直接说明原因。
+    # 峰位口径现在只用于**组分审查**，不参与 select_k 的 K 硬筛选。
+    # 出窗 = 峰形/特征位置未被频率窗口约束，不等于窗口内阻抗贡献无效。
     hi_out = [i for i in range(K) if np.isfinite(r["p_peak_out"][i])
               and r["p_peak_out"][i] > 0.5]
     mid_out = [i for i in range(K) if np.isfinite(r["p_peak_out"][i])
@@ -1257,16 +1393,18 @@ def judge(res, f, include_L):
     if hi_out:
         who = ", ".join(f"#{i + 1} P={r['p_peak_out'][i]:.2f}" for i in hi_out)
         msg.append(f"**{len(hi_out)} 个分量大概率在窗口外**（{who}，峰位口径）："
-                   "这是「用窗口外分量吸收缺项」的典型症状，面积不可信。")
+                   "峰形与特征位置未被当前频率窗口约束。**这不淘汰 K**，"
+                   "但要核对它在实测频段内的阻抗贡献（见组分审查），"
+                   "不能据此断言已识别出独立物理过程。")
     if mid_out:
         who = ", ".join(f"#{i + 1} P={r['p_peak_out'][i]:.2f}" for i in mid_out)
-        msg.append(f"{len(mid_out)} 个分量跨在窗口边界上（{who}）：峰位本身不可信，"
-                   f"只当「这里有个未分辨的过程」看。")
+        msg.append(f"{len(mid_out)} 个分量跨在窗口边界上（{who}，组分状态 uncertain）："
+                   f"峰位本身不可信，只当「这里有个未分辨的过程」看。")
     if nan_out:
         who = ", ".join(f"#{i + 1}" for i in nan_out)
-        msg.append(f"{who} 的物理峰位诊断不可用（φζ>1 样本过多）："
-                   f"**峰位口径失效，不能改用 τ 口径充数**——"
-                   f"这几条分量按物理有效性规则应被淘汰。")
+        msg.append(f"{who} 的物理峰位诊断不可用（φζ>1 样本过多，组分状态 uncertain）："
+                   f"**峰位口径失效，不能改用 τ 口径充数**；"
+                   f"φζ>1 超限仍由物理有效性规则处理，但峰位本身不再淘汰 K。")
 
     tot = float(np.sum(r["w"])) or 1.0
     frag = [i for i in range(K) if r["w"][i] < 0.02 * tot]
@@ -1517,6 +1655,7 @@ def save_out(stem, f, Z, res, pres, include_L, zeta, tips, K_sel_note):
         fit_performed=True,
         kk=res.get("kk"),
         k_selection_status=res.get("selection_status"),
+        component_review=res.get("component_review"),
         param_corr=res.get("param_corr"),
         diffusion_resolution=res.get("diffusion_resolution"),
         # DRT 去电感通道的决策（used/L/四道检查/扣前后残差）+ 噪声地板
@@ -1529,7 +1668,7 @@ def save_out(stem, f, Z, res, pres, include_L, zeta, tips, K_sel_note):
         p_diff_small=res.get("p_diff_small"),
         zmax_obs=res.get("zmax_obs"),
         # 模型选择实际用到的字段，单独记一份，免得事后只能从 p_out 反推：
-        #   p_peak_out_max 是**唯一**参与硬筛选的窗口外判据（NaN = 不可用 → 淘汰）
+        #   p_peak_out_max 现在只用于组分可辨识性审查，不再参与 K 硬筛选
         #   p_tau_out_max  只作对照，**不参与选择**
         #   frac_neg       与 bm_diff.NONPHYS_TOL 比较，超限即淘汰
         p_peak_out_max=(float(res["p_peak_out_max"])
@@ -1687,9 +1826,10 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
                 if c in df.columns]
         print(df[cols].to_string(float_format=lambda v: f"{v:.1f}"))
         best, note = select_k(res_list, exploratory=bool(quick))
-        print("\n  规则：① 硬性剔除（分级0 / P(峰位出窗)>0.5 / 峰位诊断不可用 /"
-              " φζ>1 超 1% / Pareto-k>0.7 超 10%）"
-              "② elpd 最大 ③ 差 < max(2, dse) 取更小 K")
+        print("\n  规则：① 采样/物理硬门禁（分级0 / φζ>1 超 1% /"
+              " Pareto-k>0.7 超 10% / LOO 不可用）"
+              " ② 合格候选按配对 LOO 排序 ③ 差 < max(2, dse) 取更小 K"
+              " ④ P(峰位出窗) 不再淘汰 K，移到组分可辨识性审查")
         for t in note:
             print(f"    · {t}")
         st = best.get("selection_status", "converged")
@@ -1715,6 +1855,28 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
     best["sigma_floor"] = sigma_floor
 
     report(best, include_L, zeta, f)
+    best["component_review"] = component_review(best, f)
+    cr = best["component_review"]
+    print("\n=== ③b 组分可辨识性审查（与 K 选择分离，不改变 K） ===")
+    for c in cr["window_contribution"]:
+        if "error" in c:
+            print(f"    （贡献计算失败：{c['error']}）")
+            continue
+        po = "—" if c["p_peak_out"] is None else f"{c['p_peak_out']:.2f}"
+        print(f"    #{c['component']} f0={c['f0_hz']:.3g} Hz  P出窗={po}  "
+              f"状态={c['state']}  |Z|占比@fmin={c['frac_abs_at_fmin']:.1%}  "
+              f"Im占比@fmin={c['frac_im_at_fmin']:+.1%}")
+    pi = cr["parameter_identifiability"]
+    print(f"    参数可辨识性：{pi['level']}（强相关 {pi['n_strong']} 对）")
+    rr = cr["residual_review"]
+    print(f"    残差系统性：{rr['systematic']}（acf={rr['acf']:.2f}，"
+          f"趋势 {rr['trend_im_sigma']:.2f}σ）")
+    lo = cr["loo_robustness"]
+    if lo.get("available"):
+        sh = lo.get("elpd_shift")
+        shift = "—" if sh is None else f"{sh:+.2f}"
+        print(f"    LOO 稳健性：Pareto-k max={lo['pareto_k_max']:.2f}，"
+              f">0.7 共 {lo['n_gt_07']} 点，去点后 Δelpd={shift}")
     tips = judge(best, f, include_L)
     print("\n=== 判读建议 ===")
     for t in (tips or ["没有触发任何警告：收敛、残差、覆盖、峰位都正常。"]):
