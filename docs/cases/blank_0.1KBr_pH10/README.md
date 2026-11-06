@@ -1,6 +1,8 @@
 # 真实 EIS 谱的模型选择诊断案例：`Blank_0.1KBr_pH10_EIS_PtCu_1.2V`
 
-> **本轮边界**：只固定基线、出材料。**未修改 `D:/eis训练数据/bmdrt` 下任何代码 / 参数 / 先验 / 种子，未提交仓库**（HEAD 与工作区状态见 §1.1）。
+> **版本说明**：算法代码基线 **`f745205`**（`bm_real.py` / `select_k()` 等未改）；文档与方法材料已提交到
+> `blwsh-1/dmdrt` 的 `main`（最新提交见仓库）。原始数据（NPZ / run.log / 输入谱）按约定下次导入。
+> **本轮边界**：只固定基线、出材料，未修改任何代码 / 参数 / 先验 / 种子。
 > 本目录里的 `analyze.py` 是**只读分析器**：只读取已落盘的 JSON/NPZ/日志并重算摘要，不写回仓库。
 > 生成时间：2026-11-05；案例包：`D:/AOTU EIS/case_blank_1p2V/`。
 
@@ -26,7 +28,7 @@
 |---|---|
 | 仓库 | `D:/eis训练数据/bmdrt`，remote `https://github.com/blwsh-1/dmdrt.git` |
 | HEAD | `f745205ccf1731cfa4301f1df9b541294e811c0c` |
-| 工作区 | **干净**（`git status --porcelain` 为空）；本轮未提交 |
+| 工作区 | **干净**；案例文档已同步到仓库 `docs/cases/blank_0.1KBr_pH10/` |
 | 解释器 | `D:/autoeis_env/Scripts/python.exe` |
 | `config.json` `fit` | `krange=null, wide=false, kmax=5, quick=false, ta=null, include_L=null, zeta="1.0", diffusion="none", sigma_floor=0.0` |
 | `kk` / `diag` / `drt` | 全部原样，快照在 `baseline.json` |
@@ -75,8 +77,8 @@
 | ⓪ K-K 门禁 | **通过**：μ=0.802、M=20，高/中/低残差 0.35%/0.31%/0.17%；中段 `ac1(实/虚)=−0.77/−0.49`，结构判据未触发；`L_fit=1.17e-05 H`（仅诊断）；低频端部 `|Z|` 斜率 −0.02、Nyquist 斜率 +0.18 → **不判扩散尾** |
 | ① DRT 预判 | λ=0.412；原始 2 峰 → 窗内 1 个：**423.8 Hz / R=30.63 Ω / 峰宽 2.73 dec**；**弃 0.08895 Hz / R=6.37 Ω（窗口外）**；`R_inf(DRT)=19.84 Ω` |
 | ② K 扫描 | K=1：13 s，R̂=1.001、bulk=838、tail=1093、div=0、触顶 0%、elpd=−119.5、`rms/σ=0.96/0.99`、acf=0.92；K=2：50 s，R̂=1.004、bulk=902、tail=1162、div=0、触顶 0%、**elpd=67.5**、`rms/σ=0.93/0.97`、acf=0.58、**`P(峰位出窗)max=0.89`** |
-| ③ 配对 LOO | `elpd_diff = 187.0 ± dse 14.9`（约 12.6σ），weight 全给 K=2；随即 **`K=2 **剔除**：1 个分量 P(峰位出窗)>0.5`** → **K=1**（只在 1..2 内最优） |
-| 最终拟合 | `divergences 0/3000`、触顶 0.0%、严格通过；`elpd_loo −119.5 ± 10.6`，落后最好者 187.0 ± 14.9 |
+| ③ 配对 LOO | `elpd_diff = 187.0 ± dse 14.9`（当时 az.compare 口径；现以 `pairwise_dse.csv` 的配对 dse 15.020 为准），weight 全给 K=2；随即 **`K=2 **剔除**：1 个分量 P(峰位出窗)>0.5`** → **K=1**（只在 1..2 内最优） |
+| 最终拟合 | `divergences 0/3000`、触顶 0.0%、严格通过；`elpd_loo −119.5 ± 10.6`，落后最好者 187.0 ± 14.9（旧口径） |
 | 收敛 | `R_inf/W/ln_tau/phi` R̂ 0.999–1.001，bulk 838–1163，tail 1093–1526；Z(f) 跨链实部 R̂=1.002 / 虚部 1.005 |
 | 分量 | 单个 `f_τ=326.9 Hz [304,351]`、`w=38.645 Ω [37.6,39.7]`、`φ=0.603`；`Σw=38.64 Ω`、`R_inf=16.94 Ω` |
 | 相关矩阵 | `ln R_inf↔ln w_1` **ρ=−0.96**；0.70–0.90 档：`ln w_1↔φ_1` −0.85、`ln R_inf↔φ_1` +0.78、`ln R_inf↔ln τ_1` +0.76 |
@@ -211,10 +213,10 @@
 
 > 本轮**未写入任何代码**：`select_k()` 未改、`p_peak_out` 阈值未动、状态枚举未新增。
 >
-> **v1 → v2 修订（2026-11-06，未提交）**：P2 证明 K=2 在 `none/Ws/Wo` 三族都优于 K=1（Δ 70.5–187.0，均 > 2×配对 dse），本案例的不确定性在**物理分解**而不在 K。v1 的单一 `K_SELECTION_AMBIGUOUS` 已收窄为「K 本身不稳」专用；本案例改判为
+> **v1 → v2 修订（2026-11-06）**：P2 证明 K=2 在 `none/Ws/Wo` 三族都优于 K=1（Δ 70.5–187.0，均 > 2×配对 dse），本案例的不确定性在**物理分解**而不在 K。v1 的单一 `K_SELECTION_AMBIGUOUS` 已收窄为「K 本身不稳」专用；本案例改判为
 > `k_selection_status=converged`（K=2）+ `mechanism_identifiability=ambiguous` +
 > `diffusion_identifiability=shape_resolvable_params_degenerate` +
-> `component_identifiability=reference_frequency_dependent`（**审查修订后由 `asymptotic_only` 降级**：
+> `reference_frequency_contribution=reference_frequency_dependent`（**第 2 轮由 `asymptotic_only` 降级**：
 > `B₂` 有量纲问题，改用固定参考频率 `A_*(ω_*)` 复核，两个参考频率结论不一致）。
 > 见 `可辨识性报告规格_v2.md` 与 `replay_identifiability.csv`（v1 判 `ambiguous` → v2 判 `converged`+机制不确定）。
 >
@@ -309,4 +311,4 @@ cp "$CASE/inputs/cut1Hz_40pt.txt"   out/_diag_inputs/Blank_cut1Hz.txt
 - Pareto-k：6 组各最多 1 个频点 >0.7（2%，低于硬筛选 10%）；K=2/none 在 91 Hz 达 1.071，需标注但不改变整体排序。
 - K=2 三族趋势仍在零分布 99.6–99.7 百分位、acf 0.537–0.581 → **K=2 是「目前测试模型中明显更好」，不是「已通过完整模型适切性检验」**。
 
-**结论边界不变**：数据支持窗口内慢频阻抗贡献的存在，不足以唯一确定其物理来源。`K_SELECTION_AMBIGUOUS` 与 `select_k()` 修改**仍未实施**；HEAD 保持 `f745205`、工作区干净、未提交。
+**结论边界不变**：数据支持窗口内慢频阻抗贡献的存在，不足以唯一确定其物理来源。`K_SELECTION_AMBIGUOUS` 与 `select_k()` 修改**仍未实施**；算法代码基线 `f745205`，文档已提交到仓库 `main`。

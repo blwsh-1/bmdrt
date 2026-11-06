@@ -9,7 +9,7 @@
 
 只读 NPZ，不改算法代码。运行：
   D:/autoeis_env/Scripts/python.exe asymptotic_recheck.py
-输出：reference_frequency_contribution.csv
+输出：reference_frequency_contribution.csv（第四层状态不含 asymptotic_only）
 """
 import glob
 import sys
@@ -74,9 +74,11 @@ def main():
             rec[f"three_exact_{tag}"] = bool(
                 cv(A_exact) < c_w and cv(A_exact) < c_t and abs(r) > RHO_MIN)
             rec[f"asymptotic_valid_{tag}"] = bool(np.median(x) > 10)
-        rec["verdict"] = ("asymptotic_only"
-                          if rec["three_exact_fmin"] and rec["three_exact_geom"]
-                          else "reference_frequency_dependent")
+        # 第四层状态只由精确 HN 幅值的稳定性决定；渐近有效性另列记录，不混用。
+        ok1, ok2 = rec["three_exact_fmin"], rec["three_exact_geom"]
+        rec["verdict"] = ("reference_frequency_stable" if ok1 and ok2
+                          else "reference_frequency_dependent" if (ok1 or ok2)
+                          else "unidentifiable")
         rows.append(rec)
     d = pd.DataFrame(rows)
     out = ROOT / "reference_frequency_contribution.csv"
@@ -87,9 +89,9 @@ def main():
              "CV_Aasym_fmin", "CV_Aexact_fmin", "CV_Aexact_geom",
              "three_exact_fmin", "three_exact_geom", "verdict"]]
           .to_string(index=False))
-    print("\n整体结论:", "asymptotic_only"
-          if (d.verdict == "asymptotic_only").all()
-          else "reference_frequency_dependent（依赖频率尺度）")
+    print("\n整体结论:", "reference_frequency_stable"
+          if (d.verdict == "reference_frequency_stable").all()
+          else "reference_frequency_dependent / 混合（依赖频率尺度）")
     print("DONE ->", out)
 
 

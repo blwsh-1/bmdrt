@@ -1,0 +1,6 @@
+pair,comparison_type,n_all,delta_all,dse_all,thr_all,verdict_all,n_high_pk,high_pk_freqs,high_pk_contribution,n_kept,delta_kept,dse_kept,thr_kept,verdict_kept,conclusion_unchanged
+K2-K1 / none,K_selection,50,187.021,15.0199,30.0397,K2_better,1,91.03,-3.86269,49,190.884,12.8637,25.7274,K2_better,True
+K2-K1 / Ws,K_selection,50,76.2322,14.3177,28.6354,K2_better,1,91.03,-4.81972,49,81.0519,12.7731,25.5463,K2_better,True
+K2-K1 / Wo,K_selection,50,70.502,12.8531,25.7062,K2_better,2,"0.1,91.03",5.64591,48,64.8561,8.66961,17.3392,K2_better,True
+Ws-Wo / K=2,mechanism,50,0.297392,0.61599,0.61599,ambiguous,1,91.03,-0.41801,49,0.715402,0.438603,0.438603,preference,False
+Ws-none / K=2,mechanism,50,0.687917,1.61185,1.61185,ambiguous,1,91.03,-0.56891,49,1.25683,1.4985,1.4985,ambiguous,True

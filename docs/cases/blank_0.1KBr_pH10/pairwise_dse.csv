@@ -1,10 +1,10 @@
-pair,model_a,model_b,n_observations,delta,dse,thr,significant,direction,source,elpd_loo_a,elpd_loo_b
-K2-K1 / none,G_K2_none,G_K1_none,50,187.021,15.0199,30.0397,True,A>B,pointwise_loo.csv (逐点差值重算),67.5016,-119.52
-K2-K1 / Ws,G_K2_Ws,G_K1_Ws,50,76.2322,14.3177,28.6354,True,A>B,pointwise_loo.csv (逐点差值重算),68.1895,-8.04275
-K2-K1 / Wo,G_K2_Wo,G_K1_Wo,50,70.502,12.8531,25.7062,True,A>B,pointwise_loo.csv (逐点差值重算),67.8921,-2.60994
-Ws-Wo / K=2,G_K2_Ws,G_K2_Wo,50,0.297408,0.615993,2,False,A>B,pointwise_loo.csv (逐点差值重算),68.1895,67.8921
-Ws-none / K=2,G_K2_Ws,G_K2_none,50,0.687856,1.61186,3.22371,False,A>B,pointwise_loo.csv (逐点差值重算),68.1895,67.5016
-U2_noise2 / K2-K1,U2_noise2,U2_noise2,50,0.1,0.3,2,False,A>B,run.log ③ (az.compare 逐点配对差),,
-U2b_K2 / K2-K1,U2b_K2,U2b_K2,50,343.4,7.9,15.8,True,A>B,run.log ③ (az.compare 逐点配对差),,
-E3 / K2-K1,E3,E3,31,94.3,5.2,10.4,True,A>B,run.log ③ (az.compare 逐点配对差),,
-U4b_warn_K2 / K2-K1,U4b_warn_K2,U4b_warn_K2,50,88.1,19.2,38.4,True,A>B,run.log ③ (az.compare 逐点配对差),,
+pair,model_a,model_b,comparison_type,n_observations,delta,dse,thr,threshold_rule,significant,direction,source,elpd_loo_a,elpd_loo_b
+K2-K1 / none,G_K2_none,G_K1_none,K_selection,50,187.021,15.0199,30.0397,"max(2, 2*dse)",True,A>B,pointwise_loo.csv (逐点差值重算),67.5016,-119.52
+K2-K1 / Ws,G_K2_Ws,G_K1_Ws,K_selection,50,76.2322,14.3177,28.6354,"max(2, 2*dse)",True,A>B,pointwise_loo.csv (逐点差值重算),68.1895,-8.04275
+K2-K1 / Wo,G_K2_Wo,G_K1_Wo,K_selection,50,70.502,12.8531,25.7062,"max(2, 2*dse)",True,A>B,pointwise_loo.csv (逐点差值重算),67.8921,-2.60994
+Ws-Wo / K=2,G_K2_Ws,G_K2_Wo,mechanism,50,0.297408,0.615993,0.615993,1*dse,False,A>B,pointwise_loo.csv (逐点差值重算),68.1895,67.8921
+Ws-none / K=2,G_K2_Ws,G_K2_none,mechanism,50,0.687856,1.61186,1.61186,1*dse,False,A>B,pointwise_loo.csv (逐点差值重算),68.1895,67.5016
+U2_noise2 / K2-K1,U2_noise2,U2_noise2,K_selection,50,0.1,0.3,2,"max(2, 2*dse)",False,A>B,run.log ③ (az.compare 逐点配对差),,
+U2b_K2 / K2-K1,U2b_K2,U2b_K2,K_selection,50,343.4,7.9,15.8,"max(2, 2*dse)",True,A>B,run.log ③ (az.compare 逐点配对差),,
+E3 / K2-K1,E3,E3,K_selection,31,94.3,5.2,10.4,"max(2, 2*dse)",True,A>B,run.log ③ (az.compare 逐点配对差),,
+U4b_warn_K2 / K2-K1,U4b_warn_K2,U4b_warn_K2,K_selection,50,88.1,19.2,38.4,"max(2, 2*dse)",True,A>B,run.log ③ (az.compare 逐点配对差),,

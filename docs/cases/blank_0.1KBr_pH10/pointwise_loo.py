@@ -40,11 +40,11 @@ GRID = ["G_K1_none", "G_K2_none", "G_K1_Ws", "G_K2_Ws",
 CASES = ["U2_noise2", "U2b_K2", "E3", "U4b_warn_K2"]
 MODELS = GRID + CASES
 GRID_PAIRS = [
-    ("K2-K1 / none", "G_K2_none", "G_K1_none"),
-    ("K2-K1 / Ws", "G_K2_Ws", "G_K1_Ws"),
-    ("K2-K1 / Wo", "G_K2_Wo", "G_K1_Wo"),
-    ("Ws-Wo / K=2", "G_K2_Ws", "G_K2_Wo"),
-    ("Ws-none / K=2", "G_K2_Ws", "G_K2_none"),
+    ("K2-K1 / none", "G_K2_none", "G_K1_none", "K_selection"),
+    ("K2-K1 / Ws", "G_K2_Ws", "G_K1_Ws", "K_selection"),
+    ("K2-K1 / Wo", "G_K2_Wo", "G_K1_Wo", "K_selection"),
+    ("Ws-Wo / K=2", "G_K2_Ws", "G_K2_Wo", "mechanism"),
+    ("Ws-none / K=2", "G_K2_Ws", "G_K2_none", "mechanism"),
 ]
 ELPD_ABS, ELPD_K = 2.0, 2.0
 
@@ -105,14 +105,19 @@ def main():
                                  index=False, float_format="%.6g")
 
     rows = []
-    for label, a, b in GRID_PAIRS:
+    for label, a, b, ctype in GRID_PAIRS:
         d = elp[a] - elp[b]
         n = len(d)
         delta, dse = float(d.sum()), float(np.sqrt(n) * d.std(ddof=1))
-        thr = max(ELPD_ABS, ELPD_K * dse)
+        # 阈值规则按比较类型分开：K 选择用 2*dse，机制比较用 1*dse（规格 §3.2）
+        if ctype == "K_selection":
+            thr, rule = max(ELPD_ABS, ELPD_K * dse), "max(2, 2*dse)"
+        else:
+            thr, rule = dse, "1*dse"
         rows.append(dict(pair=label, model_a=a, model_b=b,
-                         n_observations=n, delta=delta, dse=dse, thr=thr,
-                         significant=bool(abs(delta) > thr),
+                         comparison_type=ctype, n_observations=n,
+                         delta=delta, dse=dse, thr=thr, threshold_rule=rule,
+                         significant=bool(np.isfinite(delta) and abs(delta) > thr),
                          direction="A>B" if delta > 0 else "B>A",
                          source="pointwise_loo.csv (逐点差值重算)",
                          elpd_loo_a=float(elp[a].sum()),
@@ -121,7 +126,9 @@ def main():
         n, delta, dse = from_log(name)
         thr = max(ELPD_ABS, ELPD_K * (dse if np.isfinite(dse) else 0))
         rows.append(dict(pair=f"{name} / K2-K1", model_a=name, model_b=name,
+                         comparison_type="K_selection",
                          n_observations=n, delta=delta, dse=dse, thr=thr,
+                         threshold_rule="max(2, 2*dse)",
                          significant=bool(np.isfinite(delta) and abs(delta) > thr),
                          direction="A>B" if np.isfinite(delta) and delta > 0 else "B>A",
                          source="run.log ③ (az.compare 逐点配对差)",
