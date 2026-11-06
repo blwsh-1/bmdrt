@@ -180,8 +180,8 @@ python bmdrt.py list / config / help
 
 第一轮实验协议（`sweep_sigma_floor.py --floors 0,1e-5,3e-5,1e-4`）：
 固定数据、固定 K=真值 K、固定 `include_L`、固定 NUTS 预算与 `seed=0`，
-**只让 `sigma_floor` 一个变量变**；不做 K 扫描。完整只读审计与结果见
-`docs/v6_噪声模型第一轮审计与F0-F3对照.md`。
+**只让 `sigma_floor` 一个变量变**；不做 K 扫描。完整只读审计与结果见工作区
+《v6_噪声模型第一轮审计与F0-F3对照》（已归档，不在本仓库 `docs/`）。
 
 进入第二轮 `include_L` 消融的**六项解锁条件**（门槛写死在扫描脚本）：
 
@@ -229,7 +229,7 @@ R̂ / ESS / div / 触顶全达标，`K=3`（R̂ 1.053 / div 169）与 `K=2`（di
 被硬筛选剔除；但六项总判定仍 `CONDITIONAL`（797 三对结构性简并、
 1139 σ 后验 34% 贴地板 / `floor 占 σ_eff` 90%）。
 **放开 K 扫描不改变瓶颈位置**，第 5 步 `include_L` 消融仍不启动。
-完整只读审计、逐项判定与第 4 步清单见 `docs/v6_噪声模型第一轮审计与F0-F3对照.md`。
+完整只读审计、逐项判定与第 4 步清单见工作区《v6_噪声模型第一轮审计与F0-F3对照》（已归档）。
 
 ### 采样状态的四种取值
 
@@ -283,7 +283,7 @@ convert_2e.py     Gamry xlsx → 三列 CSV
 report_2e.py      批次报告生成
 fit_store.py      drt.py 命令行模式的轻量读取器（兼容 shim）
 examples/         8 个最小样例数据
-docs/             方法、预处理、算法链路、扩散方案文档
+docs/cases/       真实谱模型选择诊断案例（规格、回放、逐点 LOO 数据）
 evidence/b2x/     配对 LOO 事后重算脚本
 ```
 
@@ -354,11 +354,11 @@ top-3 是 0.00/+1.13/+1.49%）。
 `drt_deinduce` 段，事后可复核。
 
 
-**仍缺**（见 `docs/bmdrt_改动清单与实施计划.md` 的 P2）：
+**仍缺**：
 遮掩不合格点后重跑 KK、跨噪声实现的重复性统计、`(K, diffusion)` 三倍扫描
 正式纳入 `select_k`、`phi_trend.py` 的跨温度/循环趋势检查。
 
-> **KK 是事前门禁，不是事后诊断。** 见 `docs/手动拟合实践者建议_与BM-DRT对照评估.md`：
+> **KK 是事前门禁，不是事后诊断**：
 > 数据不满足因果/线性/稳定时，增加 K 只会更会贴噪声，PSIS-LOO 只能在
 > 「似然假设成立」的前提下比较模型。
 
@@ -375,7 +375,7 @@ top-3 是 0.00/+1.13/+1.49%）。
 > 关于低频：本仓库**不使用 DCT**。DCT 是导纳域的电容时间分布，
 > 不是低频专用工具；在阻抗域正确做法是把
 > `(K, diffusion=none) / (K, diffusion=Ws) / (K, diffusion=Wo)`
-> 纳入同一套 LOO 模型比较。详见 `docs/低频数据是否用DCT_结论.md`。
+> 纳入同一套 LOO 模型比较（详见工作区《低频数据是否用DCT_结论》，已归档）。
 > **前置条件**：本批实测谱 `f_min ≈ 1 Hz`，而 `W_open/W_short` 只在
 > `f ≲ f_D = 1/(2πτ_D)` 才偏离半无限 Warburg；频段不够时三者不可分，
 > 应报告「不可分」而不是选出「最优扩散模型」。这条判据现在由
@@ -398,16 +398,7 @@ not_compared, rejected_by_kk}`（旧结果文件里的 `ok` 是 `converged` 的�
 | 文档 | 内容 |
 |------|------|
 | `DIFFUSION_PLAN.md` | 扩散扩展方案：数学、先验、测试矩阵、模型选择 |
-| `docs/算法链路与数据预处理必要性评估.md` | 三层架构逐行代码审查、预处理缺口与优先级 |
-| `docs/低频数据是否用DCT_结论.md` | DRT / DCT / DDC / DDT 术语澄清与低频决策 |
-| `docs/EIS-DRT数据预处理_方法与文献.md` | 11 类预处理方法、作用、18 条文献、SOP |
-| `docs/幺的科研路_DRT阻抗数据处理方法整理.md` | RelaxIS 3 / Nova / EIS Spectrum Analyser 等工作流整理 |
-| `docs/手动拟合实践者建议_与BM-DRT对照评估.md` | KK 门禁、参数相关性与置信区间、CPE-n 物理含义、三类难谱，逐条对照本仓库代码 |
-| `docs/bmdrt_改动清单与实施计划.md` | 五份文档的待改项去重合并、P0/P1/P2 优先级、验收项与实施中修正的前提错误 |
-| `docs/ECM模拟数据回归测试报告.md` | 随机 3 组 + 分层对照的端到端回归、σ 地板敏感性与 full 档确认 |
-| `docs/审查意见处理与实施记录.md` | 三轮外部审查意见的逐条核对、代码整改与实验结论（含 §9 第三轮） |
-| `docs/v6_噪声模型第一轮审计与F0-F3对照.md` | v6 只读审计、三条路径耦合判定、F0–F3 对照、六项解锁条件逐项判定与第 4 步清单 |
-| `docs/cases/blank_0.1KBr_pH10/` | **真实 EIS 谱模型选择诊断案例**：基线四组对照、K=1/K=2 后验摘要、逐频点分量贡献、Pareto-k、2×3（`none/Ws/Wo` × K=1/2）统一比较、`K_SELECTION_AMBIGUOUS` 规格与 10 组离线回放。含 NPZ 后验样本与 `run.log` 全文，可离线重算 |
+| `docs/cases/blank_0.1KBr_pH10/` | **真实 EIS 谱模型选择诊断案例**（最新版本）：四层可辨识性规格、逐频点 LOO 与配对 dse、精确 HN 参考频率贡献、2×3 统一比较、合成谱用例与历史回放。文档 / 脚本 / CSV / JSON 齐备；NPZ 与 run.log 按约定不入库 |
 
 `evidence/b2x/paired_loo.py` 用于跨配置配对 LOO：
 `bmdrt.py auto --krange 1,1` 只跑一个模型，占位 `elpd_diff/dse` 需事后从 `samples.npz` 重算。

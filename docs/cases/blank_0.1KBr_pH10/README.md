@@ -4,12 +4,7 @@
 > 本目录里的 `analyze.py` 是**只读分析器**：只读取已落盘的 JSON/NPZ/日志并重算摘要，不写回仓库。
 > 生成时间：2026-11-05；案例包：`D:/AOTU EIS/case_blank_1p2V/`。
 
-> **归档位置**：`D:/eis训练数据/bmdrt/docs/cases/blank_0.1KBr_pH10/`；工作副本 `D:/AOTU EIS/case_blank_1p2V/`。
->
-> **归档说明**：遵循仓库 `.gitignore` 原有清单，本副本**不含**原始测量数据（`inputs/*.txt`）、
-> 后验样本（`*_samples.npz`）与 `run.log` 全文；这些只在工作副本里。本副本保留文档、分析脚本、
-> CSV/JSON 结果与 `real_*.json` 摘要，足以核对全部结论。要重跑 NUTS 或 `analyze*.py`，请用工作副本
-> （`baseline.json` 里有输入的 sha256 与全部命令）。
+> **归档位置**：`D:/eis训练数据/bmdrt/docs/cases/blank_0.1KBr_pH10/`（含 NPZ 后验样本与 `run.log` 全文，可离线重算）；工作副本 `D:/AOTU EIS/case_blank_1p2V/`。
 
 ---
 
@@ -216,7 +211,16 @@
 
 > 本轮**未写入任何代码**：`select_k()` 未改、`p_peak_out` 阈值未动、状态枚举未新增。
 >
-> **已规格化 + 离线回放**（见 `K_SELECTION_AMBIGUOUS_规格.md`、`replay_ambiguous.py`、`replay_ambiguous.csv`）：阈值在看回放前写定（`P_out>0.5` 沿用、`Δ>max(2, 1·dse)`、采样严格线不变）。10 组回放只命中 `K1_none` 与 `K1_cut1Hz`（`converged → ambiguous`，参考 K=2），`K2_Ws` 与 6 格网格不变。仍有 4 个阈值口径待确认。
+> **v1 → v2 修订（2026-11-06，未提交）**：P2 证明 K=2 在 `none/Ws/Wo` 三族都优于 K=1（Δ 70.5–187.0，均 > 2×配对 dse），本案例的不确定性在**物理分解**而不在 K。v1 的单一 `K_SELECTION_AMBIGUOUS` 已收窄为「K 本身不稳」专用；本案例改判为
+> `k_selection_status=converged`（K=2）+ `mechanism_identifiability=ambiguous` +
+> `diffusion_identifiability=shape_resolvable_params_degenerate` +
+> `component_identifiability=reference_frequency_dependent`（**审查修订后由 `asymptotic_only` 降级**：
+> `B₂` 有量纲问题，改用固定参考频率 `A_*(ω_*)` 复核，两个参考频率结论不一致）。
+> 见 `可辨识性报告规格_v2.md` 与 `replay_identifiability.csv`（v1 判 `ambiguous` → v2 判 `converged`+机制不确定）。
+>
+> 机制维度是**三态**：`not_tested`（对照不完整，默认）→ `evidence_for_model_preference`（预测差异 > dse）
+> 或 `ambiguous`（差异 < dse）。`controls_done` 逐条记录 `family / K / data_sha256 / status / run_id / elpd_loo`，
+> 与 `controls_missing` 互斥；`k_reference` 只作预测参照，不进入机制结论；KK `warn` 或采样等级 <2 只出探索性结果。
 
 ### 6.2 P0 / P1 / P2 状态
 
@@ -227,6 +231,10 @@
 | P2 | 完成 `none / Ws / Wo` 对照 | ✅ **已完成**：按 2×3 结构补齐 Wo 两格与 `K=1/Ws` 完整配对，共 6 格统一比较（全部 `--krange K,K` 强制单 K）。见 `P2_Wo对照与统一比较.md`、`grid_comparison.csv`、`grid_summary.json`、`results/G_*/` |
 
 `K_SELECTION_AMBIGUOUS` 的触发逻辑与 `select_k()` 修改**仍未实施**；按安排放在统一比较与独立分析之后。
+
+**v2 开发顺序（2026-11-06）**：1 冻结规格 ✅ → 2 本案例四层回放 ✅ → 3 合成谱用例 2/2b/4/4b ✅
+→ 4 历史回放离线回归（76 条简化回放）✅ → 5 接入 `select_k()` ⛔ 未授权。
+见 `可辨识性报告规格_v2.md` 与 `第3-4步_合成谱验证与历史回归.md`。
 
 ---
 
@@ -265,8 +273,14 @@ cp "$CASE/inputs/cut1Hz_40pt.txt"   out/_diag_inputs/Blank_cut1Hz.txt
 |---|---|
 | `README.md` | 本报告（P0 + P1 基线） |
 | `P2_Wo对照与统一比较.md` | P2 报告：6 格统一比较、Wo 结果、Pareto-k、`B_2` 与模型替代 |
-| `K_SELECTION_AMBIGUOUS_规格.md` | 第 3 步规格：判定顺序、预先登记阈值、字段、回归清单（未实施） |
-| `replay_ambiguous.py` / `replay_ambiguous.csv` | 现有 10 组的离线回放（只命中 2 条真实谱） |
+| `K_SELECTION_AMBIGUOUS_规格.md` | v1 规格（已被 v2 取代，保留历史与阈值登记） |
+| `可辨识性报告规格_v2.md` | **v2 规格**：K 选择 / 机制 / 扩散 / 分量 四维分离，四参数定值，回归用例 |
+| `replay_ambiguous.py` / `replay_ambiguous.csv` | v1 回放（只命中 2 条真实谱） |
+| `replay_identifiability.py` / `replay_identifiability.csv` | v2 回放：本案例 `converged`(K=2) + 机制 `ambiguous` |
+| `第3-4步_合成谱验证与历史回归.md` | 用例 2/2b/4/4b 合成谱验证 + 76 条历史回放离线回归（措辞已按审查意见降级） |
+| `v2_state_machine.py` / `v2_case_tests.csv` / `v2_history_regression.csv` | 四层判定纯函数、用例实测、历史逐条重判（含 `change_reason`） |
+| `审查意见处理_v2修订.md` | 审查意见逐条回应、P0 修订、B₂ 量纲复核、近简并构造负面结果 |
+| `asymptotic_recheck.py` / `asymptotic_recheck.csv` | 固定参考频率 `A_*(ω_*)` 复核与 B₂ 单位依赖证据 |
 | `baseline.json` | HEAD / config 快照 / 输入 sha256 / 四组命令与全部关键指标 |
 | `grid_summary.json` / `grid_comparison.csv` | 6 格实验设计、`az.compare` 结果、Pareto-k 汇总 |
 | `pareto_k.csv` / `predictive_comparison.csv` / `component_contribution_grid.csv` / `grid_posterior_summary.csv` | P2 逐点诊断与预测差异 |

@@ -1,0 +1,5 @@
+case,run,kk,planned_K,acceptable_K,elpd_by_K,dse,removed,k_selection_status,k_reference,mechanism_identifiability,controls_done,controls_missing,reasons
+用例 2  K 选择不确定,U2_noise2,ok,2,1,"K=1: -102.7, K=2: -102.7",0.3,· K=2 **剔除**：div=42,K_SELECTION_AMBIGUOUS,"{""family"": ""none"", ""K"": 1, ""elpd"": -102.7}",not_tested,1,0,候选集合不完整（不能当作完整比较的结论）
+用例 2b 反向：K=2 优势超阈值,U2b_K2,ok,2,"1,2","K=1: -317.8, K=2: 25.6",7.9,无,converged,"{""family"": ""none"", ""K"": 2, ""elpd"": 25.6}",not_tested,1,0,与最强较低 K 竞争者 Δ=343.4 > thr=15.8
+用例 4  KK warn,E3,warn,2,1,"K=1: -205.3, K=2: -111.0",5.2,· K=2 **剔除**：R̂=1.669；bulk=5；tail=37；div=81；1 个分量 P(峰位出窗)>0.5,exploratory_only,"{""family"": ""none"", ""K"": 1, ""elpd"": -205.3}",not_tested,1,0,
+用例 4b 反向：KK warn + K=2 优势超阈值,U4b_warn_K2,warn,2,"1,2","K=1: -329.1, K=2: -241.0",19.2,无,exploratory_only,"{""family"": ""none"", ""K"": 2, ""elpd"": -241.0}",not_tested,1,0,

@@ -1,0 +1,77 @@
+path,source,old_status,K,kk,grade,elpd_diff,dse,thr,ksel,new_status,change_reason,changed
+out\_diag_cut1Hz\Blank_cut1Hz\real_Blank_cut1Hz.json,Blank_cut1Hz,converged,1,ok,2,75.4,14.1,28.2,K=2 **剔除**：1 个分量 P(峰位出窗)>0.5,WOULD_CHANGE_K,peak-out policy change,True
+out\_diag_K2\Blank_K2\real_Blank_K2.json,Blank_K2,not_compared,2,ok,2,0,,2,,not_compared,,False
+out\_diag_Ws\Blank_full_Ws\real_Blank_full_Ws.json,Blank_full_Ws,converged,2,ok,2,0,0,2,,converged,,False
+out\_grid\G_K1_none\G_K1_none\real_G_K1_none.json,G_K1_none,not_compared,1,ok,2,0,,2,,not_compared,,False
+out\_grid\G_K1_Wo\G_K1_Wo\real_G_K1_Wo.json,G_K1_Wo,not_compared,1,ok,2,0,,2,,not_compared,,False
+out\_grid\G_K1_Ws\G_K1_Ws\real_G_K1_Ws.json,G_K1_Ws,not_compared,1,ok,2,0,,2,,not_compared,,False
+out\_grid\G_K2_none\G_K2_none\real_G_K2_none.json,G_K2_none,not_compared,2,ok,2,0,,2,,not_compared,,False
+out\_grid\G_K2_Wo\G_K2_Wo\real_G_K2_Wo.json,G_K2_Wo,not_compared,2,ok,2,0,,2,,not_compared,,False
+out\_grid\G_K2_Ws\G_K2_Ws\real_G_K2_Ws.json,G_K2_Ws,not_compared,2,ok,2,0,,2,,not_compared,,False
+out\_v2cases\E1\example_caseE\real_example_caseE.json,example_caseE,converged,1,ok,2,127,14.63,29.26,K=2 **剔除**：R̂=1.667；bulk=5；tail=37；1 个分量 P(峰位出窗)>0.5,K_SELECTION_AMBIGUOUS,K candidate incomplete,True
+out\_v2cases\E2\example_caseF\real_example_caseF.json,example_caseF,converged,2,ok,2,0,0,2,,converged,,False
+out\_v2cases\E3\example_caseG_wo_only\real_example_caseG_wo_only.json,example_caseG_wo_only,converged,1,warn,2,94.33,5.234,10.47,K=2 **剔除**：R̂=1.669；bulk=5；tail=37；div=81；1 个分量 P(峰位出窗)>0.5,exploratory_only,KK gate,True
+out\_v2cases\floor_b8\figures\real_U2_near_b8.json,figures,converged,1,warn,2,0,0,2,K=2 未过严格线，降级为可用：R̂=1.018；bulk=286；tail=231；div=8,exploratory_only,KK gate,True
+out\_v2cases\U2_K1\U2_K1\real_U2_K1.json,U2_K1,converged,1,ok,2,0,0,2,K=2 **剔除**：tail=42；div=39,converged,,False
+out\_v2cases\U2_near_a\U2_near_a\real_U2_near_a.json,U2_near_a,converged,1,ok,2,6.506,3.589,7.179,K=2 **剔除**：div=20,K_SELECTION_AMBIGUOUS,K candidate incomplete,True
+out\_v2cases\U2_near_b\U2_near_b\real_U2_near_b.json,U2_near_b,converged,1,ok,2,0,0,2,K=2 **剔除**：tail=40；div=55,converged,,False
+out\_v2cases\U2_near_b3\U2_near_b3\real_U2_near_b3.json,U2_near_b3,converged,1,ok,2,0.3782,0.8564,2,K=2 **剔除**：div=71；1 个分量 P(峰位出窗)>0.5,K_SELECTION_AMBIGUOUS,K candidate incomplete,True
+out\_v2cases\U2_near_b5\U2_near_b5\real_U2_near_b5.json,U2_near_b5,converged,1,ok,2,0,0,2,K=2 **剔除**：div=58,converged,,False
+out\_v2cases\U2_near_b6\U2_near_b6\real_U2_near_b6.json,U2_near_b6,converged,1,warn,2,0.646,0.9386,2,K=2 **剔除**：R̂=1.161；bulk=14；tail=11；div=329,exploratory_only,KK gate,True
+out\_v2cases\U2_near_b7\U2_near_b7\real_U2_near_b7.json,U2_near_b7,converged,1,warn,2,0,0,2,K=2 **剔除**：bulk=61；tail=50；div=176,exploratory_only,KK gate,True
+out\_v2cases\U2_near_b8\U2_near_b8\real_U2_near_b8.json,U2_near_b8,converged,1,warn,2,0,0,2,K=2 未过严格线，降级为可用：R̂=1.014；bulk=323；tail=231；div=13,exploratory_only,KK gate,True
+out\_v2cases\U2_near_c\U2_near_c\real_U2_near_c.json,U2_near_c,converged,1,ok,2,16.27,4.47,8.941,K=2 **剔除**：R̂=1.665；bulk=5；tail=39,converged,,False
+out\_v2cases\U2_noise2\U2_noise2\real_U2_noise2.json,U2_noise2,converged,1,ok,2,0,0,2,K=2 **剔除**：div=42,converged,,False
+out\_v2cases\U2b_K2\U2b_K2\real_U2b_K2.json,U2b_K2,converged,2,ok,2,0,0,2,,converged,,False
+out\_v2cases\U4b_warn_K2\U4b_warn_K2\real_U4b_warn_K2.json,U4b_warn_K2,converged,2,warn,2,0,0,2,,exploratory_only,KK gate,True
+out\Blank_0.1KBr_pH10_EIS_PtCu_1.2V\real_Blank_0.1KBr_pH10_EIS_PtCu_1.2V.json,Blank_0.1KBr_pH10_EIS_PtCu_1.2V,converged,1,ok,2,187,14.87,29.74,K=2 **剔除**：1 个分量 P(峰位出窗)>0.5,WOULD_CHANGE_K,peak-out policy change,True
+out\ecm_f0f3\floor_0e+00\res\ecm_00797_L_R_RCPE_RCPE\real_ecm_00797_L_R_RCPE_RCPE.json,ecm_00797_L_R_RCPE_RCPE,not_compared,2,ok,0,0,,2,,exploratory_only,sampling gate,True
+out\ecm_f0f3\floor_0e+00\res\ecm_01139_L_R_RCPE\real_ecm_01139_L_R_RCPE.json,ecm_01139_L_R_RCPE,not_compared,1,ok,0,0,,2,,exploratory_only,sampling gate,True
+out\ecm_f0f3\floor_1e-04\res\ecm_00797_L_R_RCPE_RCPE\real_ecm_00797_L_R_RCPE_RCPE.json,ecm_00797_L_R_RCPE_RCPE,not_compared,2,ok,1,0,,2,,exploratory_only,sampling gate,True
+out\ecm_f0f3\floor_1e-04\res\ecm_01139_L_R_RCPE\real_ecm_01139_L_R_RCPE.json,ecm_01139_L_R_RCPE,not_compared,1,ok,1,0,,2,,exploratory_only,sampling gate,True
+out\ecm_f0f3\floor_1e-05\res\ecm_00797_L_R_RCPE_RCPE\real_ecm_00797_L_R_RCPE_RCPE.json,ecm_00797_L_R_RCPE_RCPE,not_compared,2,ok,1,0,,2,,exploratory_only,sampling gate,True
+out\ecm_f0f3\floor_1e-05\res\ecm_01139_L_R_RCPE\real_ecm_01139_L_R_RCPE.json,ecm_01139_L_R_RCPE,not_compared,1,ok,0,0,,2,,exploratory_only,sampling gate,True
+out\ecm_f0f3\floor_3e-05\res\ecm_00797_L_R_RCPE_RCPE\real_ecm_00797_L_R_RCPE_RCPE.json,ecm_00797_L_R_RCPE_RCPE,not_compared,2,ok,1,0,,2,,exploratory_only,sampling gate,True
+out\ecm_f0f3\floor_3e-05\res\ecm_01139_L_R_RCPE\real_ecm_01139_L_R_RCPE.json,ecm_01139_L_R_RCPE,not_compared,1,ok,0,0,,2,,exploratory_only,sampling gate,True
+out\ecm_f0f3full\floor_1e-04\res\ecm_00797_L_R_RCPE_RCPE\real_ecm_00797_L_R_RCPE_RCPE.json,ecm_00797_L_R_RCPE_RCPE,not_compared,2,ok,2,0,,2,,not_compared,,False
+out\ecm_f0f3full\floor_1e-04\res\ecm_01139_L_R_RCPE\real_ecm_01139_L_R_RCPE.json,ecm_01139_L_R_RCPE,not_compared,1,ok,2,0,,2,,not_compared,,False
+out\ecm_f0f3full\floor_1e-05\res\ecm_00797_L_R_RCPE_RCPE\real_ecm_00797_L_R_RCPE_RCPE.json,ecm_00797_L_R_RCPE_RCPE,not_compared,2,ok,2,0,,2,,not_compared,,False
+out\ecm_f0f3full\floor_1e-05\res\ecm_01139_L_R_RCPE\real_ecm_01139_L_R_RCPE.json,ecm_01139_L_R_RCPE,not_compared,1,ok,2,0,,2,,not_compared,,False
+out\ecm_f0f3full\floor_3e-05\res\ecm_00797_L_R_RCPE_RCPE\real_ecm_00797_L_R_RCPE_RCPE.json,ecm_00797_L_R_RCPE_RCPE,not_compared,2,ok,2,0,,2,,not_compared,,False
+out\ecm_f0f3full\floor_3e-05\res\ecm_01139_L_R_RCPE\real_ecm_01139_L_R_RCPE.json,ecm_01139_L_R_RCPE,not_compared,1,ok,2,0,,2,,not_compared,,False
+out\ecm_full\floor_1e-03\res\ecm_00797_L_R_RCPE_RCPE\real_ecm_00797_L_R_RCPE_RCPE.json,ecm_00797_L_R_RCPE_RCPE,not_compared,2,ok,2,0,,2,,not_compared,,False
+out\ecm_full\floor_1e-03\res\ecm_01139_L_R_RCPE\real_ecm_01139_L_R_RCPE.json,ecm_01139_L_R_RCPE,not_compared,1,ok,2,0,,2,,not_compared,,False
+out\ecm_full\floor_1e-04\res\ecm_00797_L_R_RCPE_RCPE\real_ecm_00797_L_R_RCPE_RCPE.json,ecm_00797_L_R_RCPE_RCPE,not_compared,2,ok,2,0,,2,,not_compared,,False
+out\ecm_full\floor_1e-04\res\ecm_01139_L_R_RCPE\real_ecm_01139_L_R_RCPE.json,ecm_01139_L_R_RCPE,not_compared,1,ok,2,0,,2,,not_compared,,False
+out\ecm_incL\L0_floor_0e+00\ecm_00797_L_R_RCPE_RCPE\real_ecm_00797_L_R_RCPE_RCPE.json,ecm_00797_L_R_RCPE_RCPE,not_compared,2,ok,0,0,,2,,exploratory_only,sampling gate,True
+out\ecm_incL\L0_floor_1e-04\ecm_00797_L_R_RCPE_RCPE\real_ecm_00797_L_R_RCPE_RCPE.json,ecm_00797_L_R_RCPE_RCPE,not_compared,2,ok,1,0,,2,,exploratory_only,sampling gate,True
+out\ecm_incL\L1_floor_0e+00\ecm_00797_L_R_RCPE_RCPE\real_ecm_00797_L_R_RCPE_RCPE.json,ecm_00797_L_R_RCPE_RCPE,not_compared,2,ok,0,0,,2,,exploratory_only,sampling gate,True
+out\ecm_incL\L1_floor_1e-04\ecm_00797_L_R_RCPE_RCPE\real_ecm_00797_L_R_RCPE_RCPE.json,ecm_00797_L_R_RCPE_RCPE,not_compared,2,ok,0,0,,2,,exploratory_only,sampling gate,True
+out\ecm_kselect\floor_1e-04\res\ecm_00797_L_R_RCPE_RCPE\real_ecm_00797_L_R_RCPE_RCPE.json,ecm_00797_L_R_RCPE_RCPE,exploratory,2,ok,1,0,0,2,**exploratory（quick 档）**：本次采样预算（800/400/2 链）撑不起严格收敛线，所以下面的采样分级与 elpd 排名都不能当作模型选择结论。要判 K，请用正式档重跑。 K=2 未过严格线，降级为可用：bulk=27,exploratory_only,sampling gate,True
+out\ecm_kselect_full\floor_1e-04\res\ecm_00797_L_R_RCPE_RCPE\real_ecm_00797_L_R_RCPE_RCPE.json,ecm_00797_L_R_RCPE_RCPE,converged,2,ok,2,0,0,2,K=3 **剔除**：R̂=1.053；bulk=68；div=169,converged,,False
+out\ecm_kselect_full\floor_1e-04\res\ecm_01139_L_R_RCPE\real_ecm_01139_L_R_RCPE.json,ecm_01139_L_R_RCPE,converged,1,ok,2,0.1245,0.02587,2,K=2 **剔除**：div=69,K_SELECTION_AMBIGUOUS,K candidate incomplete,True
+out\ecm_noise50bp\floor_0e+00\res\ecm_00797_L_R_RCPE_RCPE\real_ecm_00797_L_R_RCPE_RCPE.json,ecm_00797_L_R_RCPE_RCPE,not_compared,2,ok,0,0,,2,,exploratory_only,sampling gate,True
+out\ecm_noise50bp\floor_0e+00\res\ecm_01139_L_R_RCPE\real_ecm_01139_L_R_RCPE.json,ecm_01139_L_R_RCPE,not_compared,1,ok,1,0,,2,,exploratory_only,sampling gate,True
+out\ecm_noise50bp\floor_1e-04\res\ecm_00797_L_R_RCPE_RCPE\real_ecm_00797_L_R_RCPE_RCPE.json,ecm_00797_L_R_RCPE_RCPE,not_compared,2,ok,0,0,,2,,exploratory_only,sampling gate,True
+out\ecm_noise50bp\floor_1e-04\res\ecm_01139_L_R_RCPE\real_ecm_01139_L_R_RCPE.json,ecm_01139_L_R_RCPE,not_compared,1,ok,0,0,,2,,exploratory_only,sampling gate,True
+out\ecm_noise50bp_full\floor_0e+00\res\ecm_00797_L_R_RCPE_RCPE\real_ecm_00797_L_R_RCPE_RCPE.json,ecm_00797_L_R_RCPE_RCPE,not_compared,2,ok,0,0,,2,,exploratory_only,sampling gate,True
+out\ecm_noise50bp_full\floor_0e+00\res\ecm_01139_L_R_RCPE\real_ecm_01139_L_R_RCPE.json,ecm_01139_L_R_RCPE,not_compared,1,ok,2,0,,2,,not_compared,,False
+out\ecm_noise50bp_full\floor_1e-04\res\ecm_00797_L_R_RCPE_RCPE\real_ecm_00797_L_R_RCPE_RCPE.json,ecm_00797_L_R_RCPE_RCPE,not_compared,2,ok,0,0,,2,,exploratory_only,sampling gate,True
+out\ecm_noise50bp_full\floor_1e-04\res\ecm_01139_L_R_RCPE\real_ecm_01139_L_R_RCPE.json,ecm_01139_L_R_RCPE,not_compared,1,ok,2,0,,2,,not_compared,,False
+out\ecm_sweep\floor_1e-03\res\ecm_00797_L_R_RCPE_RCPE\real_ecm_00797_L_R_RCPE_RCPE.json,ecm_00797_L_R_RCPE_RCPE,not_compared,2,ok,1,0,,2,,exploratory_only,sampling gate,True
+out\ecm_sweep\floor_1e-03\res\ecm_01139_L_R_RCPE\real_ecm_01139_L_R_RCPE.json,ecm_01139_L_R_RCPE,not_compared,1,ok,1,0,,2,,exploratory_only,sampling gate,True
+out\ecm_sweep\floor_1e-04\res\ecm_00797_L_R_RCPE_RCPE\real_ecm_00797_L_R_RCPE_RCPE.json,ecm_00797_L_R_RCPE_RCPE,not_compared,2,ok,1,0,,2,,exploratory_only,sampling gate,True
+out\ecm_sweep\floor_1e-04\res\ecm_01139_L_R_RCPE\real_ecm_01139_L_R_RCPE.json,ecm_01139_L_R_RCPE,not_compared,1,ok,1,0,,2,,exploratory_only,sampling gate,True
+out\ecm_sweep\floor_1e-05\res\ecm_00797_L_R_RCPE_RCPE\real_ecm_00797_L_R_RCPE_RCPE.json,ecm_00797_L_R_RCPE_RCPE,not_compared,2,ok,1,0,,2,,exploratory_only,sampling gate,True
+out\ecm_sweep\floor_1e-05\res\ecm_01139_L_R_RCPE\real_ecm_01139_L_R_RCPE.json,ecm_01139_L_R_RCPE,not_compared,1,ok,0,0,,2,,exploratory_only,sampling gate,True
+out\ecm_sweep\floor_1e-06\res\ecm_00797_L_R_RCPE_RCPE\real_ecm_00797_L_R_RCPE_RCPE.json,ecm_00797_L_R_RCPE_RCPE,not_compared,2,ok,0,0,,2,,exploratory_only,sampling gate,True
+out\ecm_sweep\floor_1e-06\res\ecm_01139_L_R_RCPE\real_ecm_01139_L_R_RCPE.json,ecm_01139_L_R_RCPE,not_compared,1,ok,0,0,,2,,exploratory_only,sampling gate,True
+out\ecm_test\res\ecm_04382_Rs_Ws\real_ecm_04382_Rs_Ws.json,ecm_04382_Rs_Ws,ok,2,ok,1,0,0,2,K=1 未过严格线，降级为可用：bulk=303；tail=200 K=2 未过严格线，降级为可用：R̂=1.016；bulk=258；tail=243,exploratory_only,sampling gate,True
+out\ecm_test\res\ecm_05687_L_R_RCPE\real_ecm_05687_L_R_RCPE.json,ecm_05687_L_R_RCPE,rejected,1,ok,0,0,0,2,**不输出最优 K 的结论**：所有候选 K 都被硬性剔除或采样不可用；下面的 elpd 排名仅是相对排序、无物理意义。请回查 K-K 门禁、噪声水平与模型基底，不要引用这个 K。 K=1 **剔除**：R̂=2.512；bulk=2；ta,exploratory_only,sampling gate,True
+out\ecm_test\res\ecm_05940_L_R_RCPE_RCPE\real_ecm_05940_L_R_RCPE_RCPE.json,ecm_05940_L_R_RCPE_RCPE,rejected,2,ok,0,0,0,2,**不输出最优 K 的结论**：所有候选 K 都被硬性剔除或采样不可用；下面的 elpd 排名仅是相对排序、无物理意义。请回查 K-K 门禁、噪声水平与模型基底，不要引用这个 K。 K=1 **剔除**：tail=77；1 个分量 P(峰位,exploratory_only,sampling gate,True
+out\ecm_test_control\res\ecm_00797_L_R_RCPE_RCPE\real_ecm_00797_L_R_RCPE_RCPE.json,ecm_00797_L_R_RCPE_RCPE,rejected,2,ok,0,0,0,2,**不输出最优 K 的结论**：所有候选 K 都被硬性剔除或采样不可用；下面的 elpd 排名仅是相对排序、无物理意义。请回查 K-K 门禁、噪声水平与模型基底，不要引用这个 K。 K=2 **剔除**：触顶=53% K=3 **剔除**：,exploratory_only,sampling gate,True
+out\ecm_test_control\res\ecm_01139_L_R_RCPE\real_ecm_01139_L_R_RCPE.json,ecm_01139_L_R_RCPE,rejected,1,ok,0,0,0,2,**不输出最优 K 的结论**：所有候选 K 都被硬性剔除或采样不可用；下面的 elpd 排名仅是相对排序、无物理意义。请回查 K-K 门禁、噪声水平与模型基底，不要引用这个 K。 K=1 **剔除**：R̂=1.058；tail=37；d,exploratory_only,sampling gate,True
+out\ecm_test_control\res\ecm_03139_RC_RC_RCPE_RCPE\real_ecm_03139_RC_RC_RCPE_RCPE.json,ecm_03139_RC_RC_RCPE_RCPE,degraded,2,ok,1,10.11,7.432,14.86,K=1 **剔除**：1 个分量 P(峰位出窗)>0.5 K=2 **剔除**：1 个分量 P(峰位出窗)>0.5 K=3 **剔除**：R̂=1.840；bulk=3；tail=44；1 个分量 P(峰位出窗)>0.5 严格标准下没有 K,exploratory_only,sampling gate,True
+out\ecm_test_control\res\ecm_05254_L_R_RCPE_RCPE_RCPE\real_ecm_05254_L_R_RCPE_RCPE_RCPE.json,ecm_05254_L_R_RCPE_RCPE_RCPE,ok,2,ok,1,547.4,6.527,13.05,K=1 未过严格线，降级为可用：tail=280 K=2 未过严格线，降级为可用：bulk=331；tail=293 K=3 **剔除**：R̂=1.082；bulk=18；tail=63；div=78；触顶=84%,exploratory_only,sampling gate,True
+out\ecm_test_probe_noise50bp\res\ecm_00797_L_R_RCPE_RCPE\real_ecm_00797_L_R_RCPE_RCPE.json,ecm_00797_L_R_RCPE_RCPE,rejected,4,ok,0,0,0,2,**不输出最优 K 的结论**：所有候选 K 都被硬性剔除或采样不可用；下面的 elpd 排名仅是相对排序、无物理意义。请回查 K-K 门禁、噪声水平与模型基底，不要引用这个 K。 K=4 **剔除**：R̂=1.112；bulk=13；t,exploratory_only,sampling gate,True
+out\ecm_test_probe_noise50bp\res\ecm_01139_L_R_RCPE\real_ecm_01139_L_R_RCPE.json,ecm_01139_L_R_RCPE,ok,1,ok,1,0,0,2,K=1 未过严格线，降级为可用：R̂=1.012；bulk=139；tail=150 K=2 **剔除**：bulk=81；tail=58；div=27,exploratory_only,sampling gate,True

@@ -1,0 +1,4 @@
+family,run_id,omega_fmin,omega_geom,CV_B2_seconds,CV_B2_milliseconds,CV_w,CV_tau,rho_lnw_lntau,omega_tau_fmin,CV_Aexact_fmin,CV_Aasym_fmin,A_exact_q50_fmin,three_exact_fmin,asymptotic_valid_fmin,omega_tau_geom,CV_Aexact_geom,CV_Aasym_geom,A_exact_q50_geom,three_exact_geom,asymptotic_valid_geom,verdict
+none,K2_none,0.628319,198.692,0.0402579,0.0763762,0.05321,0.170547,0.936701,1.22559,0.0178094,0.0408876,5.01739,True,False,387.565,0.0616422,0.063946,0.451058,False,True,reference_frequency_dependent
+Ws,K2_Ws,0.628319,198.692,0.061832,0.147125,0.191801,0.399934,0.953958,0.520997,0.107637,0.0635978,3.88028,True,False,164.754,0.117451,0.120887,0.412863,True,True,asymptotic_only
+Wo,G_K2_Wo,0.628319,198.692,0.0576771,0.111226,0.086938,0.238399,0.902839,0.872553,0.039613,0.0597509,4.87703,True,False,275.926,0.0886742,0.0917773,0.460167,False,True,reference_frequency_dependent
