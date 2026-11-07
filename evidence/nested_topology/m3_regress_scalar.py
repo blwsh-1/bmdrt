@@ -104,7 +104,10 @@ def main(argv=None) -> int:
           f"depth={FROZEN['max_tree_depth']}")
     print("      重跑中（约 1–2 分钟）…", flush=True)
 
-    cur = S.run_stage(FROZEN["stage"], seed=FROZEN["seed"], noise=FROZEN["noise"],
+    # 冻结配置是"一个 seed 同时喂数据与采样器"的旧行为：显式写成两个同名 seed，
+    # 这样回归的就是**旧路径的同一个随机状态**，不是新设计下的某一种组合。
+    cur = S.run_stage(FROZEN["stage"], data_seed=FROZEN["seed"],
+                      sampler_seed=FROZEN["seed"], noise=FROZEN["noise"],
                       branch=FROZEN["branch"], layers=FROZEN["layers"],
                       n_warmup=FROZEN["n_warmup"], n_samples=FROZEN["n_samples"],
                       n_chains=FROZEN["n_chains"], progress=False,
@@ -138,7 +141,8 @@ def main(argv=None) -> int:
         Path(args.json).write_text(
             json.dumps({"frozen": FROZEN, "baseline": str(args.baseline),
                         "current": {k: cur[k] for k in
-                                    ("stage", "seed", "zmax", "seconds")},
+                                    ("stage", "data_seed", "sampler_seed",
+                                     "zmax", "seconds")},
                         "compare": cmp}, ensure_ascii=False, indent=2),
             encoding="utf-8")
         print(f"写入 {args.json}")

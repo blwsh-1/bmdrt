@@ -6,6 +6,10 @@
 1. **数值秩**：噪声无关 Jacobian `J = ∂Z/∂θ`（θ 为 log 参数）的奇异值与条件数。
    `rank < n_params` → 结构性不可辨识（映射本身丢了一维）；
    `rank == n_params` 但 `σ_min` 极小 → 只是当前噪声水平下不可辨识。
+
+   **读法限定**：这是**一个真值点、一条频栅、一个参数化**下的有限差分 Jacobian，
+   结论只能是"该点邻域局部满列秩"。它**不能**证明整个参数空间处处无结构性
+   不可辨识（映射在大范围内可能折叠）。要谈全局得另做扫描，本脚本不做。
 2. **条件化 sd**：`sqrt(uᵀ(JᵀJ)⁻¹u)`，u 为指定方向。与"边际 sd" `1/‖J u‖`
    对比，可以看出共线造成的放大倍数。
 3. **拆分比例 r = R1/(R1+R2)** 的 delta 法 sd：`sd_r = r(1−r)·sd_log(u)`，
@@ -77,6 +81,12 @@ def norm_block(tag: str, p: dict) -> dict:
     单位长度，于是 `σ` 无量纲、`cond` 是共线性条件数，**不随参数单位变**。
     归一化前后秩必然相同（非零列缩放不改变秩），变的是"多小算零"这个门槛
     和条件数的可解释性——所以秩在这里用**相对阈值**报。
+
+    坐标系统（上一轮这里算错过，本轮修正）：`v` 是 `J_norm` 的右奇异向量，
+    活在**归一化系数空间**；要跟"原始 J 的最弱方向"比夹角，先把 `v` 映射回
+    log 参数空间 `u_log ∝ D⁻¹v`（`D = diag(‖J_j‖)`，因为 `J_norm·v = J·D⁻¹v`），
+    再与**原始 J 的右奇异向量** `v_raw`（本来就在 log 参数空间）点乘。
+    拿 `v` 直接点 `u_log` 是混用两组基底，那个 cos 没有意义。
     """
     J = jac(p)
     cn = np.linalg.norm(J, axis=0)
@@ -87,27 +97,40 @@ def norm_block(tag: str, p: dict) -> dict:
     ranks = {f"1e-{d}": int((s / s[0] > 10.0 ** -d).sum())
              for d in (6, 8, 10, 12)}
     _, _, Vt = np.linalg.svd(Jn, full_matrices=False)
-    v = Vt[-1]
-    # 归一化坐标下的最弱方向 → 还原到 log 参数坐标，看解释是否改变
+    v = Vt[-1]                                 # 归一化坐标（系数空间）的最弱方向
+    # 换算到 log 参数坐标：Jn·v = J·(D⁻¹v)，所以"归一化后最弱"对应的参数方向 ∝ D⁻¹v
     u_log = v / cn
     u_log /= np.linalg.norm(u_log)
-    cos_ang = float(abs(v @ u_log))
+    # 夹角必须**在同一坐标系**里算：u_log 在 log 参数空间，所以对照量是原始 J
+    # 的最弱右奇异向量（也在 log 参数空间）。直接拿 v（归一化坐标）点乘 u_log
+    # 是把两组基底混在一起，那个 cos 值没有意义（上一轮的报告值即为此错误）。
+    _, _, Vt_raw = np.linalg.svd(J, full_matrices=False)
+    v_raw = Vt_raw[-1]
+    cos_ang = float(abs(v_raw @ u_log))
     top = np.argsort(-np.abs(v))[:4]
+    top_raw = np.argsort(-np.abs(v_raw))[:4]
     spread = np.log10(cn.max() / cn.min())
     print(f"{tag:<24}σmax={s[0]:.3f}  σmin={s[-1]:.3e}  cond={s[0]/s[-1]:.2e}   "
           f"rank={ranks['1e-12']}/{len(KS)}  (rel tol {tol:.1e})")
     print(f"{'':<24}相对阈值秩 1e-6:{ranks['1e-6']}  1e-8:{ranks['1e-8']}  "
           f"1e-10:{ranks['1e-10']}  1e-12:{ranks['1e-12']}；"
           f"列范数跨 {spread:.1f} dec（{cn.min():.3g}…{cn.max():.3g} Ω）")
-    print(f"{'':<24}最弱方向（归一化坐标）："
-          + "，".join(f"{KS[i]} {v[i]:+.2f}" for i in top)
-          + f"；与 log 坐标夹角 cos={cos_ang:.3f}")
+    print(f"{'':<24}最弱方向（系数坐标，**不是**参数载荷）："
+          + "，".join(f"{KS[i]} {v[i]:+.2f}" for i in top))
+    print(f"{'':<24}同一方向的参数载荷（log 坐标）："
+          + "，".join(f"{KS[i]} {u_log[i]:+.2f}" for i in top))
+    print(f"{'':<24}原始 J 的最弱方向（log 坐标）："
+          + "，".join(f"{KS[i]} {v_raw[i]:+.2f}" for i in top_raw)
+          + f"；cos(原始, 归一化) = {cos_ang:.4f}")
     return {"tag": tag, "sigma_max": float(s[0]), "sigma_min": float(s[-1]),
             "cond": float(s[0] / s[-1]), "rank_by_threshold": ranks,
             "rel_tol": float(tol), "col_norm_min": float(cn.min()),
             "col_norm_max": float(cn.max()), "col_norm_decades": float(spread),
             "weakest_direction_norm": {KS[i]: float(v[i]) for i in top},
-            "cos_with_logdir": cos_ang}
+            "weakest_direction_log": {KS[i]: float(u_log[i]) for i in top},
+            "weakest_direction_raw": {KS[i]: float(v_raw[i]) for i in top_raw},
+            "cos_raw_vs_normalized": cos_ang,
+            "cos_note": "两向量均在 log 参数坐标；v_norm 需先乘 D⁻¹ 再归一化"}
 
 
 def scaling_check(p: dict) -> dict:
@@ -172,6 +195,7 @@ def main(argv=None) -> int:
 
     print("== 噪声无关 Jacobian 的秩（区分结构性 / 实践性）==")
     print("   列 = ∂Z/∂log θ（单位 Ω）；σ 的单位因此是 Ω，不可当跨参数的物理量读")
+    print("   结论范围：真值点邻域的**局部**满列秩，不是全局可辨识性证明")
     ranks = [rank_block("A  R_ad=3000", BASE),
              rank_block("B  R_ad=300", dict(BASE, R_ad=300.0))]
     scaling = scaling_check(BASE)

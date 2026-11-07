@@ -15,9 +15,10 @@
   "baseline": "D:\\eis训练数据\\bmdrt\\evidence\\nested_topology\\g1_seeds_a.json",
   "current": {
     "stage": "a",
-    "seed": 0,
+    "data_seed": 0,
+    "sampler_seed": 0,
     "zmax": 3049.109465143577,
-    "seconds": 80.7
+    "seconds": 76.0
   },
   "compare": {
     "status": "exact",

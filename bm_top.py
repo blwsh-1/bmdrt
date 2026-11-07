@@ -438,7 +438,10 @@ def _selftest():
         Zp12 = Z12 + (0.5 - 0.25j)                   # 非零残差，免得起因掩盖公式错
 
         # 12a 接受 / 拒绝矩阵：一维非长度 2 必须显式拒绝，不能靠广播猜
+        #     后四例是 sigma_floor 的边界：负数 / NaN 在 sigma=None 与固定 σ 两种
+        #     情形下都必须报错（旧写法在 sigma=None 时直接 return，全被吞掉）
         cases = [("None", None, 0.0, True),
+                 ("None + floor 正数", None, 0.01, True),
                  ("标量对 tuple", (61.0, 61.0), 0.0, True),
                  ("标量对 1-D", np.array([61.0, 61.0]), 0.0, True),
                  ("(2,n) 数组", np.vstack([sg12, sg12]), 0.0, True),
@@ -446,6 +449,10 @@ def _selftest():
                  ("(2,n-1) 列数不符", np.vstack([sg12, sg12])[:, :-1], 0.0, False),
                  ("(3,n) 行数不符", np.ones((3, n12)), 0.0, False),
                  ("sigma+floor 同给", (61.0, 61.0), 0.01, False),
+                 ("None + floor 负数", None, -0.01, False),
+                 ("None + floor NaN", None, float("nan"), False),
+                 ("固定 σ + floor 负数", (61.0, 61.0), -0.01, False),
+                 ("固定 σ + floor NaN", (61.0, 61.0), float("nan"), False),
                  ("含 0 分量", (0.0, 61.0), 0.0, False)]
         bad = []
         for tag, sg, fl, want in cases:
@@ -534,20 +541,32 @@ def _check_sigma(f, sigma, sigma_floor: float = 0.0):
     | 标量对 `(σ_re, σ_im)` | `"scalar"` | 两个 `float` |
     | `(2, n_freq)` 数组 | `"perpoint"` | 两个 `(n_freq,)` 数组 |
 
-    三条硬约束（都是**显式报错**，不靠广播猜）：
+    四条硬约束（都是**显式报错**，不靠广播猜）：
 
     · `(n_freq,)` **不接受**。单数组会与"标量对"混淆（`n_freq == 2` 时更会静默
       通过），所以要求逐点噪声必须写成 `(2, n_freq)`；一维且长度不为 2 的输入
       直接拒绝并提示 reshape。
     · `sigma` 与 `sigma_floor` **互斥**：固定 σ 时 floor 无意义，静默忽略会让
       "我加了 floor"的调用方以为噪声下界生效。
+    · `sigma_floor` 必须**有限且非负**：负数会让 `if sigma_floor > 0` 悄悄退化成
+      "没有 floor"，NaN 同理，两种都是"写了等于没写"。
     · 全部分量必须有限且严格为正（`Normal` 的 `scale` 不接受 0）。
 
     `f` 可以是 `None`（`physical_to_unconstrained` 没有频率），此时跳过长度校验。
+
+    校验**顺序**很关键：先查 `sigma_floor` 本身合法（有限、非负），再判互斥，最后
+    才按 `sigma` 形状分支。反过来写会漏掉四类输入——`sigma=None` 时直接 `return`，
+    负数/NaN 的 floor 被静默吞掉；固定 σ 时 `sigma_floor > 0` 为假，互斥检查也不触发。
+    自检 [12a] 里有这四条负例。
     """
+    fl = float(sigma_floor)
+    if not np.isfinite(fl) or fl < 0.0:
+        raise ValueError(
+            f"sigma_floor 必须是有限的非负数（是 zmax 的比例，不是绝对噪声），"
+            f"收到 {sigma_floor!r}")
     if sigma is None:
         return ("free", None, None)
-    if float(sigma_floor) > 0.0:
+    if fl != 0.0:
         raise ValueError(
             "sigma 与 sigma_floor 同时给出：固定噪声（含逐点）时 sigma_floor 无意义。"
             "固定噪声请只传 sigma；要噪声下界请用 sigma=None + sigma_floor")
@@ -768,7 +787,8 @@ def fit_top(f, Z, *, branch: str = "parallel", layers: int = 2,
             n_warmup: int = 600, n_samples: int = 1200, seed: int = 0,
             num_chains: int = 4, target_accept: float = 0.9,
             max_tree_depth: int = 10, sigma=None, sigma_floor: float = 0.0,
-            init_values: dict | None = None, progress: bool = True) -> dict:
+            sigma_from_data: bool = False, init_values: dict | None = None,
+            progress: bool = True) -> dict:
     """单次固定 `branch × layers` 的 NUTS 拟合（M3 研究性原型）。
 
     边界（审查批准的范围）
@@ -785,6 +805,17 @@ def fit_top(f, Z, *, branch: str = "parallel", layers: int = 2,
     `sigma` 的三种形态见 `_check_sigma`：`None` / 标量对 / `(2, n_freq)`。
     一维输入只当标量对解释，`(n_freq,)` **会被拒绝**（否则与标量对混淆）。
     `sigma` 与 `sigma_floor` 互斥，校验在构造模型**之前**完成。
+
+    `sigma_from_data`
+    ----------------
+    `sigma` 是用**同一批观测**算出来的（典型：`σ_j = 0.02·|Z_j^obs|`）。此时
+    `elpd_loo`/`pareto_k` **没有**标准的留一预测解释：
+
+        第 j 点的似然尺度 σ_j 含 Z_j^obs 自身 → 留出 j 后 σ_j 会变，
+        算出来的不是 p(Z_j | Z_{-j})。
+
+    所以 `fit_top` 只负责**如实标注**（返回 `elpd_valid_for_predictive_comparison=False`），
+    不替调用方决定是否使用。σ 来自仪器规格、外部估计或常数时保持默认 `False`。
 
     `init_values`
     -------------
@@ -803,6 +834,8 @@ def fit_top(f, Z, *, branch: str = "parallel", layers: int = 2,
     返回 `dict`，`s` 与 `fit_one` 同名；`pointwise_elpd` 是逐频率点的 LOO。
     `sigma_mode` 记录噪声口径；逐点模式下 `sigma_re`/`sigma_im` 为 `None`
     （没有单一标量可报），数组另存 `sigma_re_perpoint`/`sigma_im_perpoint`。
+    `elpd_valid_for_predictive_comparison` 见上文 `sigma_from_data`：**先看这个
+    标志再用 `elpd`/`pareto_k`**，否则会把泄漏的分数当样本外预测。
     """
     from numpyro.infer import MCMC, NUTS
 
@@ -867,6 +900,12 @@ def fit_top(f, Z, *, branch: str = "parallel", layers: int = 2,
                               else np.asarray(sig_re, float)),
         "sigma_im_perpoint": (None if sig_mode != "perpoint"
                               else np.asarray(sig_im, float)),
+        # σ 由本批观测算出时，逐点 loglik 的尺度含该点自身 → 不是标准 LOO
+        "elpd_valid_for_predictive_comparison": not sigma_from_data,
+        "elpd_note": (None if not sigma_from_data else
+                      "σ_j 由同一批观测的 |Z_j| 算出：留出 j 后尺度会变，"
+                      "elpd_loo 不是 p(Z_j|Z_{-j}) 的估计；"
+                      "pareto_k 同源，均不作预测诊断或验收判据"),
         "divergences": int(np.sum(div)) if div is not None else None,
         "rhat_max": max(rhat) if rhat else None,
         "ess_min": min(ess) if ess else None,
