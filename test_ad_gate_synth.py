@@ -1,0 +1,394 @@
+# -*- coding: utf-8 -*-
+"""test_ad_gate_synth.py —— M6 合成谱门控矩阵（独立生成器，不调用被测试模型）。
+
+为什么单独一套
+--------------
+`test_ad_gate.py` 用 `bm_ad.z_ad` 造吸附谱，属于"模型自己生成数据、自己识别"
+的循环验证。本文件按审查意见重写：**所有真值用独立解析式手写**，不 import
+`bm_ad` / `bm_core` 的任何元件；只复用生产的统计函数（`resid_bins` / `acf_max`）
+与被测门控 `detect_ad`。
+
+三层报告（分开统计，不混算）
+--------------------------
+  A. 状态识别准确性 —— S1–S9 + C1–C3 逐条比对预期状态；
+  B. 门控不变性 —— 同一批谱，新规则与旧规则（`k_left>=2`）的 strong 集合是否一致；
+  C. 鲁棒性 —— 幅值 / 峰位 / HN 重叠 / 噪声 / 漂移 / 采样密度 / 非均匀采样扫描。
+
+**模拟假阳性率只代表给定模拟分布下的值，不能替代真实对照谱的统计上界。**
+
+用法：python test_ad_gate_synth.py
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import numpy as np
+from scipy.optimize import least_squares
+
+ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT))
+
+import bm_real as R                      # noqa: E402
+from bm_experiments import acf_max       # noqa: E402
+
+R_INF = 10.0
+ARC_TRUE = [(30.0, 300.0, 0.85), (8.0, 3.0e4, 0.90)]   # none 家族真值（ZARC）
+
+
+# --------------------------------------------------------------------------
+# 独立解析元件（手写，**不** import bm_ad / bm_core）
+# --------------------------------------------------------------------------
+
+def z_rl(f, R_ad, f_c):
+    """R∥L：Z = R·jωτ/(1+jωτ)，τ = 1/(2π f_c)。"""
+    x = np.asarray(f, float) / f_c
+    return R_ad * (1j * x) / (1.0 + 1j * x)
+
+
+def z_zarc(f, R, f_c, phi):
+    """ZARC：Z = R/[1+(jωτ)^φ]。"""
+    x = np.asarray(f, float) / f_c
+    return R / (1.0 + (1j * x) ** phi)
+
+
+def z_cpe(f, Y, n):
+    """纯 CPE：Z = 1/(Y·(jω)^n)。"""
+    return 1.0 / (Y * (2j * np.pi * np.asarray(f, float)) ** n)
+
+
+def z_series_l(f, L):
+    return 1j * 2 * np.pi * np.asarray(f, float) * L
+
+
+def z_none(f, arcs=ARC_TRUE, r_inf=R_INF):
+    z = np.full(np.shape(f), r_inf, complex)
+    for rad, fc, phi in arcs:
+        z = z + z_zarc(f, rad, fc, phi)
+    return z
+
+
+def drift_ramp(f, amp):
+    """低频单调漂移：最低 40% 频段内 Im 从 0 线性爬到 amp（对数频率）。"""
+    lf = np.log10(f)
+    m = lf <= np.quantile(lf, 0.40)
+    r = np.zeros(f.size)
+    if m.sum() > 1 and np.ptp(lf[m]) > 0:
+        r[m] = amp * (lf[m] - lf[m].min()) / np.ptp(lf[m])
+    return 1j * r
+
+
+def make_spectrum(f, rl=None, arcs=ARC_TRUE, drift=0.0, pseudo_l=0.0,
+                  noise=0.0, seed=0):
+    """合成观测：none 真值 + 可选 RL / 漂移 / 伪感抗 + 噪声。
+
+    rl = (R_ad, f_c) 用独立解析式生成，**不经** bm_ad。
+    pseudo_l：宽频常数虚部（仪器伪感抗的简化），单位 Ω。
+    """
+    z = z_none(f, arcs)
+    if rl is not None:
+        z = z + z_rl(f, rl[0], rl[1])
+    if drift:
+        z = z + drift_ramp(f, drift)
+    if pseudo_l:
+        z = z + 1j * pseudo_l
+    if noise:
+        rng = np.random.default_rng(seed)
+        z = z + noise * np.abs(z).max() * (rng.standard_normal(f.size)
+                                           + 1j * rng.standard_normal(f.size))
+    return z
+
+
+def fit_none(f, Zobs, n_start=6, seed=11):
+    """用 scipy LS 拟合 none 家族（R_inf + 2 ZARC），返回 Z_none。
+
+    比 NUTS 便宜得多，且这就是"none 模型能给出的最好拟合"，用来生成
+    与生产链路同形的残差统计（resid_bins / acf）。
+    """
+    w = 2 * np.pi * f
+    lo = np.array([np.log(1.0), np.log(1.0), np.log(1e-5), 0.5,
+                   np.log(1.0), np.log(1e-5), 0.5])
+    hi = np.array([np.log(1e3), np.log(1e3), np.log(1e2), 1.05,
+                   np.log(1e3), np.log(1e2), 1.05])
+
+    def model(p):
+        z = np.exp(p[0])
+        for k in range(2):
+            z = z + np.exp(p[1 + 3 * k]) / (1.0 + (1j * w * np.exp(p[2 + 3 * k]))
+                                            ** p[3 + 3 * k])
+        return z
+
+    wabs = np.abs(Zobs)
+
+    def resid(p):
+        d = (model(p) - Zobs) / wabs
+        return np.concatenate([d.real, d.imag])
+
+    rng = np.random.default_rng(seed)
+    best = None
+    for _ in range(n_start):
+        p0 = lo + (hi - lo) * rng.random(7)
+        try:
+            r = least_squares(resid, p0, bounds=(lo, hi), max_nfev=1200)
+            c = float(np.sqrt(np.mean(r.fun ** 2)))
+            if best is None or c < best[0]:
+                best = (c, model(r.x))
+        except Exception:                      # noqa: BLE001
+            continue
+    if best is None:
+        return z_none(f), 1.0
+    return best[1], best[0]
+
+
+def res_of(Zobs, Znone, f):
+    resid = Zobs - Znone
+    return dict(bins=R.resid_bins(resid, f),
+                acf=max(acf_max(resid.real), acf_max(resid.imag)),
+                s_re=float(np.std(resid.real)), s_im=float(np.std(resid.imag)),
+                f_lo=float(f.min()), f_hi=float(f.max()))
+
+
+def gate(f, Zobs, **kw):
+    Znone, cost = fit_none(f, Zobs, **kw)
+    return R.detect_ad(f, Zobs, res_of(Zobs, Znone, f))
+
+
+def old_rule(g):
+    """旧规则：只看 interior（k_left>=2 且 k_right>=2），其余一律 enter=False。"""
+    c = g.get("checks") or {}
+    k_l, k_r = c.get("k_left"), c.get("k_right")
+    if k_l is None or k_r is None:
+        return False
+    return bool(k_l >= 2 and k_r >= 2 and c.get("half_circle"))
+
+
+# --------------------------------------------------------------------------
+# 频率网格
+# --------------------------------------------------------------------------
+
+def grid(n=60, fmin=1e-2, fmax=1e5, jitter=0.0, seed=5):
+    f = np.logspace(np.log10(fmin), np.log10(fmax), n)
+    if jitter:
+        rng = np.random.default_rng(seed)
+        f = f * (1.0 + jitter * rng.uniform(-1, 1, n))
+        f = np.sort(f)
+    return f
+
+
+F60 = grid()
+F24 = grid(n=24)                 # 约 7.1 pts/dec
+F40 = grid(n=40)                 # 约 11.2 pts/dec
+FJ = grid(n=60, jitter=0.15)     # 轻微非均匀
+
+
+def band_pts(f, frac=0.40):
+    lf = np.log10(f)
+    m = lf <= np.quantile(lf, frac)
+    return f[m]
+
+
+def peak_f(f, Z):
+    lf = np.log10(f)
+    m = lf <= np.quantile(lf, 0.40)
+    return float(f[m][int(np.argmax(Z[m].imag))])
+
+
+# --------------------------------------------------------------------------
+# A. 确定性用例（预期写死，不让输出反过来定义答案）
+# --------------------------------------------------------------------------
+
+def _chk(name, f, Zobs, exp_status, exp_enter, exp_strong):
+    g = gate(f, Zobs)
+    ok = (g["status"] == exp_status and bool(g["enter"]) == exp_enter
+          and bool(g["strong"]) == exp_strong)
+    c = g["checks"]
+    detail = (f"{g['status']} enter={g['enter']} strong={g['strong']} "
+              f"k_left={c.get('k_left')} k_right={c.get('k_right')}")
+    return ok, f"{name}: 期望 {exp_status}/{exp_enter}/{exp_strong} → {detail}"
+
+
+def cases():
+    """返回 [(ok, msg)]；S1–S9 + C1–C3。"""
+    out = []
+    # S1 完整 RL 弧（窗内、幅值足够撑起半圆）
+    out.append(_chk("S1 完整RL弧", F60, make_spectrum(F60, rl=(100.0, 1.0)),
+                    "strong_candidate", True, True))
+    # S2 有感抗特征但半圆不完整（只翘不复位）。
+    # 注意：真 RL 元件的 ΔRe/(2|Im|) 恒 ≈1，靠改幅值造不出 partial_arc；
+    # 这里用纯虚部鼓包模拟"被遮蔽/伪感抗"导致的 Re 不复位。
+    bump_mid = 1j * 100.0 * np.exp(-0.5 * (np.log10(F60 / 1.0) / 0.12) ** 2)
+    out.append(_chk("S2 半圆不完整", F60, make_spectrum(F60) + bump_mid,
+                    "partial_arc", True, False))
+    # S3 峰贴低频边界（k_left=1）
+    out.append(_chk("S3 贴边峰", F60, make_spectrum(F60, rl=(100.0, float(F60[1]))),
+                    "edge_peak", True, False))
+    # S4 峰在最低频点（k_left=0）
+    out.append(_chk("S4 峰在最低点", F60, make_spectrum(F60, rl=(100.0, float(F60[0]))),
+                    "monotonic_rise", False, False))
+    # S5 峰贴 band 上沿（k_right<2）
+    fb = band_pts(F60)
+    out.append(_chk("S5 峰贴上沿", F60, make_spectrum(F60, rl=(100.0, float(fb[-1]))),
+                    "monotonic_rise", False, False))
+    # S6 纯容性
+    out.append(_chk("S6 纯容性", F60, make_spectrum(F60), "capacitive_tail", False, False))
+    # S7 正向偏移但噪声主导
+    out.append(_chk("S7 噪声主导", F60,
+                    make_spectrum(F60, pseudo_l=50.0, noise=0.5, seed=3),
+                    "noise_only", False, False))
+    # S8 只有 HN/ZARC，无 RL（小噪声下符号可能随机，capacitive_tail 或
+    # noise_only 都算合格——验收点只有"不自动进入吸附比较"）
+    g8 = gate(F60, make_spectrum(F60, noise=0.002, seed=4))
+    out.append(((not g8["enter"]) and (not g8["strong"]),
+                f"S8 仅HN无RL: {g8['status']} enter={g8['enter']} strong={g8['strong']}"))
+    # S9 非吸附过程 + 低频漂移 + 仪器伪感抗（最危险的假阳性形态）
+    Z9 = make_spectrum(F60, drift=120.0, pseudo_l=40.0, noise=0.005, seed=6)
+    g9 = gate(F60, Z9)
+    ok9 = (not g9["strong"]) and (g9["status"] in
+                                  ("monotonic_rise", "edge_peak", "noise_only",
+                                   "partial_arc", "capacitive_tail"))
+    out.append((ok9, f"S9 漂移+伪感抗: {g9['status']} enter={g9['enter']} "
+                     f"strong={g9['strong']}（只要求不自动选）"))
+
+    # C1 k_left=1 但符号不通过（负虚部贴边）
+    fc1 = float(F60[1])
+    Zc1 = make_spectrum(F60) - z_rl(F60, 100.0, fc1)
+    out.append(_chk("C1 贴边+符号不过", F60, Zc1, "capacitive_tail", False, False))
+    # C2 k_left=1、符号通过、系统性不通过（大噪声）
+    Zc2 = make_spectrum(F60, rl=(100.0, float(F60[1])), noise=0.25, seed=7)
+    g2 = gate(F60, Zc2)
+    out.append(((g2["status"] in ("noise_only", "capacitive_tail")
+                 and not g2["enter"]),
+                f"C2 贴边+系统性不过: {g2['status']} enter={g2['enter']}"))
+    # C3 k_left=1、两关都过、但背景不是 RL（窄虚部鼓包）
+    bump = 1j * 100.0 * np.exp(-0.5 * (np.log10(F60 / float(F60[1])) / 0.12) ** 2)
+    g3 = gate(F60, make_spectrum(F60) + bump)
+    out.append(((g3["status"] == "edge_peak" and g3["enter"] and not g3["strong"]),
+                f"C3 非RL贴边+两关过: {g3['status']} enter={g3['enter']} "
+                f"strong={g3['strong']}（必须进诊断但不得自动选）"))
+    return out
+
+
+# --------------------------------------------------------------------------
+# B. 不变性：新规则 vs 旧规则（k_left>=2）
+# --------------------------------------------------------------------------
+
+def invariance():
+    specs = []
+    for rad in (2.0, 10.0, 100.0):
+        for fc in (0.1, 1.0, 10.0):
+            specs.append((F60, make_spectrum(F60, rl=(rad, fc))))
+    for fc in (float(F60[0]), float(F60[1]), float(F60[2])):
+        specs.append((F60, make_spectrum(F60, rl=(100.0, fc))))
+    specs.append((F60, make_spectrum(F60)))
+    specs.append((F60, make_spectrum(F60, noise=0.02, seed=9)))
+
+    diffs = []
+    for f, Z in specs:
+        g = gate(f, Z)
+        if bool(g["strong"]) != old_rule(g):
+            diffs.append(f"f_peak={peak_f(f, Z):.3g}: 新 {g['strong']} vs 旧 {old_rule(g)}")
+    return diffs, len(specs)
+
+
+# --------------------------------------------------------------------------
+# C. 鲁棒性扫描
+# --------------------------------------------------------------------------
+
+def sweep():
+    rows = []
+
+    def rec(group, param, g):
+        c = g["checks"]
+        rows.append((group, param, g["status"], bool(g["enter"]),
+                     bool(g["strong"]), c.get("k_left"), c.get("k_right")))
+
+    for rad in (0.5, 2.0, 10.0, 50.0, 200.0):
+        for fc in (1e-3, 1e-2, 0.1, 1.0, 10.0, 100.0):
+            g = gate(F60, make_spectrum(F60, rl=(rad, fc)))
+            rec("幅值×峰位", f"R={rad:g},fc={fc:g}", g)
+
+    i1 = int(np.argmin(np.abs(F60 - 1.0)))
+    for hnr in (0.0, 0.5, 1.0, 2.0, 4.0):     # HN 拐点移到 1 Hz，与 RL 同频段抵消
+        arcs = [(30.0 * (1 + hnr), 1.0, 0.85), (8.0, 3e4, 0.90)]
+        Z = make_spectrum(F60, rl=(100.0, 1.0), arcs=arcs)
+        net = float(z_rl(F60[i1:i1 + 1], 100.0, 1.0).imag[0]
+                    + z_zarc(F60[i1:i1 + 1], 30.0 * (1 + hnr), 1.0, 0.85).imag[0])
+        # 净虚部 <5 Ω 时 RL 已被 HN 抵消到不可观测——这是物理可辨识性问题，
+        # 不是门控缺陷，单独归类，不计入异常。
+        grp = "HN重叠(可辨识)" if net > 5.0 else "HN重叠(抵消至不可见)"
+        rec(grp, f"arc×{1 + hnr:.1f}(净Im={net:+.1f})", gate(F60, Z))
+
+    for nz in (0.001, 0.01, 0.05, 0.2):
+        rec("噪声(有RL)", f"{nz:.1%}", gate(F60, make_spectrum(F60, rl=(100.0, 1.0),
+                                                             noise=nz, seed=12)))
+        rec("噪声(无RL)", f"{nz:.1%}", gate(F60, make_spectrum(F60, noise=nz, seed=12)))
+
+    for dr in (0.0, 20.0, 120.0, 400.0):
+        rec("低频漂移", f"{dr:g}", gate(F60, make_spectrum(F60, drift=dr)))
+
+    for tag, fg in (("7.1 pts/dec", F24), ("11.2 pts/dec", F40), ("非均匀", FJ)):
+        rec("采样", tag + "(有RL)", gate(fg, make_spectrum(fg, rl=(100.0, 1.0))))
+        rec("采样", tag + "(无RL)", gate(fg, make_spectrum(fg)))
+    return rows
+
+
+# --------------------------------------------------------------------------
+# main
+# --------------------------------------------------------------------------
+
+def main():
+    print("=" * 100)
+    print("A. 状态识别准确性（独立解析生成器，不调用 bm_ad）")
+    print("=" * 100)
+    res = cases()
+    bad = 0
+    for ok, msg in res:
+        print(("[PASS] " if ok else "[FAIL] ") + msg)
+        bad += 0 if ok else 1
+
+    print("\n" + "=" * 100)
+    print("B. 门控不变性：新规则 vs 旧规则（strong 集合）")
+    print("=" * 100)
+    diffs, n = invariance()
+    print(f"  {n} 条合成谱，strong 判定差异 {len(diffs)} 条")
+    for d in diffs:
+        print("   ", d)
+
+    print("\n" + "=" * 100)
+    print("C. 鲁棒性扫描（状态分布；仅给定模拟分布，不可替代真实统计上界）")
+    print("=" * 100)
+    rows = sweep()
+    from collections import Counter
+    groups = {}
+    for r in rows:
+        groups.setdefault(r[0], []).append(r)
+    for gname, grp in groups.items():
+        c = Counter(r[2] for r in grp)
+        enter = sum(1 for r in grp if r[3])
+        strong = sum(1 for r in grp if r[4])
+        print(f"  {gname:<12} n={len(grp):3d}  enter={enter:2d}  strong={strong:2d}  "
+              f"状态={dict(c)}")
+    print("\n  明细（异常项：有 RL 却未进 enter，或无 RL 却 enter）：")
+    odd = 0
+    for gname, param, st, en, sg, kl, kr in rows:
+        has_rl = ("有RL" in param) or gname in ("幅值×峰位", "HN重叠(可辨识)")
+        no_rl = "无RL" in param or gname == "低频漂移"
+        # 「有 RL 却没进诊断」只有在形状足够时才算异常：峰在 band 内部
+        # （k_left>=2 且 k_right>=2）。峰贴边/出窗本就不该进（规格如此）。
+        shape_ok = (kl is not None and kr is not None and kl >= 2 and kr >= 2)
+        if (has_rl and shape_ok and not en) or (no_rl and en):
+            odd += 1
+            print(f"    [{gname}] {param}: {st} enter={en} strong={sg} "
+                  f"k_left={kl} k_right={kr}")
+    if not odd:
+        print("    （无）")
+
+    print("\n" + "=" * 100)
+    print(f"A 结果：{len(res) - bad}/{len(res)} 通过；B 差异 {len(diffs)}；"
+          f"C 异常 {odd}/{len(rows)}")
+    print("注意：C 的假阳性率只代表给定模拟分布，不能替代真实对照谱统计上界。")
+    raise SystemExit(1 if (bad or diffs) else 0)
+
+
+if __name__ == "__main__":
+    main()
