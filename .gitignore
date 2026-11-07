@@ -36,6 +36,10 @@ evidence/*
 !evidence/b2x/
 evidence/b2x/*
 !evidence/b2x/paired_loo.py
+!evidence/nested_topology/
+evidence/nested_topology/*
+!evidence/nested_topology/theoretical_bound.py
+!evidence/nested_topology/identifiability_check.py
 
 # ---------------------------------------------------------------------------
 # 原始测量数据：可能含未发表数据，默认不上传
