@@ -161,6 +161,8 @@ def z_nested(f, p: dict, f_ref: float | None = None,
     """
     if branch not in ("parallel", "series"):
         raise ValueError(f"branch 只能是 'parallel'/'series'，收到 {branch!r}")
+    if layers not in (1, 2):
+        raise ValueError(f"layers 只能是 1/2，收到 {layers!r}")
     f = np.asarray(f, float)
     w_ref = 2.0 * np.pi * (f_ref if f_ref is not None else np.sqrt(f.min() * f.max()))
 
@@ -184,6 +186,10 @@ def z_nested(f, p: dict, f_ref: float | None = None,
 
 def j_z_nested(omega, p: dict, w_ref, branch: str = "parallel", layers: int = 2):
     """jax 版（omega、w_ref 为角频率）。"""
+    if branch not in ("parallel", "series"):
+        raise ValueError(f"branch 只能是 'parallel'/'series'，收到 {branch!r}")
+    if layers not in (1, 2):
+        raise ValueError(f"layers 只能是 1/2，收到 {layers!r}")
     zc1 = j_z_cpe(omega, p["Q1"], p["n1"], w_ref)
     if branch == "parallel":
         zb = j_z_rl_parallel(omega, p["R_ad"], p["tau_ad"])
@@ -324,24 +330,181 @@ def _selftest():
     else:
         print("[8] jax 不可用，跳过")
 
-    # 9) sampled_keys：派生量与未使用参数不得进采样清单
-    print("[9] sampled_keys 分支/层数矩阵：")
-    for br in ("parallel", "series"):
-        for ly in (1, 2):
-            ks = sampled_keys(br, ly)
-            need2 = ly >= 2
-            good = ("L_ad" not in ks
-                    and (("R2" in ks) == need2)
-                    and (("Q2" in ks) == need2)
-                    and (("n2" in ks) == need2)
-                    and (("R_ad" in ks) == (br == "parallel"))
-                    and (("R_L" in ks) == (br == "series")))
-            print(f"    {br:<8} layers={ly} → {ks}")
-            ok &= good
+    # 9) sampled_keys：四种组合与预期 tuple 完整相等（新增参数时不会漏断言）
+    print("[9] sampled_keys 分支/层数矩阵（完整 tuple 比较）：")
+    expect = {
+        ("parallel", 1): ("Rs", "R1", "Q1", "n1", "R_ad", "tau_ad"),
+        ("parallel", 2): ("Rs", "R1", "Q1", "n1", "R2", "Q2", "n2",
+                          "R_ad", "tau_ad"),
+        ("series", 1): ("Rs", "R1", "Q1", "n1", "R_L", "tau_L"),
+        ("series", 2): ("Rs", "R1", "Q1", "n1", "R2", "Q2", "n2",
+                        "R_L", "tau_L"),
+    }
+    for (br, ly), exp in expect.items():
+        ks = sampled_keys(br, ly)
+        good = (ks == exp)
+        print(f"    {br:<8} layers={ly} → {ks}" + ("" if good else f"  ≠ {exp}"))
+        ok &= good
 
     print("=" * 72)
     print("全部通过" if ok else "有失败项")
     return ok
+
+
+# --------------------------------------------------------------------------
+# 采样（M3 原型：单次固定 branch×layers，不做拓扑自动选择）
+# --------------------------------------------------------------------------
+
+LOG2PI = float(np.log(2.0 * np.pi))
+
+
+def _loglik_chained(s, f, Z, branch, layers, sigma):
+    """`(chain, draw, n_freq)` 的同频联合对数似然。
+
+    `ll[c,d,j] = log p(Z'_j) + log p(Z''_j)` —— 同一频率的实虚部是**一个**
+    留出单元，不能摊成 2N 个独立观测（与 `bm_real.loglik_matrix` 同一口径）。
+    """
+    keys = sampled_keys(branch, layers)
+    ch, dr = s["Rs"].shape[:2]
+    ll = np.empty((ch, dr, f.size))
+    for c in range(ch):
+        for d in range(dr):
+            p = {k: float(s[k][c, d]) for k in keys}
+            if branch == "series":
+                p["L_ad"] = p["R_L"] * p["tau_L"]
+            z = z_nested(f, p, branch=branch, layers=layers)
+            if sigma is not None:
+                sr, si = float(sigma[0]), float(sigma[1])
+            else:
+                sr, si = float(s["s_re"][c, d]), float(s["s_im"][c, d])
+            lr = -0.5 * ((Z.real - z.real) / sr) ** 2 - np.log(sr) - 0.5 * LOG2PI
+            li = -0.5 * ((Z.imag - z.imag) / si) ** 2 - np.log(si) - 0.5 * LOG2PI
+            ll[c, d] = lr + li
+    return ll
+
+
+def fit_top(f, Z, *, branch: str = "parallel", layers: int = 2,
+            n_warmup: int = 600, n_samples: int = 1200, seed: int = 0,
+            num_chains: int = 4, target_accept: float = 0.9,
+            max_tree_depth: int = 10, sigma=None, sigma_floor: float = 0.0,
+            init_values: dict | None = None, progress: bool = True) -> dict:
+    """单次固定 `branch × layers` 的 NUTS 拟合（M3 研究性原型）。
+
+    边界（审查批准的范围）
+    ----------------------
+    · 采样参数由 `sampled_keys(branch, layers)` 决定：**不采**派生量 `L_ad`，
+      也不为未使用的分支/层数建先验（否则引入纯先验决定的无效维度）；
+    · `series` 支路的 `L_ad = R_L·tau_L` 用 `numpyro.deterministic` 派生；
+    · 噪声：`sigma=None` 时沿用 `bm_core` 的 `LogNormal(log 0.01·zmax, 1)` 与
+      `sigma_floor` 语义；显式传 `(s_re, s_im)` 时固定不采；
+    · **不做**拓扑自动选择、跨族比较——等 M3 结论。
+
+    返回 `dict`，`s` 与 `fit_one` 同名；`pointwise_elpd` 是逐频率点的 LOO。
+    """
+    import numpyro
+    import numpyro.distributions as dist
+    from numpyro.infer import MCMC, NUTS
+
+    f = np.asarray(f, float)
+    Z = np.asarray(Z, complex)
+    if f.size != Z.size or f.size < 8:
+        raise ValueError("f 与 Z 长度需一致且不少于 8 点")
+    if not np.all(np.isfinite(f)) or f.min() <= 0:
+        raise ValueError("频率必须是有限正数")
+    sampled_keys(branch, layers)                 # 提前校验 branch/layers
+
+    def model(f_arr, Zr, Zi):
+        zmax = jnp.max(jnp.sqrt(Zr ** 2 + Zi ** 2))
+        w_ref = 2.0 * jnp.pi * jnp.sqrt(jnp.min(f_arr) * jnp.max(f_arr))
+        omega = 2.0 * jnp.pi * f_arr
+        p = {}
+        p["Rs"] = numpyro.sample("Rs", dist.LogNormal(jnp.log(0.2 * zmax), 1.0))
+        p["R1"] = numpyro.sample("R1", dist.LogNormal(jnp.log(0.1 * zmax), 2.0))
+        p["Q1"] = numpyro.sample("Q1", dist.LogNormal(jnp.log(zmax), 2.0))
+        p["n1"] = numpyro.sample("n1", dist.Uniform(0.5, 1.0))
+        if layers >= 2:
+            p["R2"] = numpyro.sample("R2", dist.LogNormal(jnp.log(0.1 * zmax), 2.0))
+            p["Q2"] = numpyro.sample("Q2", dist.LogNormal(jnp.log(zmax), 2.0))
+            p["n2"] = numpyro.sample("n2", dist.Uniform(0.5, 1.0))
+        if branch == "parallel":
+            p["R_ad"] = numpyro.sample("R_ad",
+                                       dist.LogNormal(jnp.log(0.1 * zmax), 2.0))
+            p["tau_ad"] = numpyro.sample("tau_ad",
+                                         dist.LogNormal(jnp.log(1.0 / w_ref), 2.0))
+        else:
+            p["R_L"] = numpyro.sample("R_L",
+                                      dist.LogNormal(jnp.log(0.1 * zmax), 2.0))
+            p["tau_L"] = numpyro.sample("tau_L",
+                                        dist.LogNormal(jnp.log(1.0 / w_ref), 2.0))
+            p["L_ad"] = numpyro.deterministic("L_ad", p["R_L"] * p["tau_L"])
+
+        Zt = j_z_nested(omega, p, w_ref, branch=branch, layers=layers)
+
+        if sigma is None:
+            if sigma_floor > 0:
+                floor = sigma_floor * zmax
+                b_re = numpyro.sample("s_re_base",
+                                      dist.LogNormal(jnp.log(0.01 * zmax), 1.0))
+                b_im = numpyro.sample("s_im_base",
+                                      dist.LogNormal(jnp.log(0.01 * zmax), 1.0))
+                s_re = numpyro.deterministic("s_re", b_re + floor)
+                s_im = numpyro.deterministic("s_im", b_im + floor)
+            else:
+                s_re = numpyro.sample("s_re", dist.LogNormal(jnp.log(0.01 * zmax), 1.0))
+                s_im = numpyro.sample("s_im", dist.LogNormal(jnp.log(0.01 * zmax), 1.0))
+        else:
+            s_re = jnp.asarray(float(sigma[0]))
+            s_im = jnp.asarray(float(sigma[1]))
+        numpyro.sample("obs_re", dist.Normal(Zt.real, s_re), obs=Zr)
+        numpyro.sample("obs_im", dist.Normal(Zt.imag, s_im), obs=Zi)
+
+    mcmc = MCMC(NUTS(model, target_accept_prob=target_accept,
+                     max_tree_depth=max_tree_depth),
+                num_warmup=n_warmup, num_samples=n_samples,
+                num_chains=num_chains, progress_bar=progress)
+    mcmc.run(jax.random.PRNGKey(seed), f, Z.real, Z.imag,
+             extra_fields=("diverging",), init_params=init_values)
+
+    s_ch = {k: np.asarray(v) for k, v in mcmc.get_samples(group_by_chain=True).items()}
+    if branch == "series" and "L_ad" not in s_ch:
+        s_ch["L_ad"] = s_ch["R_L"] * s_ch["tau_L"]
+    s = {k: v.reshape((-1,) + v.shape[2:]) for k, v in s_ch.items()}
+
+    ll = _loglik_chained(s_ch, f, Z, branch, layers, sigma)
+    import arviz as az
+    # 注意：`from_dict` 的第一个位置参数是 posterior；log_likelihood 必须
+    # 作为关键字传。`az.loo` 还需要 posterior 组来对齐 (chain, draw)，
+    # 所以两样都要给。
+    idata = az.from_dict(posterior=s_ch, log_likelihood={"obs": ll})
+    loo = az.loo(idata)
+    # arviz 0.23 的 ELPDData 是 pandas Series，字段用下标取（不是属性）
+    pw = loo.get("loo_i", None)
+    if pw is None:
+        pw = loo.get("elpd_i", None)
+
+    from numpyro.diagnostics import summary
+    st = summary(s_ch, prob=0.9, group_by_chain=True)
+    rhat = [float(np.nanmax(np.asarray(v["r_hat"]))) for v in st.values()]
+    ess = [float(np.nanmin(np.asarray(v["n_eff"]))) for v in st.values()]
+    div = mcmc.get_extra_fields().get("diverging")
+
+    return {
+        "s": s,
+        "elpd": float(loo["elpd_loo"]),
+        "elpd_se": float(loo["se"]),
+        "pointwise_elpd": None if pw is None else np.asarray(pw, float),
+        "pareto_k": np.asarray(loo["pareto_k"], float),
+        "idata": idata,
+        "sigma_re": (float(np.median(s["s_re"])) if "s_re" in s
+                     else (float(sigma[0]) if sigma else None)),
+        "sigma_im": (float(np.median(s["s_im"])) if "s_im" in s
+                     else (float(sigma[1]) if sigma else None)),
+        "divergences": int(np.sum(div)) if div is not None else None,
+        "rhat_max": max(rhat) if rhat else None,
+        "ess_min": min(ess) if ess else None,
+        "branch": branch, "layers": layers,
+        "f_ref": float(np.sqrt(f.min() * f.max())),
+    }
 
 
 if __name__ == "__main__":

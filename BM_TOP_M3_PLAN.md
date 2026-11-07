@@ -316,3 +316,63 @@ at_bound_frac_uniform, median_err, covered
 | M3 范围 | 本阶段只做参数恢复预实验，不冒称完整 M3 |
 | 单层定义 | `layers=1` 不含 `R2`；numpy/jax/生成器三处一致 |
 | 采样参数 | 由 `sampled_keys(branch, layers)` 决定，不用 `PARAM_KEYS` |
+
+---
+
+## 11. `fit_top()` 实现记录（2026-11-07，冒烟级）
+
+### 11.1 实现要点（对应审查的边界）
+
+| 约束 | 落地 |
+|---|---|
+| 采样参数由 `sampled_keys` 决定 | 模型里按 `layers>=2` / `branch` 分支建先验，未使用参数**不建** |
+| `L_ad` 不采样 | `series` 用 `numpyro.deterministic("L_ad", R_L*tau_L)`；`s` 里存在且恒等于乘积 |
+| L1 不建 `R2/Q2/n2` 先验 | `layers=1` 分支不 sample 这三个 |
+| 不建另一支路先验 | `parallel` 无 `R_L/tau_L`，`series` 无 `R_ad/tau_ad` |
+| LOO 同频联合 | `_loglik_chained` 返回 `(chain, draw, N)`，`ll = lr + li`；`az.loo` 的 `loo_i` 形状 `(N,)` |
+| σ 语义 | `sigma=None` 沿用 `LogNormal(log 0.01·zmax,1)` + `sigma_floor`；显式传入则固定 |
+| 不做拓扑选择 | 单次固定 `branch × layers`，无自动切换 |
+
+实现中遇到并修掉的两个 arviz 接口坑（记录备查）：
+
+1. `az.from_dict` 第一个位置参数是 **posterior**，`log_likelihood` 必须作关键字传；
+2. `az.loo` 还需要 posterior 组来对齐 `(chain, draw)`，两样都要给；
+3. arviz 0.23 的 `ELPDData` 是 pandas Series，字段用 `loo["elpd_loo"]` /
+   `loo["se"]` / `loo["pareto_k"]` 取，不是属性。
+
+### 11.2 冒烟结果（**1 链 300 样本，不收敛，仅验证链路**）
+
+| branch | `s` 中的参数 | `pointwise_elpd` | 备注 |
+|---|---|---|---|
+| parallel, L2 | `Rs,R1,R2,Q1,n1,Q2,n2,R_ad,tau_ad,s_re,s_im` | `(40,)` | 无 `L_ad`、无 `R_L/tau_L` ✓ |
+| series, L2 | 上述换成 `R_L,tau_L`，另有 `L_ad` | `(40,)` | `L_ad == R_L·tau_L` ✓ |
+
+参数恢复（parallel，真值 `R_ad=3000, tau_ad=1.6`）：
+`R_ad` 中位 2968（−1.1%），90% 区间 `[2831, 3128]` 覆盖真值；
+`tau_ad` 中位 1.626（+1.6%），区间覆盖。
+
+**series 的一个值得记录的观察**（真值 `R_L=800, tau_L=1.6`）：
+
+| 参数 | 中位 | 90% 区间 | 判断 |
+|---|---|---|---|
+| `R_L` | 1038（+30%） | `[408, 1382]` | 很宽，单独不可辨 |
+| `tau_L` | 1.206（−25%） | `[0.914, 3.125]` | 很宽 |
+| `L_ad = R_L·tau_L` | 1266（−1.1%） | `[1221, 1311]` | **窄，可辨** |
+
+这与审查意见"某些参数只能确定乘积或比值"一致，也正是 §6.2 "组合参数"要报告的
+对象。**但这是 1 链 300 样本的不收敛结果，不能当结论**，必须用 4 链正式跑。
+
+### 11.3 冒烟**不能**当作 M3 档 1 证据
+
+冒烟用的是 `bm_top.z_nested` 自己造谱，**违反 §5 的生成器独立性**，
+只用于验证"正演 → NUTS → LOO 数据结构"这条链路通不通。
+档 1 必须用独立生成器（§5.1 的四种拓扑手写公式）重做。
+
+### 11.4 尚未做
+
+- 4 链正式跑 + 多种子（§6.3 / §6.4）；
+- 独立生成器的四种拓扑（§5.1）；
+- 档 2/3 的完整矩阵；
+- `Rs/R1/R2` 的剖面与窗口截断检查（§6.2 形状参数）。
+
+以上完成前，**M3 预实验未通过**。
