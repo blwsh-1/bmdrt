@@ -172,13 +172,15 @@ def add_noise(Z, sigma_frac: float, *, mode: str = "fixed", seed: int = 0,
               zmax: float | None = None) -> np.ndarray:
     """给合成谱加噪。
 
-    `mode="fixed"`（**默认，也是采样器标定唯一允许的口径**）
+    `mode="fixed"`（**默认，A/B 组的口径**）
         `ε_re, ε_im ~ N(0, σ²)`，`σ = sigma_frac·zmax`，实虚各自独立。
         与 `bm_core.fit` 的同方差 Normal 似然一致。
-    `mode="relative"`
-        逐点 `σ_j = sigma_frac·|Z_j|`，异方差。只用于**表达能力**对照
-        （`evidence/nested_topology/theoretical_bound.py` 的历史口径），
-        **不能**用来标定采样器（§4.2）。
+    `mode="relative"`（**M3.5 的 `rel-perpoint-2pct` 条件专用**）
+        逐点 `σ_j = sigma_frac·|Z_j^true|`，异方差。与固定 σ 口径**不是同一个
+        统计模型**：生成 σ 用真值谱、拟合用 `|Z_obs|`，两者差 `O(噪声)`；
+        归一化常数含 `Σ log σ_j`，所以 ELPD **不可**跨口径比较
+        （`BM_TOP_M3_PLAN.md` §20.1）。也不能用来标定采样器（§4.2）。
+        （历史用途：`theoretical_bound.py` 的"表达能力"对照口径。）
     """
     Z = np.asarray(Z, complex)
     rng = np.random.default_rng(seed)

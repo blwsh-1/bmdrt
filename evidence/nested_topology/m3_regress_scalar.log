@@ -1,0 +1,24 @@
+基线：D:\eis训练数据\bmdrt\evidence\nested_topology\g1_seeds_a.json seed=0 stage=a
+      配置 4 链 × 1200 / warmup 2000  ta=0.95  depth=12
+      重跑中（约 1–2 分钟）…
+D:\eis训练数据\bmdrt\bm_top.py:821: UserWarning: There are not enough devices to run parallel chains: expected 4 but got 1. Chains will be drawn sequentially. If you are running MCMC in CPU, consider using `numpyro.set_host_device_count(4)` at the beginning of your program. You can double-check how many devices are available in your system using `jax.local_device_count()`.
+  mcmc = MCMC(NUTS(model, target_accept_prob=target_accept,
+
+============================================================================
+参数                基线中位          重跑中位         相对差  逐位
+============================================================================
+Rs             32.5181       32.5181     0.0e+00  ✓
+R1             194.668       194.668     0.0e+00  ✓
+Q1             166.536       166.536     0.0e+00  ✓
+n1            0.780445      0.780445     0.0e+00  ✓
+R2             420.203       420.203     0.0e+00  ✓
+Q2             2628.31       2628.31     0.0e+00  ✓
+n2            0.749415      0.749415     0.0e+00  ✓
+R_ad           2890.78       2890.78     0.0e+00  ✓
+tau_ad         1.69388       1.69388     0.0e+00  ✓
+----------------------------------------------------------------------------
+rhat_max       1.00735       1.00735     0.0e+00  ✓
+ess_min        483.715       483.715     0.0e+00  ✓
+============================================================================
+结论：逐位一致（标量路径未被改动）   max rel diff = 0.00e+00
+写入 evidence/nested_topology/m3_regress_scalar.json

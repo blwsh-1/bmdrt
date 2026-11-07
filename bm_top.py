@@ -52,6 +52,20 @@ CPE 参数化（避免直接采 Y）
 `ω_ref = 2π√(f_min·f_max)`（与扩散项同一参考频率）。这样 `Q` 与 `zmax` 同尺度，
 先验可以直接写 `LogNormal(log(zmax), 2)`。
 
+噪声接口（M3.5）
+----------------
+`fit_top(..., sigma=...)` 三种形态，校验在建模**之前**完成（`_check_sigma`）：
+
+| 输入 | 含义 |
+|---|---|
+| `None` | 自由估计噪声（采 `s_re`/`s_im`，受 `sigma_floor` 约束） |
+| `(σ_re, σ_im)` 标量对 | 实虚各自固定标量噪声（A/B 组口径） |
+| `(2, n_freq)` 数组 | 实虚各自**逐频点**噪声（`rel-perpoint-2pct` 条件） |
+
+`(n_freq,)` 单数组**不接受**（与标量对混淆，见 `_check_sigma`）；`sigma` 与
+`sigma_floor` 互斥。标量与逐点共用同一段代码，标量路径的数值逐位未变
+（自检 [12]、`evidence/nested_topology/m3_regress_scalar.py`）。
+
 自检：`python bm_top.py`
 """
 
@@ -411,6 +425,92 @@ def _selftest():
         print(f"[11] 初值采样检查**失败**（{type(ex).__name__}: {ex}）")
         ok = False
 
+    # 12) 逐点噪声接口（M3.5）：校验矩阵 / 手算 loglik / 模型真吃数组 / 标量路径不变
+    #     四条都必须**在没有 MCMC 的情况下**可判：跑一次 NUTS 只能证明"没崩"，
+    #     证明不了似然用的是数组而不是被拍平的标量。
+    try:
+        from numpyro.infer.util import log_density
+
+        f12 = np.logspace(-2.0, 5.0, 31)
+        n12 = f12.size
+        Z12 = z_nested(f12, base, branch="parallel")
+        sg12 = 0.02 * np.abs(Z12)                    # 逐点 σ，实虚同值（§20.1）
+        Zp12 = Z12 + (0.5 - 0.25j)                   # 非零残差，免得起因掩盖公式错
+
+        # 12a 接受 / 拒绝矩阵：一维非长度 2 必须显式拒绝，不能靠广播猜
+        cases = [("None", None, 0.0, True),
+                 ("标量对 tuple", (61.0, 61.0), 0.0, True),
+                 ("标量对 1-D", np.array([61.0, 61.0]), 0.0, True),
+                 ("(2,n) 数组", np.vstack([sg12, sg12]), 0.0, True),
+                 ("(n,) 单数组", sg12, 0.0, False),
+                 ("(2,n-1) 列数不符", np.vstack([sg12, sg12])[:, :-1], 0.0, False),
+                 ("(3,n) 行数不符", np.ones((3, n12)), 0.0, False),
+                 ("sigma+floor 同给", (61.0, 61.0), 0.01, False),
+                 ("含 0 分量", (0.0, 61.0), 0.0, False)]
+        bad = []
+        for tag, sg, fl, want in cases:
+            try:
+                _check_sigma(f12, sg, fl)
+                got = True
+            except ValueError:
+                got = False
+            if got != want:
+                bad.append(tag)
+        print(f"[12a] sigma 校验矩阵 {len(cases)} 例："
+              + ("全部符合预期" if not bad else f"不符合预期 {bad}"))
+        ok &= not bad
+
+        # 12b 逐点 loglik 手算对照（`_loglik_chained` 是 LOO/ELPD 的那条路径）
+        s12 = {k: np.asarray([[[float(base[k])]]]) for k in sampled_keys("parallel", 2)}
+
+        def _hand_ll(sig):
+            return (-0.5 * ((Zp12.real - Z12.real) / sig) ** 2 - np.log(sig) - 0.5 * LOG2PI
+                    - 0.5 * ((Zp12.imag - Z12.imag) / sig) ** 2 - np.log(sig) - 0.5 * LOG2PI)
+
+        ll12 = _loglik_chained(s12, f12, Zp12, "parallel", 2, sg12, sg12)[0, 0]
+        hand12 = _hand_ll(sg12)
+        e12b = float(np.max(np.abs(ll12 - hand12)) / np.max(np.abs(hand12)))
+        print(f"[12b] 逐点 loglik vs 手算（{n12} 点）：max rel err {e12b:.2e}")
+        ok &= e12b < 1e-12
+
+        # 12c 模型真的吃了数组：obs 位点的 scale 是 (n_freq,)，且 logp 之差等于手算之差
+        #     `log_density` 的 `params` 走**约束空间**（不施加 transform），
+        #     所以这里直接给物理值；两个模型的先验相同 → logp 之差只剩似然
+        par12 = {k: float(base[k]) for k in sampled_keys("parallel", 2)}
+        args12 = (f12, Zp12.real, Zp12.imag)
+        lp_s, _ = log_density(_make_model("parallel", 2, "scalar", 61.0, 61.0),
+                              args12, {}, par12)
+        lp_v, tr_v = log_density(_make_model("parallel", 2, "perpoint", sg12, sg12),
+                                 args12, {}, par12)
+        scale_v = np.asarray(tr_v["obs_re"]["fn"].scale)
+        loc_ok = np.allclose(np.asarray(tr_v["obs_re"]["fn"].loc), Z12.real,
+                             rtol=0, atol=1e-9)
+        scale_ok = scale_v.shape == (n12,) and np.array_equal(scale_v, sg12)
+        d_model = float(lp_v - lp_s)
+        d_hand = float(np.sum(_hand_ll(sg12) - _hand_ll(61.0)))
+        e12c = abs(d_model - d_hand) / max(abs(d_hand), 1.0)
+        print(f"[12c] 模型 obs scale shape={scale_v.shape}（须 ({n12},)）、"
+              f"逐位相等={scale_ok}；logp 差 vs 手算差 rel err {e12c:.2e}")
+        ok &= bool(scale_ok) and bool(loc_ok) and e12c < 1e-10
+
+        # 12d 标量路径不变：常数数组必须与标量给出**逐位相同**的 loglik 与 logp
+        ll_c = _loglik_chained(s12, f12, Zp12, "parallel", 2,
+                               np.full(n12, 61.0), np.full(n12, 61.0))[0, 0]
+        ll_s = _loglik_chained(s12, f12, Zp12, "parallel", 2, 61.0, 61.0)[0, 0]
+        lp_c, _ = log_density(_make_model("parallel", 2, "perpoint",
+                                          np.full(n12, 61.0), np.full(n12, 61.0)),
+                              args12, {}, par12)
+        same_ll = np.array_equal(ll_c, ll_s)
+        same_lp = float(lp_c) == float(lp_s)
+        print(f"[12d] 标量 vs 常数数组：loglik 逐位相等={same_ll}、"
+              f"logp 逐位相等={same_lp}")
+        ok &= bool(same_ll) and bool(same_lp)
+    except ImportError as ex:          # 缺 numpyro 只跳过
+        print(f"[12] 逐点噪声检查跳过（{type(ex).__name__}: {ex}）")
+    except Exception as ex:            # 接口或似然写错 → 必须失败
+        print(f"[12] 逐点噪声检查**失败**（{type(ex).__name__}: {ex}）")
+        ok = False
+
     print("=" * 72)
     print("全部通过" if ok else "有失败项")
     return ok
@@ -423,11 +523,74 @@ def _selftest():
 LOG2PI = float(np.log(2.0 * np.pi))
 
 
-def _loglik_chained(s, f, Z, branch, layers, sigma):
+def _check_sigma(f, sigma, sigma_floor: float = 0.0):
+    """校验并归一化噪声输入。**必须在进入 NumPyro 模型之前调用**。
+
+    返回 `(mode, s_re, s_im)`：
+
+    | 输入 | mode | s_re / s_im |
+    |---|---|---|
+    | `None` | `"free"` | `None`（噪声是被采样的位点） |
+    | 标量对 `(σ_re, σ_im)` | `"scalar"` | 两个 `float` |
+    | `(2, n_freq)` 数组 | `"perpoint"` | 两个 `(n_freq,)` 数组 |
+
+    三条硬约束（都是**显式报错**，不靠广播猜）：
+
+    · `(n_freq,)` **不接受**。单数组会与"标量对"混淆（`n_freq == 2` 时更会静默
+      通过），所以要求逐点噪声必须写成 `(2, n_freq)`；一维且长度不为 2 的输入
+      直接拒绝并提示 reshape。
+    · `sigma` 与 `sigma_floor` **互斥**：固定 σ 时 floor 无意义，静默忽略会让
+      "我加了 floor"的调用方以为噪声下界生效。
+    · 全部分量必须有限且严格为正（`Normal` 的 `scale` 不接受 0）。
+
+    `f` 可以是 `None`（`physical_to_unconstrained` 没有频率），此时跳过长度校验。
+    """
+    if sigma is None:
+        return ("free", None, None)
+    if float(sigma_floor) > 0.0:
+        raise ValueError(
+            "sigma 与 sigma_floor 同时给出：固定噪声（含逐点）时 sigma_floor 无意义。"
+            "固定噪声请只传 sigma；要噪声下界请用 sigma=None + sigma_floor")
+
+    arr = np.asarray(sigma, dtype=float)
+    if arr.ndim == 1:
+        if arr.size != 2:
+            raise ValueError(
+                f"sigma 长度 {arr.size} 的一维输入有歧义：逐点噪声必须写成 "
+                f"(2, n_freq) 的二维数组（第 0 行实部、第 1 行虚部），"
+                f"标量对才是长度 2 的一维输入。收到 shape={arr.shape}")
+        arr = arr.reshape(2, 1)          # 标量对，下面按标量返回
+        kind = "scalar"
+    elif arr.ndim == 2 and arr.shape[0] == 2:
+        kind = "perpoint"
+    else:
+        raise ValueError(
+            f"sigma 只接受 (σ_re, σ_im) 标量对或 (2, n_freq) 数组，"
+            f"收到 shape={arr.shape}")
+
+    if kind == "perpoint":
+        n = arr.shape[1]
+        if f is not None and n != np.asarray(f).size:
+            raise ValueError(
+                f"逐点 sigma 的列数 {n} 与频点数 {np.asarray(f).size} 不一致")
+    if not np.all(np.isfinite(arr)) or np.any(arr <= 0.0):
+        bad = int(np.sum(~np.isfinite(arr)) + np.sum(arr <= 0.0))
+        raise ValueError(f"sigma 必须全为有限正数，检测到 {bad} 个非法分量")
+
+    if kind == "scalar":
+        return ("scalar", float(arr[0, 0]), float(arr[1, 0]))
+    return ("perpoint", arr[0], arr[1])
+
+
+def _loglik_chained(s, f, Z, branch, layers, sig_re, sig_im):
     """`(chain, draw, n_freq)` 的同频联合对数似然。
 
     `ll[c,d,j] = log p(Z'_j) + log p(Z''_j)` —— 同一频率的实虚部是**一个**
     留出单元，不能摊成 2N 个独立观测（与 `bm_real.loglik_matrix` 同一口径）。
+
+    `sig_re`/`sig_im` 是 `_check_sigma` 归一化后的结果：`None` 表示自由噪声
+    （逐 draw 从 `s["s_re"]`/`s["s_im"]` 取），否则是**常数或 `(n_freq,)` 数组**
+    —— 后者走 numpy 广播，不需要另写一份似然。
     """
     keys = sampled_keys(branch, layers)
     ch, dr = s["Rs"].shape[:2]
@@ -438,10 +601,10 @@ def _loglik_chained(s, f, Z, branch, layers, sigma):
             if branch == "series":
                 p["L_ad"] = p["R_L"] * p["tau_L"]
             z = z_nested(f, p, branch=branch, layers=layers)
-            if sigma is not None:
-                sr, si = float(sigma[0]), float(sigma[1])
-            else:
+            if sig_re is None:
                 sr, si = float(s["s_re"][c, d]), float(s["s_im"][c, d])
+            else:
+                sr, si = sig_re, sig_im
             lr = -0.5 * ((Z.real - z.real) / sr) ** 2 - np.log(sr) - 0.5 * LOG2PI
             li = -0.5 * ((Z.imag - z.imag) / si) ** 2 - np.log(si) - 0.5 * LOG2PI
             ll[c, d] = lr + li
@@ -512,6 +675,7 @@ def physical_to_unconstrained(p_phys: dict, *, zmax: float, w_ref: float,
     """
     from numpyro.distributions.transforms import biject_to
 
+    _check_sigma(None, sigma, sigma_floor)      # 提前报错（与 fit_top 同一套校验）
     tab = _prior_table(float(zmax), float(w_ref), branch, layers)
     out = {}
     for k in sampled_keys(branch, layers):
@@ -552,6 +716,54 @@ def physical_to_unconstrained(p_phys: dict, *, zmax: float, w_ref: float,
     return out
 
 
+def _make_model(branch: str, layers: int, sig_mode: str,
+                sig_re=None, sig_im=None, sigma_floor: float = 0.0):
+    """构造 NumPyro 模型。噪声用 `_check_sigma` **归一化后**的输入。
+
+    逐点 σ 与标量 σ 走**同一段代码**：`jnp.asarray` 对标量给 0 维、对
+    `(n_freq,)` 给向量，`dist.Normal(loc, scale)` 与标准化残差都自然广播。
+    所以标量路径的数值与引入逐点 σ 之前**逐位相同**（自检 [12] 守这条）。
+
+    独立成函数只为一件事：自检能在**不跑 MCMC** 的情况下拿到 `obs` 位点的
+    `scale`，验证模型真的吃了数组（而不是在追踪时被 `float()` 拍平）。
+    """
+    import numpyro                        # 局部导入：numpyro 仍是可选依赖
+    import numpyro.distributions as dist
+
+    def model(f_arr, Zr, Zi):
+        zmax = jnp.max(jnp.sqrt(Zr ** 2 + Zi ** 2))
+        w_ref = 2.0 * jnp.pi * jnp.sqrt(jnp.min(f_arr) * jnp.max(f_arr))
+        omega = 2.0 * jnp.pi * f_arr
+        p = {}
+        for k, d in _prior_table(zmax, w_ref, branch, layers).items():
+            p[k] = numpyro.sample(k, d)
+        if branch == "series":
+            p["L_ad"] = numpyro.deterministic("L_ad", p["R_L"] * p["tau_L"])
+
+        Zt = j_z_nested(omega, p, w_ref, branch=branch, layers=layers)
+
+        if sig_mode == "free":
+            if sigma_floor > 0:
+                floor = sigma_floor * zmax
+                b_re = numpyro.sample("s_re_base",
+                                      dist.LogNormal(jnp.log(0.01 * zmax), 1.0))
+                b_im = numpyro.sample("s_im_base",
+                                      dist.LogNormal(jnp.log(0.01 * zmax), 1.0))
+                s_re = numpyro.deterministic("s_re", b_re + floor)
+                s_im = numpyro.deterministic("s_im", b_im + floor)
+            else:
+                s_re = numpyro.sample("s_re", dist.LogNormal(jnp.log(0.01 * zmax), 1.0))
+                s_im = numpyro.sample("s_im", dist.LogNormal(jnp.log(0.01 * zmax), 1.0))
+        else:
+            # 标量 → 0 维；逐点 → (n_freq,)。两种情况都不采噪声位点。
+            s_re = jnp.asarray(sig_re)
+            s_im = jnp.asarray(sig_im)
+        numpyro.sample("obs_re", dist.Normal(Zt.real, s_re), obs=Zr)
+        numpyro.sample("obs_im", dist.Normal(Zt.imag, s_im), obs=Zi)
+
+    return model
+
+
 def fit_top(f, Z, *, branch: str = "parallel", layers: int = 2,
             n_warmup: int = 600, n_samples: int = 1200, seed: int = 0,
             num_chains: int = 4, target_accept: float = 0.9,
@@ -565,9 +777,14 @@ def fit_top(f, Z, *, branch: str = "parallel", layers: int = 2,
       也不为未使用的分支/层数建先验（否则引入纯先验决定的无效维度）；
     · `series` 支路的 `L_ad = R_L·tau_L` 用 `numpyro.deterministic` 派生；
     · 噪声：`sigma=None` 时沿用 `bm_core` 的 `LogNormal(log 0.01·zmax, 1)` 与
-      `sigma_floor` 语义；显式传 `(s_re, s_im)` 时固定不采（**绝对标准差**，
-      不是相对 `|Z|` 的逐点值，见 `BM_TOP_M3_PLAN.md` §4.1）；
+      `sigma_floor` 语义；显式传 `(s_re, s_im)` 时固定不采（**绝对标准差**,
+      见 `BM_TOP_M3_PLAN.md` §4.1）；传 `(2, n_freq)` 数组时为**逐点**固定
+      噪声（M3.5 的 `rel-perpoint-2pct` 条件，口径见 §20.1）；
     · **不做**拓扑自动选择、跨族比较——等 M3 结论。
+
+    `sigma` 的三种形态见 `_check_sigma`：`None` / 标量对 / `(2, n_freq)`。
+    一维输入只当标量对解释，`(n_freq,)` **会被拒绝**（否则与标量对混淆）。
+    `sigma` 与 `sigma_floor` 互斥，校验在构造模型**之前**完成。
 
     `init_values`
     -------------
@@ -584,9 +801,9 @@ def fit_top(f, Z, *, branch: str = "parallel", layers: int = 2,
       `physical_to_unconstrained(..., num_chains=n, sigma=...)` 会一并处理。
 
     返回 `dict`，`s` 与 `fit_one` 同名；`pointwise_elpd` 是逐频率点的 LOO。
+    `sigma_mode` 记录噪声口径；逐点模式下 `sigma_re`/`sigma_im` 为 `None`
+    （没有单一标量可报），数组另存 `sigma_re_perpoint`/`sigma_im_perpoint`。
     """
-    import numpyro
-    import numpyro.distributions as dist
     from numpyro.infer import MCMC, NUTS
 
     f = np.asarray(f, float)
@@ -596,36 +813,10 @@ def fit_top(f, Z, *, branch: str = "parallel", layers: int = 2,
     if not np.all(np.isfinite(f)) or f.min() <= 0:
         raise ValueError("频率必须是有限正数")
     sampled_keys(branch, layers)                 # 提前校验 branch/layers
+    sig_mode, sig_re, sig_im = _check_sigma(f, sigma, sigma_floor)
 
-    def model(f_arr, Zr, Zi):
-        zmax = jnp.max(jnp.sqrt(Zr ** 2 + Zi ** 2))
-        w_ref = 2.0 * jnp.pi * jnp.sqrt(jnp.min(f_arr) * jnp.max(f_arr))
-        omega = 2.0 * jnp.pi * f_arr
-        p = {}
-        for k, d in _prior_table(zmax, w_ref, branch, layers).items():
-            p[k] = numpyro.sample(k, d)
-        if branch == "series":
-            p["L_ad"] = numpyro.deterministic("L_ad", p["R_L"] * p["tau_L"])
-
-        Zt = j_z_nested(omega, p, w_ref, branch=branch, layers=layers)
-
-        if sigma is None:
-            if sigma_floor > 0:
-                floor = sigma_floor * zmax
-                b_re = numpyro.sample("s_re_base",
-                                      dist.LogNormal(jnp.log(0.01 * zmax), 1.0))
-                b_im = numpyro.sample("s_im_base",
-                                      dist.LogNormal(jnp.log(0.01 * zmax), 1.0))
-                s_re = numpyro.deterministic("s_re", b_re + floor)
-                s_im = numpyro.deterministic("s_im", b_im + floor)
-            else:
-                s_re = numpyro.sample("s_re", dist.LogNormal(jnp.log(0.01 * zmax), 1.0))
-                s_im = numpyro.sample("s_im", dist.LogNormal(jnp.log(0.01 * zmax), 1.0))
-        else:
-            s_re = jnp.asarray(float(sigma[0]))
-            s_im = jnp.asarray(float(sigma[1]))
-        numpyro.sample("obs_re", dist.Normal(Zt.real, s_re), obs=Zr)
-        numpyro.sample("obs_im", dist.Normal(Zt.imag, s_im), obs=Zi)
+    model = _make_model(branch, layers, sig_mode, sig_re, sig_im,
+                        float(sigma_floor))
 
     mcmc = MCMC(NUTS(model, target_accept_prob=target_accept,
                      max_tree_depth=max_tree_depth),
@@ -639,7 +830,7 @@ def fit_top(f, Z, *, branch: str = "parallel", layers: int = 2,
         s_ch["L_ad"] = s_ch["R_L"] * s_ch["tau_L"]
     s = {k: v.reshape((-1,) + v.shape[2:]) for k, v in s_ch.items()}
 
-    ll = _loglik_chained(s_ch, f, Z, branch, layers, sigma)
+    ll = _loglik_chained(s_ch, f, Z, branch, layers, sig_re, sig_im)
     import arviz as az
     # 注意：`from_dict` 的第一个位置参数是 posterior；log_likelihood 必须
     # 作为关键字传。`az.loo` 还需要 posterior 组来对齐 (chain, draw)，
@@ -666,10 +857,16 @@ def fit_top(f, Z, *, branch: str = "parallel", layers: int = 2,
         "pointwise_elpd": None if pw is None else np.asarray(pw, float),
         "pareto_k": np.asarray(loo["pareto_k"], float),
         "idata": idata,
+        "sigma_mode": sig_mode,
         "sigma_re": (float(np.median(s["s_re"])) if "s_re" in s
-                     else (float(sigma[0]) if sigma is not None else None)),
+                     else (sig_re if sig_mode == "scalar" else None)),
         "sigma_im": (float(np.median(s["s_im"])) if "s_im" in s
-                     else (float(sigma[1]) if sigma is not None else None)),
+                     else (sig_im if sig_mode == "scalar" else None)),
+        # 逐点口径没有单一标量可报：数组原样带走，别在返回值里悄悄取中位
+        "sigma_re_perpoint": (None if sig_mode != "perpoint"
+                              else np.asarray(sig_re, float)),
+        "sigma_im_perpoint": (None if sig_mode != "perpoint"
+                              else np.asarray(sig_im, float)),
         "divergences": int(np.sum(div)) if div is not None else None,
         "rhat_max": max(rhat) if rhat else None,
         "ess_min": min(ess) if ess else None,

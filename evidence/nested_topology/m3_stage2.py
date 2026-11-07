@@ -1,23 +1,31 @@
 # -*- coding: utf-8 -*-
 """M3 档 2：单组参数恢复（`BM_TOP_M3_PLAN.md` §6.2 / §12）。
 
-一次只跑一个条件，分两个子步骤：
+一次只跑一个条件，分三个子步骤：
 
     A  固定噪声 `sigma = (0.02·zmax, 0.02·zmax)` —— 隔离后验几何，只看
        `R_ad` / `tau_ad` 能不能从数据里回来；
     B  自由噪声（`sigma=None`，走 `LogNormal(log 0.01·zmax, 1)`）—— 看噪声
-       参数与电路参数共同采样是否引入新的简并。
+       参数与电路参数共同采样是否引入新的简并；
+    R  逐点相对噪声，条件名 **`rel-perpoint-2pct`**（M3.5，§20.1）——
+       `σ_gen,j = 2%·|Z_j^true|`（生成）、`σ_fit,j = 2%·|Z_j^obs|`（拟合，已知、
+       不采）。**与 A/B 不是同一种统计模型**：ELPD 不可跨口径比较。
 
-**两步必须分开记录**。A 通过不等于 B 通过：A 里 σ 是已知的，B 多两个自由度，
-后验几何完全不同（`bm_core` 记录过无噪声 + 自由 σ 的漏斗）。
+**各步必须分开记录**。A 通过不等于 B 通过：A 里 σ 是已知的，B 多两个自由度，
+后验几何完全不同（`bm_core` 记录过无噪声 + 自由 σ 的漏斗）。R 与 A 的差别在
+**噪声口径**而不是自由度，两者的后验也不能互相印证。
 
 合成谱由 `bm_top_gen` 独立生成（不调 `bm_top.z_nested`），噪声按 §4.1 的
-固定标准差、实虚独立口径。
+固定标准差（A/B）或逐点相对（R）口径，实虚独立。
 
 用法
 ----
     # 单组正式跑（4 链 × 1200 样本）
     python evidence/nested_topology/m3_stage2.py --stage both
+
+    # M3.5 的独立条件（逐点相对 2%）
+    python evidence/nested_topology/m3_stage2.py --stage r \
+        --seeds 0,1,2,3,4 --json evidence/nested_topology/m35_r.json
 
     # 只跑 A、换 seed、写 JSON
     python evidence/nested_topology/m3_stage2.py --stage a --seed 1 --json out.json
@@ -70,14 +78,43 @@ def truth_params(branch: str, layers: int, override: dict | None = None) -> dict
 
 
 def make_spectrum(noise: float = 0.02, seed: int = 0, branch: str = "parallel",
-                  layers: int = 2, truth: dict | None = None):
-    """独立生成 + 加噪。返回 (f, Z, zmax)。"""
+                  layers: int = 2, truth: dict | None = None,
+                  noise_mode: str = "fixed"):
+    """独立生成 + 加噪。返回 (f, Z, zmax)。
+
+    `noise_mode="fixed"` → `σ = noise·zmax`（A/B 组，同方差）；
+    `noise_mode="relative"` → `σ_j = noise·|Z_j^true|`（R 组，逐点异方差）。
+    """
     f = np.logspace(np.log10(F_GRID[0]), np.log10(F_GRID[1]), F_GRID[2])
     p = truth if truth is not None else truth_params(branch, layers)
     Z0 = G.gen(f, p, branch=branch, layers=layers)
     zmax = float(np.max(np.abs(Z0)))
-    Z = G.add_noise(Z0, noise, mode="fixed", seed=seed, zmax=zmax)
+    Z = G.add_noise(Z0, noise, mode=noise_mode, seed=seed, zmax=zmax)
     return f, Z, zmax
+
+
+# 条件名 → (生成噪声口径, 拟合噪声口径)。名字必须原样出现在报告里（§20.1）。
+CONDITIONS = {
+    "a": ("fixed", "abs-fixed-2pct"),
+    "b": ("fixed", "free-lognormal"),
+    "r": ("relative", "rel-perpoint-2pct"),
+}
+
+
+def sigma_for_stage(stage: str, noise: float, Z: np.ndarray, zmax: float):
+    """把条件映射成 `fit_top` 的 `sigma` 参数。
+
+    R 组用**加噪后**的 `|Z_obs|`（不是真值谱）——用真值算 σ 等于给拟合器额外
+    信息，§20.1 已冻结"只用实测谱"这一条。
+    """
+    if stage == "a":
+        return (noise * zmax, noise * zmax)
+    if stage == "r":
+        s = noise * np.abs(np.asarray(Z, complex))
+        return np.vstack([s, s])             # (2, n_freq)，实虚同 σ
+    if stage == "b":
+        return None
+    raise ValueError(f"未知 stage {stage!r}")
 
 
 def _truth_of_comb(name: str, truth: dict):
@@ -219,10 +256,10 @@ def run_stage(stage: str, *, seed: int, noise: float, branch: str, layers: int,
               max_tree_depth: int = 10, samples_path: str | None = None,
               truth_override: dict | None = None) -> dict:
     truth = truth_params(branch, layers, override=truth_override)
+    noise_mode, condition = CONDITIONS[stage]
     f, Z, zmax = make_spectrum(noise=noise, seed=seed, branch=branch, layers=layers,
-                               truth=truth)
-
-    sigma = (noise * zmax, noise * zmax) if stage == "a" else None
+                               truth=truth, noise_mode=noise_mode)
+    sigma = sigma_for_stage(stage, noise, Z, zmax)
     if init_mode == "oracle":
         # 真值经物理 → 无约束转换。只用于"先验/初值是否卡住采样器"的诊断，
         # **不能**当正式结果：链从真值出发时，"收敛得好"可能只是初值的回声。
@@ -243,13 +280,19 @@ def run_stage(stage: str, *, seed: int, noise: float, branch: str, layers: int,
     if samples_path:
         np.savez_compressed(samples_path, **{k: np.asarray(v) for k, v in res["s"].items()})
 
-    rec = summarize(res, truth, branch, layers,
-                    "fixed 2%·zmax" if stage == "a" else "free LogNormal(0.01·zmax,1)")
-    rec.update(stage=stage, seed=seed, noise=noise, branch=branch, layers=layers,
+    note = {"a": "fixed 2%·zmax",
+            "b": "free LogNormal(0.01·zmax,1)",
+            "r": "perpoint 2%·|Z_obs|"}[stage]
+    rec = summarize(res, truth, branch, layers, note)
+    rec.update(stage=stage, condition=condition, seed=seed, noise=noise,
+               noise_mode=noise_mode, branch=branch, layers=layers,
                n_chains=n_chains, n_samples=n_samples, n_warmup=n_warmup,
                n_freq=int(f.size), zmax=zmax, seconds=round(dt, 1),
                init_mode=init_mode, target_accept=target_accept,
-               max_tree_depth=max_tree_depth, truth=truth)
+               max_tree_depth=max_tree_depth, truth=truth,
+               sigma_mode=res.get("sigma_mode"),
+               # §20.1：含 Σ log σ_j 的归一化常数依赖噪声口径 → ELPD 不能跨口径比
+               elpd_comparable_across_conditions=(stage != "r"))
     rec["acceptance"] = acceptance(rec, int(f.size))
     return rec
 
@@ -257,7 +300,7 @@ def run_stage(stage: str, *, seed: int, noise: float, branch: str, layers: int,
 def print_record(rec: dict) -> None:
     d, p = rec["diagnostics"], rec["params"]
     print(f"\n{'='*74}")
-    print(f"档 2  [{rec['stage']}] {rec['branch']}_L{rec['layers']}  "
+    print(f"档 2  [{rec['stage']}] {rec.get('condition', '—')}  {rec['branch']}_L{rec['layers']}  "
           f"seed={rec['seed']}  噪声={rec['noise']:.0%}  噪声口径={rec['sigma_note']}")
     print(f"       {rec['n_chains']} 链 × {rec['n_samples']} 样本 / warmup {rec['n_warmup']}"
           f"  初值={rec['init_mode']}  → {rec['seconds']}s")
@@ -303,6 +346,9 @@ def print_record(rec: dict) -> None:
           f"  优先恢复参数最大误差 {a['pri_err_worst']:.2%}")
     for k, v in a["checks"].items():
         print(f"      {'✓' if v else '✗'} {k}")
+    if not rec.get("elpd_comparable_across_conditions", True):
+        print("      注：本条件的 elpd 含 Σ log σ_j（逐点口径），"
+              "**不可**与 A/B 组的 elpd 比较。")
 
 
 def _fmt_pct(x, w: int = 11) -> str:
@@ -323,7 +369,8 @@ def print_seed_table(recs: list[dict]) -> dict:
     p1, p2 = ("R_ad", "tau_ad") if branch == "parallel" else ("R_L", "tau_L")
     lk = (f"L_ad(={p1}·{p2})")
     print(f"\n{'='*96}")
-    print(f"多 seed 汇总：{branch}_L{r0['layers']}  {r0['noise']:.0%} 噪声（{r0['sigma_note']}）  "
+    print(f"多 seed 汇总：{branch}_L{r0['layers']}  {r0['noise']:.0%} 噪声"
+          f"（{r0.get('condition', '—')} / {r0['sigma_note']}）  "
           f"{r0['n_chains']} 链 × {r0['n_samples']} / warmup {r0['n_warmup']}  "
           f"ta={r0['target_accept']}  depth={r0['max_tree_depth']}  初值={r0['init_mode']}")
     print(f"{'='*96}")
@@ -466,8 +513,10 @@ def print_robustness(agg: dict) -> None:
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="M3 档 2 单组参数恢复")
-    ap.add_argument("--stage", choices=["a", "b", "both"], default="both")
+    ap = argparse.ArgumentParser(description="M3 档 2 单组参数恢复 / M3.5 逐点相对条件")
+    ap.add_argument("--stage", choices=["a", "b", "r", "both", "all"], default="both",
+                    help="a=固定绝对 σ；b=自由 σ；r=逐点相对 2%%（rel-perpoint-2pct）；"
+                         "both=a+b；all=a+b+r")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--seeds", default=None,
                     help="逗号分隔的 seed 列表（如 0,1,2,3,4）；给了就逐 seed 全记录")
@@ -500,7 +549,8 @@ def main(argv=None) -> int:
     if args.chains:
         kw["n_chains"] = args.chains
 
-    stages = ["a", "b"] if args.stage == "both" else [args.stage]
+    stages = {"a": ["a"], "b": ["b"], "r": ["r"],
+              "both": ["a", "b"], "all": ["a", "b", "r"]}[args.stage]
     seeds = ([args.seed] if not args.seeds
              else [int(s) for s in args.seeds.split(",") if s.strip()])
     truth_override = dict(TRUTH_SETS[args.truth_set])
@@ -551,6 +601,8 @@ def main(argv=None) -> int:
                         "smoke": bool(args.smoke),
                         "config": {"branch": args.branch, "layers": args.layers,
                                    "noise": args.noise, "seeds": seeds,
+                                   "stages": stages,
+                                   "conditions": [CONDITIONS[s][1] for s in stages],
                                    "truth_set": args.truth_set,
                                    "truth": truth_override,
                                    "n_chains": kw["n_chains"],

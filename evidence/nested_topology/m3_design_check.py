@@ -15,6 +15,10 @@
 
 `sd` 对对数参数是 log 尺度（=相对误差），对 `n` 是绝对量。
 
+前向模型用 `bm_top.z_nested`（**与 `fit_top` 同一条代码路径**）。历史上这里调的是
+`bm_top_gen.gen`，虽然档 1 已证两者等值 ≤8e-15，但严格说不是同一条路径；
+Fisher 权重与拟合一致才谈得上"预测 sd 等于后验 sd"（§20.2）。
+
 用法：
     python m3_design_check.py                    # 三个真值组对照
     python m3_design_check.py --obs <samples.npz>  # 再加一列实测 log-sd
@@ -29,7 +33,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-import bm_top_gen as G                                   # noqa: E402
+import bm_top as T                                        # noqa: E402
 
 F_GRID = (1e-2, 1e5, 61)
 NOISE = 0.02
@@ -37,7 +41,8 @@ LOG_PARAMS = ("Rs", "R1", "R2", "Q1", "Q2", "R_ad", "tau_ad", "R_L", "tau_L")
 
 
 def spectrum(p: dict, f: np.ndarray) -> np.ndarray:
-    return G.gen_parallel_L2(f, p)
+    """前向谱：直接走 `fit_top` 用的 `z_nested`，不另开第二条实现。"""
+    return T.z_nested(f, p, branch="parallel", layers=2)
 
 
 def jacobian(p: dict, f: np.ndarray, h: float = 1e-3):
