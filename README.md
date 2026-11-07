@@ -405,6 +405,7 @@ not_compared, rejected_by_kk}`（旧结果文件里的 `ok` 是 `converged` 的�
 | `DIFFUSION_PLAN.md` | 扩散扩展方案：数学、先验、测试矩阵、模型选择 |
 | `ADSORPTION_PROJECT.md` | **低频吸附电感元件立项书**：`R_ad∥L_ad` 定义、负 RC 恒等式、DRT 盲区、三区间可辨识性、M0–M6 里程碑与验收标准 |
 | `MODEL_COVERAGE_PLAN.md` | **模型体系规划与覆盖地图**：三层架构（基础 / 特殊响应 / 族选择与可辨识性）、11 项现象覆盖状态与证据等级、注册表接口约定、可辨识性报告规范、按证据排序的立项队列与准入规则 |
+| `BM_TOP_M3_PLAN.md` | **`fit_top()` 接口设计与 M3 验收清单（草案）**：现有采样接口摊开、候选 A/B/C 对比、参数先验冻结表、生成器独立性、三档验收与失败记录规范 |
 | `NESTED_TOPOLOGY_PROJECT.md` | **嵌套并联电路拓扑立项书**：为何串联 Voigt 表达不了低频感抗环（三个硬约束）、理论上限对照（30.5% vs 6.7%）、渐近极限、`Rs≈0` 不可辨识警报、CPE 窗口幅值参数化、M0–M6（**M1–M6 暂缓**） |
 | `evidence/nested_topology/theoretical_bound.py` | 表达力证据：scipy 全局最小二乘对照，内置合成谱自包含，也可用 `--data` 跑真实谱 |
 | `evidence/nested_topology/identifiability_check.py` | 可辨识性证据：渐近极限 / `Rs` 剖面 / 高频窗口截断，同样支持内置合成与 `--data` |
