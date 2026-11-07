@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -76,7 +77,7 @@ def report(name: str, p: dict, obs: dict | None = None) -> dict:
           f"{'实测 log-sd':>13}  判定")
     out = {"zmax": zmax, "sigma": sigma, "params": {}}
     for k in ks:
-        prior_sd = 0.5 / np.sqrt(12) if k in ("n1", "n2") else 2.0   # LogNormal(s=2) / Uniform(.5,1)
+        prior_sd = PRIOR_SD[k]
         ratio = sd[ks.index(k)] / prior_sd
         verdict = ("先验主导" if ratio > 1 else
                    "数据有信息" if ratio < 0.5 else "两者相当")
@@ -126,6 +127,133 @@ def report(name: str, p: dict, obs: dict | None = None) -> dict:
 BASE = dict(Rs=10.0, R1=55.0, R2=600.0, Q1=200.0, n1=0.75,
             Q2=900.0, n2=0.85, R_ad=3000.0, tau_ad=1.6)
 
+# 先验 sd：LogNormal(s=2) 在 log 尺度上是 2；Uniform(0.5,1) 是 0.5/√12。
+# 注意这两个数必须与 bm_top._prior_table() 保持一致，否则"先验主导"的判定会错。
+PRIOR_SD = {k: 2.0 for k in ("Rs", "R1", "R2", "Q1", "Q2", "R_ad", "tau_ad",
+                             "R_L", "tau_L")}
+PRIOR_SD.update(n1=0.5 / np.sqrt(12), n2=0.5 / np.sqrt(12))
+
+# A 组是现用真值；B1/B2/B3 是感抗环逐级减弱的候选。只动 R_ad，
+# 其它真值固定 —— 一次只改一个因子，否则分不清是谁改善了信息。
+CANDIDATES = [("A", 3000.0), ("B1", 1000.0), ("B2", 500.0), ("B3", 300.0)]
+
+
+def band_stats(z0: np.ndarray, sigma: float) -> dict:
+    """三频段 σ/|Z| 中位与信噪比>1 的点数。频栅是对数等距，按索引均分即按 log f 均分。"""
+    a = np.abs(z0)
+    thirds = np.array_split(np.arange(a.size), 3)
+    med = [float(np.median(sigma / a[idx])) for idx in thirds]
+    return {"sigma_over_z_bands": med,
+            "n_snr_gt1": int(np.sum(sigma < a)),
+            "sigma_over_z_median": float(np.median(sigma / a))}
+
+
+def combo_sd(p: dict, ks: list[str], cov: np.ndarray) -> dict:
+    """组合参数在 log 尺度上的预测 sd：∇ᵀ cov ∇。"""
+    idx = {k: i for i, k in enumerate(ks)}
+    out = {}
+    if {"R1", "R2"} <= set(ks):
+        w = np.zeros(len(ks))
+        tot = p["R1"] + p["R2"]
+        w[idx["R1"]], w[idx["R2"]] = p["R1"] / tot, p["R2"] / tot
+        out["log(R1+R2)"] = float(np.sqrt(max(w @ cov @ w, 0.0)))
+    if {"R_ad", "tau_ad"} <= set(ks):
+        w = np.zeros(len(ks))
+        w[idx["R_ad"]] = w[idx["tau_ad"]] = 1.0
+        out["log L_ad"] = float(np.sqrt(max(w @ cov @ w, 0.0)))
+    return out
+
+
+def scan_candidate(name: str, r_ad: float) -> dict:
+    """单个候选真值组的信息量画像（不打印，只返回结构）。"""
+    return predict(dict(BASE, R_ad=float(r_ad)), name=name)
+
+
+def predict(p: dict, name: str = "", mode: str = "abs") -> dict:
+    """给定真值与噪声口径，算 zmax/σ、条件化预测 sd、组合参数与频段信噪比。
+
+    `mode="abs"`：固定 σ = 2%·zmax（A/B 组用的口径）；
+    `mode="rel"`：逐点 σ_j = 2%·|Z_j|（**另一种口径**，只能作为参考上限，
+                  不可与 abs 的结果直接比较）。
+    """
+    f = np.logspace(np.log10(F_GRID[0]), np.log10(F_GRID[1]), F_GRID[2])
+    z0 = spectrum(p, f)
+    zmax = float(np.max(np.abs(z0)))
+    sigma = NOISE * zmax
+    cols = jacobian(p, f)
+    ks = list(cols)
+    J = np.column_stack([cols[k] for k in ks])
+    if mode == "abs":
+        J = J / sigma
+    else:
+        w = np.concatenate([NOISE * np.abs(z0), NOISE * np.abs(z0)])
+        J = J / w[:, None]
+    cov = np.linalg.pinv(J.T @ J, rcond=1e-14)
+    sd = np.sqrt(np.clip(np.diag(cov), 0, None))
+    return {"name": name, "R_ad": float(p["R_ad"]), "zmax": zmax, "sigma": sigma,
+            "mode": mode,
+            "params": {k: {"sd_pred": float(sd[i]),
+                           "ratio": float(sd[i] / PRIOR_SD[k]),
+                           "prior_sd": PRIOR_SD[k]} for i, k in enumerate(ks)},
+            "combos": combo_sd(p, ks, cov), **band_stats(z0, sigma)}
+
+
+def print_levers() -> list[dict]:
+    """为什么"只把 R_ad 降下来"不够：换另外两个杠杆看同一张表。
+
+    变体一：形状幅值整体放大（R1/R2/Q1/Q2 ×k）——看起来应该提高信噪比，
+            实际上 zmax 与 σ 同步变大，比值几乎不动。
+    变体二：把噪声口径换成逐点相对（σ_j = 2%|Z_j|）——所有形状参数立刻进"有信息"区。
+            **这是另一个实验条件，不与 A/B 组比较**，只用来说明限制来自口径而非电路。
+    """
+    shape = ("R1", "R2", "Q1", "n1", "Q2", "n2")
+    variants = [("B3 R_ad=300", dict(BASE, R_ad=300.0), "abs"),
+                ("B3 + 形状×3", dict(BASE, R_ad=300., R1=165., R2=1800.,
+                                     Q1=600., Q2=2700.), "abs"),
+                ("B3 + 形状×10", dict(BASE, R_ad=300., R1=550., R2=6000.,
+                                      Q1=2000., Q2=9000.), "abs"),
+                ("B3 逐点相对 2%|Z| *", dict(BASE, R_ad=300.0), "rel")]
+    print(f"\n{'='*104}")
+    print("旁证：换杠杆（形状幅值 vs 噪声口径）。带 * 的一行是另一种噪声条件，"
+          "只作参考，不与 A/B 组比较。")
+    print(f"{'='*104}")
+    print(f"{'变体':<24}{'zmax':>9}{'σ':>10}" + "".join(f"{k:>8}" for k in shape))
+    rows = []
+    for name, p, mode in variants:
+        r = predict(p, name=name, mode=mode)
+        print(f"{name:<24}{r['zmax']:>9.0f}{r['sigma']:>10.1f}"
+              + "".join(f"{r['params'][k]['ratio']:>8.2f}" for k in shape))
+        rows.append(r)
+    print("-" * 104)
+    print("读法：放大形状幅值不改善比值（σ 随 zmax 同步涨）；换逐点相对口径后")
+    print("      六个形状参数全部落到 <1 —— 说明瓶颈是『固定 σ 相对整条谱标定』这个口径，")
+    print("      不是电路结构，也不是采样器。")
+    return rows
+
+
+def print_scan(scans: list[dict]) -> None:
+    """候选对照表：一行一组，格子是 sd/先验 sd 的倍数（<1 才叫"数据有信息"）。"""
+    shape = ("R1", "R2", "Q1", "n1", "Q2", "n2")
+    print(f"\n{'='*104}")
+    print("候选真值扫描（只改 R_ad，其余真值固定；噪声口径固定 2%·zmax，未人为降低）")
+    print(f"{'='*104}")
+    print(f"{'组':<4}{'R_ad':>7}{'zmax':>9}{'σ':>8}"
+          f"{'σ/|Z| 低':>10}{'中':>8}{'高':>8}{'SNR>1':>7}"
+          + "".join(f"{k:>8}" for k in shape)
+          + f"{'L_ad':>9}{'R1+R2':>9}")
+    for s in scans:
+        bands = s["sigma_over_z_bands"]
+        print(f"{s['name']:<4}{s['R_ad']:>7.0f}{s['zmax']:>9.1f}{s['sigma']:>8.2f}"
+              f"{bands[0]:>10.0%}{bands[1]:>8.0%}{bands[2]:>8.0%}"
+              f"{s['n_snr_gt1']:>7d}"
+              + "".join(f"{s['params'][k]['ratio']:>8.2f}" for k in shape)
+              + f"{s['combos']['log L_ad']:>9.3f}"
+              f"{s['combos']['log(R1+R2)']:>9.3f}")
+    print("-" * 104)
+    print("格子含义：预测后验 sd ÷ 先验 sd（log 尺度）。"
+          ">1 = 后验被先验撑住（该参数在本组不可辨识）；<0.5 = 数据真的有信息。")
+    print("末两列为组合参数的绝对预测 sd（如 0.026 = 2.6%），它们通常比单参数小一个量级。")
+
 
 def load_obs(path: str) -> dict:
     z = np.load(path)
@@ -143,21 +271,40 @@ def load_obs(path: str) -> dict:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--obs", default=None, help="posterior 样本 npz，加一列实测 sd")
+    ap.add_argument("--detail", default=None,
+                    help="对指定候选（如 B3）打印完整逐参数表，可逗号分隔")
+    ap.add_argument("--json", default=None, help="把扫描结果写成 json")
     args = ap.parse_args(argv)
 
     if args.obs:
         print(__doc__)
     obs = load_obs(args.obs) if args.obs else None
 
-    report("A 基准：R_ad=3000, τ=1.6（档 2 现用真值）", BASE, obs)
-    report("B 感抗环减弱：R_ad=300, τ=1.6", dict(BASE, R_ad=300.0), obs)
-    report("C 容性进窗：Q1=R1=55, Q2=R2=600（ω_ref 处 |Z_CPE|=Q）",
-           dict(BASE, Q1=float(BASE["R1"]), Q2=float(BASE["R2"])), obs)
+    scans = [scan_candidate(n, x) for n, x in CANDIDATES]
+    print_scan(scans)
+    levers = print_levers()
 
-    print(f"\n{'='*94}")
+    detail = set((args.detail or "").split(",")) if args.detail else set()
+    for s in scans:
+        if s["name"] in detail or args.obs:
+            p = dict(BASE, R_ad=s["R_ad"])
+            label = f"{s['name']}：R_ad={s['R_ad']:.0f}, τ=1.6" + \
+                    ("（档 2 现用真值）" if s["name"] == "A" else "")
+            report(label, p, obs if s["name"] == "A" else None)
+
+    print(f"\n{'='*104}")
     print("读法：预测 sd 是『其它参数全自由时，这个参数被数据定到的精度』（log 尺度）。")
     print("      预测 sd ≫ 先验 sd → 后验基本等于先验，此时『90% 区间覆盖真值』无意义。")
     print("      预测 sd 小 → 数据真的有信息；再看 cos 判断是定单个还是只定组合。")
+    print("      选组只看『信息量是否够』，不看『结果是否好看』——噪声口径不得为选组而改。")
+
+    if args.json:
+        Path(args.json).write_text(
+            json.dumps({"f_grid": F_GRID, "noise_frac": NOISE, "base": BASE,
+                        "candidates": scans, "levers": levers},
+                       ensure_ascii=False, indent=2),
+            encoding="utf-8")
+        print(f"扫描结果写入 {args.json}")
     return 0
 
 

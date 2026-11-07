@@ -46,15 +46,22 @@ import bm_top_gen as G                  # noqa: E402  （独立生成器）
 TRUTH = dict(Rs=10.0, R1=55.0, R2=600.0, Q1=200.0, n1=0.75,
              Q2=900.0, n2=0.85, R_ad=3000.0, tau_ad=1.6)
 
+# A 组：感抗环主导，回答"感抗支路能否恢复"；
+# B 组：只把 R_ad 降到 300（zmax 3049→891、σ 61→17.8），回答"形状参数能否改善"。
+# 两组共用同一噪声口径（固定 2%·zmax），差异只有一个因子，便于归因。
+TRUTH_SETS = {"a": dict(TRUTH), "b": dict(TRUTH, R_ad=300.0)}
+
 F_GRID = (1e-2, 1e5, 61)
 
 
 SERIES_TRUTH = dict(R_L=800.0, tau_L=1.625)     # L_ad = 1300，与 parallel 支路可比
 
 
-def truth_params(branch: str, layers: int) -> dict:
-    """当前拓扑的真值（只含该拓扑真正采样的参数）。"""
+def truth_params(branch: str, layers: int, override: dict | None = None) -> dict:
+    """当前拓扑的真值（只含该拓扑真正采样的参数）。`override` 覆盖个别值。"""
     p = dict(TRUTH)
+    if override:
+        p.update(override)
     if branch == "series":
         p.pop("R_ad", None)
         p.pop("tau_ad", None)
@@ -63,10 +70,11 @@ def truth_params(branch: str, layers: int) -> dict:
 
 
 def make_spectrum(noise: float = 0.02, seed: int = 0, branch: str = "parallel",
-                  layers: int = 2):
+                  layers: int = 2, truth: dict | None = None):
     """独立生成 + 加噪。返回 (f, Z, zmax)。"""
     f = np.logspace(np.log10(F_GRID[0]), np.log10(F_GRID[1]), F_GRID[2])
-    Z0 = G.gen(f, truth_params(branch, layers), branch=branch, layers=layers)
+    p = truth if truth is not None else truth_params(branch, layers)
+    Z0 = G.gen(f, p, branch=branch, layers=layers)
     zmax = float(np.max(np.abs(Z0)))
     Z = G.add_noise(Z0, noise, mode="fixed", seed=seed, zmax=zmax)
     return f, Z, zmax
@@ -208,9 +216,11 @@ def acceptance(rec: dict, n_freq: int,
 def run_stage(stage: str, *, seed: int, noise: float, branch: str, layers: int,
               n_warmup: int, n_samples: int, n_chains: int, progress: bool,
               init_mode: str = "prior", target_accept: float = 0.9,
-              max_tree_depth: int = 10, samples_path: str | None = None) -> dict:
-    f, Z, zmax = make_spectrum(noise=noise, seed=seed, branch=branch, layers=layers)
-    truth = truth_params(branch, layers)
+              max_tree_depth: int = 10, samples_path: str | None = None,
+              truth_override: dict | None = None) -> dict:
+    truth = truth_params(branch, layers, override=truth_override)
+    f, Z, zmax = make_spectrum(noise=noise, seed=seed, branch=branch, layers=layers,
+                               truth=truth)
 
     sigma = (noise * zmax, noise * zmax) if stage == "a" else None
     if init_mode == "oracle":
@@ -366,6 +376,95 @@ def print_seed_table(recs: list[dict]) -> dict:
                          "n_positive": sum(1 for x in e2s if x > 0)}}}
 
 
+def aggregate_seeds(recs: list[dict], params: list[str] | None = None) -> dict:
+    """多 seed 的**稳健性**汇总。只读，不改 `acceptance()` 的语义。
+
+    三个层次分开记（审查要求）：
+      1. 单次精度：每次拟合的 |中位误差| 是否 ≤4%（`acceptance()` 里的判据，逐 seed）；
+      2. 多 seed 稳健性：误差均值 / SD / 最大绝对误差 —— 反映采样随机性；
+      3. 后验不确定性：90% 区间宽度与覆盖次数。
+
+    这里**不给**"5 个 seed 的均值 ≤4% 就算达标"的结论：这 5 次共用同一组真值、
+    同一频栅、同一份合成谱，只是采样随机性的重复，不是 5 次独立实验。
+    均值 0% 也推不出"精度 4%"，正负抵消的单次误差同样没达精度。
+    """
+    import statistics as stats
+
+    r0 = recs[0]
+    branch = r0["branch"]
+    if params is None:
+        pri = ["R_ad", "tau_ad"] if branch == "parallel" else ["R_L", "tau_L"]
+        params = [k for k in pri if k in r0["params"]] + \
+                 [k for k in ("Rs", "R1", "R2", "Q1", "n1", "Q2", "n2")
+                  if k in r0["params"]]
+
+    def pack(errs, widths, cov, n_le4):
+        return {"n": len(errs),
+                "mean": float(stats.mean(errs)) if errs else None,
+                "sd": float(stats.stdev(errs)) if len(errs) > 1 else None,
+                "median": float(stats.median(errs)) if errs else None,
+                "max_abs": float(max(abs(x) for x in errs)) if errs else None,
+                "n_le_4pct": int(n_le4), "covered": int(cov),
+                "width90_median": float(stats.median(widths)) if widths else None}
+
+    out = {"n_seeds": len(recs),
+           "n_pass_acceptance": sum(1 for r in recs if r["acceptance"]["pass"]),
+           "params": {}, "combinations": {}}
+
+    for k in params:
+        errs, widths, cov, n4 = [], [], 0, 0
+        for r in recs:
+            v = r["params"].get(k)
+            if not v or "rel_err" not in v:
+                continue
+            errs.append(float(v["rel_err"]))
+            widths.append(float(v["width90"] / v["truth"]))
+            cov += bool(v["covered"])
+            n4 += abs(v["rel_err"]) <= 0.04
+        if errs:
+            out["params"][k] = pack(errs, widths, cov, n4)
+
+    for k in ("L_ad(=R_ad·tau_ad)", "L_ad(=R_L·tau_L)", "R1+R2"):
+        errs, widths, cov, n4 = [], [], 0, 0
+        for r in recs:
+            v = (r.get("combinations") or {}).get(k)
+            if not v or "rel_err" not in v:
+                continue
+            errs.append(float(v["rel_err"]))
+            widths.append(float(v["width90"] / v["truth"]))
+            cov += bool(v["covered"])
+            n4 += abs(v["rel_err"]) <= 0.04
+        if errs:
+            out["combinations"][k] = pack(errs, widths, cov, n4)
+    return out
+
+
+def print_robustness(agg: dict) -> None:
+    """三层指标并排打印。列名写死，避免把'均值'读成'精度'。"""
+    n = agg["n_seeds"]
+    print(f"\n{'='*104}")
+    print("多 seed 稳健性（**不改变单次 4% 判据**；本表只描述对采样随机性的敏感度）")
+    print(f"{'='*104}")
+    print(f"{'参数':<20}{'均值':>10}{'SD':>9}{'中位':>9}{'max|err|':>10}"
+          f"{'|err|≤4%':>10}{'覆盖':>8}{'区间宽中位':>12}")
+    for grp, title in (("params", "单参数"), ("combinations", "组合参数")):
+        if not agg[grp]:
+            continue
+        print(f"-- {title} " + "-" * 88)
+        for k, v in agg[grp].items():
+            frac4 = "{}/{}".format(v["n_le_4pct"], n)
+            cov = "{}/{}".format(v["covered"], n)
+            print(f"{k:<20}{_fmt_pct(v['mean'], 10)}{_fmt_pct(v['sd'], 9)}"
+                  f"{_fmt_pct(v['median'], 9)}{_fmt_pct(v['max_abs'], 10)}"
+                  f"{frac4:>10}{cov:>8}{v['width90_median']:>11.1%}")
+    print("-" * 104)
+    print(f"收敛（acceptance 全过）：{agg['n_pass_acceptance']}/{n}。")
+    print("注意 ①：均值接近 0 **不等于**达到 4% 精度——正负误差可以互相抵消。")
+    print("注意 ②：区间宽远超 100% 的参数，其'覆盖真值'没有信息量（宽区间包得住任何值）。")
+    print("注意 ③：SD 与 4% 目标同量级时，单次拟合判达标/不达标接近抛硬币；")
+    print("        结论只能按分布说，不能拿单个 seed 说'达标'或'不达标'。")
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="M3 档 2 单组参数恢复")
     ap.add_argument("--stage", choices=["a", "b", "both"], default="both")
@@ -373,6 +472,10 @@ def main(argv=None) -> int:
     ap.add_argument("--seeds", default=None,
                     help="逗号分隔的 seed 列表（如 0,1,2,3,4）；给了就逐 seed 全记录")
     ap.add_argument("--noise", type=float, default=0.02)
+    ap.add_argument("--truth-set", choices=sorted(TRUTH_SETS), default="a",
+                    help="真值组：a=感抗环主导(R_ad=3000)，b=感抗环减弱(R_ad=300)")
+    ap.add_argument("--truth", default=None,
+                    help="个别真值覆盖，如 R_ad=300,tau_ad=1.6（优先于 --truth-set）")
     ap.add_argument("--branch", choices=["parallel", "series"], default="parallel")
     ap.add_argument("--layers", type=int, choices=[1, 2], default=2)
     ap.add_argument("--smoke", action="store_true", help="1 链 150 样本，只验链路")
@@ -400,6 +503,12 @@ def main(argv=None) -> int:
     stages = ["a", "b"] if args.stage == "both" else [args.stage]
     seeds = ([args.seed] if not args.seeds
              else [int(s) for s in args.seeds.split(",") if s.strip()])
+    truth_override = dict(TRUTH_SETS[args.truth_set])
+    if args.truth:
+        for kv in args.truth.split(","):
+            k, _, v = kv.partition("=")
+            truth_override[k.strip()] = float(v)
+    print(f"真值组：{ {k: v for k, v in truth_override.items()} }")
     t_all = time.time()
     recs = []
     for st in stages:
@@ -410,16 +519,22 @@ def main(argv=None) -> int:
             rec = run_stage(st, seed=sd, noise=args.noise, branch=args.branch,
                             layers=args.layers, progress=args.progress,
                             init_mode=args.init, target_accept=args.target_accept,
-                            max_tree_depth=args.max_tree_depth, samples_path=sp, **kw)
+                            max_tree_depth=args.max_tree_depth, samples_path=sp,
+                            truth_override=truth_override, **kw)
             print_record(rec)
             recs.append(rec)
 
-    summary = None
+    summary = robustness = None
     if len(seeds) > 1 and len(stages) == 1:
         summary = print_seed_table(recs)
+        robustness = aggregate_seeds(recs)
+        print_robustness(robustness)
     elif len(seeds) > 1:
         for st in stages:
-            summary = print_seed_table([r for r in recs if r["stage"] == st])
+            sub = [r for r in recs if r["stage"] == st]
+            summary = print_seed_table(sub)
+            robustness = aggregate_seeds(sub)
+            print_robustness(robustness)
 
     ok = all(r["acceptance"]["pass"] for r in recs) if not args.smoke else True
     print(f"\n{'='*74}")
@@ -436,13 +551,16 @@ def main(argv=None) -> int:
                         "smoke": bool(args.smoke),
                         "config": {"branch": args.branch, "layers": args.layers,
                                    "noise": args.noise, "seeds": seeds,
+                                   "truth_set": args.truth_set,
+                                   "truth": truth_override,
                                    "n_chains": kw["n_chains"],
                                    "n_samples": kw["n_samples"],
                                    "n_warmup": kw["n_warmup"],
                                    "target_accept": args.target_accept,
                                    "max_tree_depth": args.max_tree_depth,
                                    "init": args.init},
-                        "summary": summary, "records": recs},
+                        "summary": summary, "robustness": robustness,
+                        "records": recs},
                        ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"记录写入 {args.json}")
     return 0 if ok else 1
