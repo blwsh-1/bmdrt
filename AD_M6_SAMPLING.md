@@ -152,11 +152,17 @@ quick 档为 54.70 ≥ 8.02 (dse=5.35)，两档一致
 → **修复规格已单独成文：`AD_GATE_SPEC.md`**。第二轮审查明确两点：
 ① "进入候选拟合"（`enter`）与"允许自动选择模型"（`strong`）必须分开定义，
 不能为了减少假阴性而降低自动选择门槛；② 不采用固定 `1.2·f_min` 倍数，
-改记 `d_low = log10(f_peak/f_min)` 并结合采样密度 `dens`。
-实测 AZ31 为 7.1 pts/dec、2E 为 11.2 pts/dec，现有"两侧各 ≥2 点"等价于
-`d_low ≥ 2/dens`；18 条真实谱中 `k=1` 贴边峰 2 条应归新增 `edge_peak`
-（`enter=True, strong=False`），`k=0` 的 3 条保持 `monotonic_rise`。
-该改动**只增加诊断、`strong` 集合严格不变**，最终假阳性在逻辑上不变。
+改记 `d_low = log10(f_peak/f_min)` 作为**辅助记录**。
+第三轮审查进一步指出：`dens` 是全频段平均密度，`d_low·dens` 只在近似
+对数均匀采样时才接近真实点数，因此**主判据必须是离散点数 `k_left/k_right`**
+（与 `detect_ad` 的 `2<=k<=n_band-3` 逐条一致），`d_low` 不写成"等价"。
+按同一 `frac_lo=0.40` 频段口径复算：18 条真实谱中 `k_left=1` 贴边峰 2 条
+应归新增 `edge_peak`（`enter=True, strong=False`），`k_left=0` 的 3 条保持
+`monotonic_rise`；**2E 对照里也有 2 条 `k_left=1`**，但它们在符号/系统性
+判据就提前返回，所以 `edge_peak` 必须严格放在那两关之后。
+该改动**只增加诊断、`strong` 集合不变**；这是控制流逻辑不变性，
+不等于假阳性率已统计验证（当前上界仍 28.3%，且已有 1 次门控误触发）。
+详见 `AD_GATE_SPEC.md` §4–§5、§7.0。
 
 M6 边界测试矩阵应包含审查意见列的五类：完整环 / 单侧环 / RL+HN 重叠 /
 RL+扩散重叠 / RL+漂移。
@@ -196,6 +202,7 @@ cd D:/eis训练数据/bmdrt
 python evidence/ad_m6/sampling_check.py inventory     # 18 条 .z 含环盘点
 python evidence/ad_m6/sampling_check.py prepare       # 转 csv + 分层抽样清单
 python evidence/ad_m6/sampling_check.py summarize     # 汇总 out/_m6_samples 结果
+python evidence/ad_m6/sampling_check.py edges         # 与 detect_ad 同口径的边界峰分析
 
 # 单条拟合（quick / 正式档）
 python bmdrt.py auto out/_m6_samples/z_csv/AZ31-12Li_0.csv \

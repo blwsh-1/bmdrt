@@ -106,14 +106,25 @@ def prepare():
 
 
 def edges():
-    """边界峰分析：d_low = log10(f_peak/f_min)、采样密度、峰左侧点数。
+    """边界峰分析：**与 detect_ad() 完全一致的频段筛选与峰位定义**。
 
-    审查意见要求用对数距离而非固定频率倍数，因为不同数据的采样密度不同。
-    当前门控的硬规则「极小点两侧各 ≥2 点」等价于 d_low >= 2/dens，
-    这里给出数据驱动的等价表达，并区分 k=0（峰在最低频点）与 k=1（贴边峰）。
+    第三轮审查指出旧版用「全频段 argmax(Z.imag)」，而门控用的是
+    「最低 frac_lo 频段内 argmin(-Im)」，二者不是等价回放。本版改为：
+
+        lf = log10(f); m = lf <= quantile(lf, 0.40)
+        f_band, Z_band = f[m], Z[m]
+        k = argmin(-Z_band.imag)                 # = band 内 Im 最大
+        f_peak = f_band[k]
+        k_left = count_nonzero(f_band < f_peak)  # 主判据（离散点数）
+        k_right = len(f_band) - 1 - k
+
+    **主判据是离散点数 k_left / k_right**，与 detect_ad 的
+    `interior = 2 <= k <= n_band-3` 逐条一致；`d_low` 只作辅助记录与
+    跨数据集比较，不依赖「对数均匀采样」假设，也不声称与点数等价。
     """
-    print("%-26s %9s %10s %9s %8s %5s %-16s" %
-          ("stem", "f_min", "f_peak", "d_low", "pts/dec", "k", "建议形状状态"))
+    FRAC_LO = 0.40
+    print("%-26s %9s %10s %8s %6s %6s %7s %-18s" %
+          ("stem", "f_min", "f_peak", "n_band", "k_left", "k_rgt", "d_low", "门控等价形状状态"))
     allrows = []
     for p in sorted(glob.glob(os.path.join(ZDIR, "*.z"))):
         f, Z = read_z(p)
@@ -126,30 +137,39 @@ def edges():
                            delimiter=",", skiprows=1)
             allrows.append((stem, a[:, 0], a[:, 1] + 1j * a[:, 2]))
 
-    n_edge = n_out = 0
+    cnt = {"edge_peak": 0, "monotonic": 0, "interior": 0, "right_edge": 0}
     for stem, f, Z in allrows:
         o = np.argsort(f); f, Z = f[o], Z[o]
-        k = int(np.argmax(Z.imag))
-        d_low = float(np.log10(f[k] / f[0]))
-        dens = len(f) / np.log10(f[-1] / f[0])
-        # 只对「已过符号+系统性」的谱，d_low 才对应感抗峰；对照组多不容性，
-        # 其 argmax 落在高频端，d_low 只是几何量，不参与门控判定。
+        lf = np.log10(f)
+        m = lf <= float(np.quantile(lf, FRAC_LO))
+        f_band, Z_band = f[m], Z[m]
+        n_band = len(f_band)
+        k = int(np.argmin(-Z_band.imag))
+        f_pk = float(f_band[k])
+        k_left = int(np.count_nonzero(f_band < f_pk))
+        k_right = n_band - 1 - k
+        d_low = float(np.log10(f_pk / f_band[0]))
+        # 注意：detect_ad 还要求右侧 ≥2 点（k <= n_band-3），这里一并检查
+        interior = bool(2 <= k <= n_band - 3)
         if not stem.startswith("AZ31"):
-            # 无感抗谱的 argmax 落在高频端，d_low 只是几何量，不参与门控
             state = "n/a(容性对照)"
-        elif k >= 2:
-            state = "interior(可确认)"
-        elif k == 1:
-            state = "edge_peak(贴边)"; n_edge += 1
+        elif interior:
+            state = "interior(可确认)"; cnt["interior"] += 1
+        elif k_left == 1:
+            state = "edge_peak(贴边)"; cnt["edge_peak"] += 1
+        elif k_left == 0:
+            state = "outside/单调"; cnt["monotonic"] += 1
         else:
-            state = "outside/单调"; n_out += 1
-        print("%-26s %9.3g %10.4g %9.3f %8.1f %5d %-16s" %
-              (stem[:26], f[0], f[k], d_low, dens, k, state))
-    print("\n硬规则等价：两侧各 ≥2 点  ⇔  d_low ≥ 2/dens")
-    print("  AZ31 (7.1 pts/dec) → d_low ≥ 0.28 dec；2E (11.2 pts/dec) → ≥ 0.18 dec")
-    print("  k=1 贴边 %d 条，k=0 窗口外/单调 %d 条" % (n_edge, n_out))
-    print("  新规则只把 k=1 从 enter=False 改为 enter=True/strong=False，")
-    print("  k≥2 的判定路径一字不动 → strong 集合严格不变 → 最终假阳性不变。")
+            state = "right_edge(右侧不足)"; cnt["right_edge"] += 1
+        print("%-26s %9.3g %10.4g %8d %6d %6d %7.3f %-18s" %
+              (stem[:26], f_band[0], f_pk, n_band, k_left, k_right, d_low, state))
+    print("\n主判据 = 离散点数（k_left/k_right），与 detect_ad 的 interior 判定逐条一致。")
+    print("  d_low = log10(f_peak/f_min) 仅作辅助记录 / 跨数据集比较；")
+    print("  仅当频率近似对数均匀时才有 k_left ≈ d_low·dens，不写成『等价』。")
+    print("  AZ31: interior %d、edge_peak %d、k_left=0 %d、右侧不足 %d" %
+          (cnt["interior"], cnt["edge_peak"], cnt["monotonic"], cnt["right_edge"]))
+    print("  新规则只把 k_left=1 从 enter=False 改为 enter=True/strong=False，")
+    print("  interior 判定路径一字不动 → strong 集合不变（控制流逻辑不变性）。")
 
 
 def _load(root):
