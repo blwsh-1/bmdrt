@@ -185,10 +185,10 @@
 
 | # | 事项 | 验收要点 | 状态 |
 |---|---|---|---|
-| 1 | 修 `partial_arc` 状态覆盖与 reason 文案 | `status` 不再被 `weak_candidate` 覆盖；文案改为"候选诊断拟合，不进模型比较"；`enter=True/strong=False` 保持不变 | 规格已定，**代码待实现** |
-| 2 | 增加 `edge_peak` | **仅**对已过符号 + 系统性两关、且 `k_left=1` 的候选开放 `enter=True`，**始终 `strong=False`**；`k_left≥2` 路径一字不动 | 规格已定，**代码待实现** |
-| 3 | `edges()` 与 `detect_ad()` 峰位识别一致 | 同一 `frac_lo=0.40` 频段筛选、`argmin(-Im)`、主判据用离散 `k_left/k_right` | ✅ **本轮已完成**（证据脚本，非拟合代码） |
-| 4 | 增加回归测试 | 证明原有 `strong` 集合、最终选择结果不变；贴边谱**只增加候选诊断**，不新增自动切换 | **待实现** |
+| 1 | 修 `partial_arc` 状态覆盖与 reason 文案 | `status` 不再被 `weak_candidate` 覆盖；文案改为"候选诊断拟合，不进模型比较"；`enter=True/strong=False` 保持不变 | ✅ **已实现**（`bm_real.py:detect_ad`） |
+| 2 | 增加 `edge_peak` | **仅**对已过符号 + 系统性两关、且 `k_left=1` 的候选开放 `enter=True`，**始终 `strong=False`**；`k_left≥2` 路径一字不动 | ✅ **已实现** |
+| 3 | `edges()` 与 `detect_ad()` 峰位识别一致 | 同一 `frac_lo=0.40` 频段筛选、`argmin(-Im)`、主判据用离散 `k_left/k_right` | ✅ **已实现**（证据脚本，非拟合代码） |
+| 4 | 增加回归测试 | 证明原有 `strong` 集合、最终选择结果不变；贴边谱**只增加候选诊断**，不新增自动切换 | ✅ **已实现**：`test_ad_gate.py` 11/11 |
 
 四项完成并通过回归后，才进入五类合成谱与 K 交叉检查。
 本轮只完成第 3 项（工具一致性）与规格冻结文档，**`bm_real.py` 一行未动**。
@@ -221,12 +221,13 @@
 | 假阳性率统计上界 | **28.3%**，未达验收（≤5% 需 n≥59） |
 | 门控误触发 | 发现 **1 次**（`2EMC1-2_0500mA`），**风险未解决** |
 | 贴边峰假阴性 | 发现 **1 次**（`AZ31-4Li_50`），规格已定义修复、代码未实现 |
-| `partial_arc` 状态覆盖 / 文案矛盾 | 已定位，**待修** |
-| `enter` / `strong` 分离 | 代码已有基本机制，语义与命名**待修** |
-| `edge_peak` 状态 | **文档已定义，代码未实现** |
-| `d_low` / 离散点数分析 | 数据分析完成；**主判据已改为离散 `k_left`**，`d_low` 降为辅助；**尚未作为实际门控** |
-| `edges()` 与门控峰位一致 | ✅ 本轮修正（band 口径，逐条等价回放） |
-| 不变性论证 | **控制流逻辑成立**，尚未做代码回归 |
+| `partial_arc` 状态覆盖 / 文案矛盾 | ✅ **已修**：`status` 保持 `partial_arc`，reason 改为"候选诊断拟合，不进模型比较" |
+| `enter` / `strong` 分离 | ✅ **已实现**：`partial_arc` / `edge_peak` 均 `enter=True, strong=False` |
+| `edge_peak` 状态 | ✅ **已实现**（仅 `k_left=1` 且已过符号 + 系统性两关） |
+| `d_low` / 离散点数分析 | ✅ 主判据 `k_left/k_right` 已入门控并写入 `checks`/`corner`；`d_low` 作辅助记录 |
+| `edges()` 与门控峰位一致 | ✅ 已修正（band 口径，逐条等价回放） |
+| 不变性论证 | ✅ **代码回归通过**：18 条谱 `strong` 集合与最终选择均不变 |
+| 新增回归测试 | ✅ `test_ad_gate.py` 11/11（合成 8 项 + 真实回放 3 项） |
 | 五类边界合成谱 | 待完成 |
 | K 交叉检查 | 待完成 |
 | signed DRT 自动预判接入 | 待完成 |
@@ -238,15 +239,23 @@
 
 ---
 
-## 9. 本轮不改的东西
+## 9. 本轮改动范围（第一阶段）
 
-- `bm_real.detect_ad` / `select_adsorption` / `run()` **一行未动**；
-  `edge_peak`、`partial_arc` 修复、回归测试均**只写在规格里**；
-- 唯一的执行文件改动是 `evidence/ad_m6/sampling_check.py` 的 `edges()`
-  （证据脚本口径修正，**不是拟合代码**）；
-- 不改 `strong` 的判定条件（三闸、符号、系统性阈值全不动）；
-- 不改吸附 RL 元件、先验、`select_k()`；
-- 不动 `NESTED_TOPOLOGY_PROJECT.md` 的 M1–M6 暂缓状态；
+**已改**（严格限定在 §7.0 的四件事）：
+
+- `bm_real.py:detect_ad()`：`partial_arc` 不再被覆盖、文案改为"候选诊断拟合"；
+  新增 `edge_peak`（`k_left=1` 且已过符号 + 系统性两关 → `enter=True, strong=False`）；
+  `checks` / `corner` 增加 `k_left` / `k_right` / `d_low`；
+- `test_ad_gate.py`（新增）：合成 8 项 + 真实回放 3 项，11/11；
+- `evidence/ad_m6/sampling_check.py:edges()`：口径与门控统一（上一批已完成）。
+
+**仍未改**（继续冻结）：
+
+- `select_adsorption()` 的切换门槛与护栏（一行未动）；
+- `run()` 的补跑逻辑（仍只看 `enter`，不看 `strong`）；
+- `strong` 的判定条件（三闸、符号、系统性阈值全不动）；
+- 吸附 RL 元件、先验、`select_k()`、`bm_core.model_z`；
+- `NESTED_TOPOLOGY_PROJECT.md` 的 M1–M6 暂缓状态；
 - `inv_from_lowfreq` 保持现状（审查意见已撤回"扣 none 残差"建议，见
   `AD_M6_SAMPLING.md` §5.1；当前反演量应理解为**净感性幅值粗估**，
   HN 强重叠时 `init_reliable=False` 退回先验，M3 的 7.3% 误差**不可外推**
@@ -261,4 +270,37 @@ cd D:/eis训练数据/bmdrt
 python evidence/ad_m6/sampling_check.py edges       # 与 detect_ad 同口径：k_left/k_right 主判据 + d_low 辅助
 python evidence/ad_m6/sampling_check.py summarize   # 14 条拟合的 gate/selection 汇总
 python evidence/ad_m6/sampling_check.py inventory  # 18 条真实含环谱盘点
+
+# 门控边界与不变性回归（第一阶段验收）
+python test_ad_gate.py
 ```
+
+---
+
+## 11. 实现记录（2026-11-07，第一阶段）
+
+### 11.1 六条验收（按审查意见逐条）
+
+| # | 验收条件 | 结果 |
+|---|---|---|
+| 1 | 原有 `strong` 谱集合不变 | ✅ 18 条谱（8 真实 + 10 对照）与旧 json 逐条一致 |
+| 2 | 原有最终切换结果不变 | ✅ 旧 `choice=ad` 的新 gate 仍 `strong`；旧 `skipped_by_gate` 的仍非 `strong` |
+| 3 | `AZ31-4Li_50` 进入候选诊断、不能自动选择 | ✅ `edge_peak`，`enter=True / strong=False` |
+| 4 | `AZ31-8Li_150` 同样按规则处理 | ✅ `edge_peak`，补跑 ad 后 `gate_not_strong`，保持 none |
+| 5 | `k_left=0` 的边界谱不被误升级 | ✅ `AZ31-4Li_0` / `4Li_5` / `8Li_100` 均 `monotonic_rise`、`enter=False` |
+| 6 | 2E 对照不因 `k_left=1` 进候选诊断 | ✅ 旧 `enter=False` 的 10 条，新 `enter` 仍全 False |
+
+### 11.2 测试结果
+
+| 套件 | 结果 |
+|---|---|
+| `test_ad_gate.py`（新增） | **11 / 11**（合成 8 + 真实回放 3） |
+| `test_bm_ad_select.py` | 10 / 10 |
+| `bmdrt.py check` | 18 / 18 |
+| `test_audit_findings.py` | 4 / 4 |
+
+### 11.3 仍未闭环（不在本阶段范围）
+
+五类边界合成谱、`(K−1,K,K+1) × (none,ad)` 交叉检查、
+扩大对照到 n≥59、signed DRT 接入 `run()` 自动预判。
+M6 状态仍为**部分完成，尚未通过验收**（假阳性率上界 28.3% 未变）。

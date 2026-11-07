@@ -1421,15 +1421,18 @@ def detect_ad(f, Z, res_none, frac_lo: float = 0.40,
       · sign_inductive：最低频段残差虚部均值 > 0（观测比拟合更"感性"）。
         残差口径 = 观测 − 拟合（与 resid_bins 一致），bins 取最低段。
       · systematic：acf > 0.8 或低频 rms/σ > 1.5 —— 随机噪声翻不了符号。
-      · 闸①内部极小：最低 frac_lo 频点内 −Im 先降后升，极小点两侧各 ≥2 点。
+      · 闸①内部极小：最低 frac_lo 频点内 −Im 先降后升，极小点两侧各 ≥2 点
+        （主判据是**离散点数** k_left/k_right，d_low 只作辅助记录）。
         **完全单调上翘一律不算**（Drift/气泡/仪器低频噪声的共同形状）。
+        峰在窗内但贴边（k_left=1）→ `edge_peak`：只开放候选诊断，不自动选择。
       · 闸②半圆完整性：ΔRe（band 内实部跨度）与 2|Im|_peak 同量级（0.3–3×），
         环两臂要回到同一实轴基线；只翘不复位的排除。
       · 闸③可复现性：本函数拿不到重复谱 → 不判否，只在 reason 记
         "置信度降级"。有重复数据时由调用方补判。
 
-    返回全部可 JSON 序列化：enter（进不进比较）、strong（三闸全过）、
-    checks、corner（峰位/Rad 粗估，复用 bm_ad.inv_from_lowfreq）、reason。
+    返回全部可 JSON 序列化：enter（是否做候选诊断拟合）、strong（是否具备
+    自动模型比较资格——两者**不可合并**）、status、checks、corner（峰位/Rad
+    粗估，复用 bm_ad.inv_from_lowfreq）、reason。
     只看证据不做决策——是否换模型由 select_adsorption 的配对 LOO 定。
     """
     f = np.asarray(f, float)
@@ -1466,15 +1469,22 @@ def detect_ad(f, Z, res_none, frac_lo: float = 0.40,
         return out
 
     # ---- 闸①/②：原始数据形状（最低 frac_lo 频点）----
+    # 主判据是**离散点数** k_left / k_right（与 interior = 2<=k<=n_band-3 逐条
+    # 一致）；d_low 只作辅助记录，不依赖"对数均匀采样"假设（AD_GATE_SPEC §4）。
     lf = np.log10(f)
     m = lf <= float(np.quantile(lf, frac_lo))
     n_band = int(m.sum())
     neg_im = -Z.imag[m]
     interior = half = False
+    k_left = k_right = -1
+    d_low = float("nan")
     if n_band >= 5:
         k = int(np.argmin(neg_im))
-        interior = bool(2 <= k <= n_band - 3)      # 两侧各 ≥2 点
-        if interior:
+        k_left = int(np.count_nonzero(f[m] < f[m][k]))
+        k_right = int(n_band - 1 - k)
+        d_low = float(np.log10(f[m][k] / f[m][0]))
+        interior = bool(k_left >= 2 and k_right >= 2)   # 两侧各 ≥2 点
+        if k_left >= 1:            # 峰不在最低频点 → 粗估可用（含 edge_peak）
             im_pk = float(Z.imag[m][k])            # 极小点的 Im（感性 → 正）
             re_band = Z.real[m]
             d_re = float(np.max(re_band) - np.min(re_band))
@@ -1488,27 +1498,43 @@ def detect_ad(f, Z, res_none, frac_lo: float = 0.40,
                                  tau_ad=AD.tau_from_peak(float(f[m][k])) if AD else None,
                                  im_peak=im_pk, d_re=d_re,
                                  re_over_im_ratio=float(d_re / amp) if amp > 0 else None,
-                                 n_band=n_band, k=int(k))
-    chk.update(interior_min=interior, half_circle=half)
-    if not interior:
-        out.update(status="monotonic_rise",
-                   reason="闸①：低频段 −Im 在 band 内单调（极小贴边）——"
-                          "完全单调上翘按 Drift/漂移处理，不算吸附（R7）。"
-                          "注意：-Im 的极小贴向 band 下沿 = 真实环峰在更低频（窗口外），"
-                          "那属于'拐点低于 f_min → 被 R_inf 吸收'，同样不该建环")
-        return out
-    if not half:
-        out.update(status="partial_arc",
-                   reason="闸②：有感抗极小但 ΔRe 与 2|Im|_peak 不同量级——"
-                          "只翘不复位，不是闭合半圆。降为 weak：不进比较")
-        enter = True
-        out.update(enter=enter, strong=False, status="weak_candidate",
-                   reason=out["reason"] + "（符号+系统性已过，仅形状不完整）")
-        return out
+                                 n_band=n_band, k=int(k),
+                                 k_left=k_left, k_right=k_right, d_low=d_low)
+    chk.update(interior_min=interior, half_circle=half,
+               k_left=(k_left if k_left >= 0 else None),
+               k_right=(k_right if k_right >= 0 else None),
+               d_low=(d_low if np.isfinite(d_low) else None))
 
-    out.update(enter=True, strong=True, status="strong_candidate",
-               reason="符号+系统性+内部极小+半圆完整：进入 none vs ad 比较"
-                      "（可复现性无重复谱可查，置信度记为单谱级）")
+    if interior and half:
+        out.update(enter=True, strong=True, status="strong_candidate",
+                   reason="符号+系统性+内部极小+半圆完整：进入 none vs ad 比较"
+                          "（可复现性无重复谱可查，置信度记为单谱级）")
+        return out
+    if interior and not half:
+        # 状态名不再被 weak_candidate 覆盖；补跑只是**候选诊断拟合**，
+        # 不是模型比较（审查意见 §1 / AD_GATE_SPEC §3）。
+        out.update(enter=True, strong=False, status="partial_arc",
+                   reason="闸②：有感抗极小但 ΔRe 与 2|Im|_peak 不同量级——"
+                          "只翘不复位，不是闭合半圆。保留候选诊断拟合"
+                          "（enter=True），不进模型比较（strong=False）")
+        return out
+    if k_left == 1:
+        # 峰在窗口内但贴边：低频侧只有 1 个采样点，无法确认完整极值。
+        # 只开放诊断（enter=True），**不**降低自动选择门槛（strong 恒 False）。
+        out.update(enter=True, strong=False, status="edge_peak",
+                   reason="闸①：峰在窗口内但贴边（k_left=1，低频侧仅 1 个采样点），"
+                          "无法确认完整极值——保留候选诊断拟合（enter=True），"
+                          "不自动选择 ad（strong=False）")
+        return out
+    if k_left == 0:
+        why = ("极小落在最低频点（k_left=0）——峰可能在窗口外（拐点低于 f_min，"
+               "被 R_inf 吸收），或纯单调上翘")
+    elif k_right < 2:
+        why = f"峰靠近 band 上沿（k_right={k_right} < 2），低频段以单调上升为主"
+    else:
+        why = "band 内无可识别转折"
+    out.update(status="monotonic_rise", enter=False, strong=False,
+               reason=f"闸①：{why}——按 Drift/漂移处理，不算吸附（R7）")
     return out
 
 
