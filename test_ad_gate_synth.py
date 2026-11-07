@@ -175,10 +175,12 @@ def grid(n=60, fmin=1e-2, fmax=1e5, jitter=0.0, seed=5):
     return f
 
 
-F60 = grid()
-F24 = grid(n=24)                 # 约 7.1 pts/dec
-F40 = grid(n=40)                 # 约 11.2 pts/dec
-FJ = grid(n=60, jitter=0.15)     # 轻微非均匀
+# 采样密度口径与生产一致：dens = n / log10(f_max/f_min)（见 edges()）。
+# 真实 AZ31：50 点 / 7 dec = 7.14；真实 2E：56 点 / 5 dec = 11.2。
+F60 = grid()                     # 8.57 pts/dec（默认）
+F_AZ = grid(n=50)                # 7.14 pts/dec，对齐 AZ31
+F_2E = grid(n=78)                # 11.14 pts/dec，对齐 2E
+FJ = grid(n=60, jitter=0.15)     # 8.57 pts/dec + 15% 非均匀
 
 
 def band_pts(f, frac=0.40):
@@ -295,40 +297,84 @@ def invariance():
 # --------------------------------------------------------------------------
 
 def sweep():
+    """每条扫描带**显式预期**；只有 strict=True 的条目计入验收。
+
+    峰落在 band 外（f_c < f_min·1.2 或 > band 上沿·0.8）时预期
+    `monotonic_rise`（不可辨识区间，必须不建环）；峰在 band 内且幅值足够
+    时预期 `strong_candidate`；弱幅值（R<10）只作敏感性观察，不做严格断言。
+    """
     rows = []
 
-    def rec(group, param, g):
+    def rec(group, param, g, exp_enter=None, exp_strong=None,
+            exp_status=None, strict=True):
         c = g["checks"]
-        rows.append((group, param, g["status"], bool(g["enter"]),
-                     bool(g["strong"]), c.get("k_left"), c.get("k_right")))
+        ok = True
+        if strict:
+            ok = (bool(g["enter"]) == exp_enter
+                  and bool(g["strong"]) == exp_strong
+                  and (exp_status is None or g["status"] in exp_status))
+        rows.append(dict(group=group, param=param, status=g["status"],
+                         enter=bool(g["enter"]), strong=bool(g["strong"]),
+                         k_left=c.get("k_left"), k_right=c.get("k_right"),
+                         ok=ok, strict=strict,
+                         exp=(exp_enter, exp_strong, exp_status)))
 
+    fb = band_pts(F60)
     for rad in (0.5, 2.0, 10.0, 50.0, 200.0):
         for fc in (1e-3, 1e-2, 0.1, 1.0, 10.0, 100.0):
             g = gate(F60, make_spectrum(F60, rl=(rad, fc)))
-            rec("幅值×峰位", f"R={rad:g},fc={fc:g}", g)
+            tag = f"R={rad:g},fc={fc:g}"
+            if fc < fb[0] * 1.2 or fc > fb[-1] * 0.8:
+                rec("幅值×峰位(峰出窗)", tag, g, False, False,
+                    {"monotonic_rise", "capacitive_tail", "noise_only"})
+            elif rad >= 10.0:
+                rec("幅值×峰位(峰在窗内)", tag, g, True, True,
+                    {"strong_candidate"})
+            else:
+                rec("幅值×峰位(弱幅值观察)", tag, g, strict=False)
 
     i1 = int(np.argmin(np.abs(F60 - 1.0)))
-    for hnr in (0.0, 0.5, 1.0, 2.0, 4.0):     # HN 拐点移到 1 Hz，与 RL 同频段抵消
+    for hnr in (0.0, 0.5, 1.0, 2.0, 4.0):
         arcs = [(30.0 * (1 + hnr), 1.0, 0.85), (8.0, 3e4, 0.90)]
         Z = make_spectrum(F60, rl=(100.0, 1.0), arcs=arcs)
         net = float(z_rl(F60[i1:i1 + 1], 100.0, 1.0).imag[0]
                     + z_zarc(F60[i1:i1 + 1], 30.0 * (1 + hnr), 1.0, 0.85).imag[0])
-        # 净虚部 <5 Ω 时 RL 已被 HN 抵消到不可观测——这是物理可辨识性问题，
-        # 不是门控缺陷，单独归类，不计入异常。
-        grp = "HN重叠(可辨识)" if net > 5.0 else "HN重叠(抵消至不可见)"
-        rec(grp, f"arc×{1 + hnr:.1f}(净Im={net:+.1f})", gate(F60, Z))
+        g = gate(F60, Z)
+        tag = f"arc×{1 + hnr:.1f}(净Im={net:+.1f})"
+        if net > 5.0:
+            rec("HN重叠(可辨识)", tag, g, True, True, {"strong_candidate"})
+        else:
+            # 净虚部 <5 Ω：RL 被抵消到不可观测，正确行为是**不建环**，
+            # 这是物理不可判定，不是门控缺陷。
+            rec("HN重叠(抵消至不可见)", tag, g, False, False,
+                {"monotonic_rise", "capacitive_tail", "noise_only"})
 
     for nz in (0.001, 0.01, 0.05, 0.2):
-        rec("噪声(有RL)", f"{nz:.1%}", gate(F60, make_spectrum(F60, rl=(100.0, 1.0),
-                                                             noise=nz, seed=12)))
-        rec("噪声(无RL)", f"{nz:.1%}", gate(F60, make_spectrum(F60, noise=nz, seed=12)))
+        g1 = gate(F60, make_spectrum(F60, rl=(100.0, 1.0), noise=nz, seed=12))
+        if nz <= 0.01:
+            rec("噪声(有RL)", f"{nz:.1%}", g1, True, True, {"strong_candidate"})
+        elif nz < 0.2:
+            # 5%：系统性判据在 low_rms/σ≈1.5 附近，允许两种结果
+            rec("噪声(有RL,边界)", f"{nz:.1%}", g1, strict=False)
+        else:
+            rec("噪声(有RL)", f"{nz:.1%}", g1, False, False,
+                {"noise_only", "capacitive_tail"})
+        g0 = gate(F60, make_spectrum(F60, noise=nz, seed=12))
+        rec("噪声(无RL)", f"{nz:.1%}", g0, False, False,
+            {"capacitive_tail", "noise_only"})
 
     for dr in (0.0, 20.0, 120.0, 400.0):
-        rec("低频漂移", f"{dr:g}", gate(F60, make_spectrum(F60, drift=dr)))
+        g = gate(F60, make_spectrum(F60, drift=dr))
+        rec("低频漂移", f"{dr:g}", g, False, False,
+            {"capacitive_tail", "noise_only", "monotonic_rise"})
 
-    for tag, fg in (("7.1 pts/dec", F24), ("11.2 pts/dec", F40), ("非均匀", FJ)):
-        rec("采样", tag + "(有RL)", gate(fg, make_spectrum(fg, rl=(100.0, 1.0))))
-        rec("采样", tag + "(无RL)", gate(fg, make_spectrum(fg)))
+    for tag, fg in (("7.1 pts/dec", F_AZ), ("11.2 pts/dec", F_2E),
+                    ("15% 非均匀", FJ)):
+        rec("采样", tag + "(有RL)",
+            gate(fg, make_spectrum(fg, rl=(100.0, 1.0))), True, True,
+            {"strong_candidate"})
+        rec("采样", tag + "(无RL)", gate(fg, make_spectrum(fg)), False, False,
+            {"capacitive_tail", "noise_only"})
     return rows
 
 
@@ -355,39 +401,39 @@ def main():
         print("   ", d)
 
     print("\n" + "=" * 100)
-    print("C. 鲁棒性扫描（状态分布；仅给定模拟分布，不可替代真实统计上界）")
+    print("C. 鲁棒性扫描（逐条预期断言；仅给定模拟分布，不可替代真实统计上界）")
     print("=" * 100)
     rows = sweep()
     from collections import Counter
     groups = {}
     for r in rows:
-        groups.setdefault(r[0], []).append(r)
+        groups.setdefault(r["group"], []).append(r)
     for gname, grp in groups.items():
-        c = Counter(r[2] for r in grp)
-        enter = sum(1 for r in grp if r[3])
-        strong = sum(1 for r in grp if r[4])
-        print(f"  {gname:<12} n={len(grp):3d}  enter={enter:2d}  strong={strong:2d}  "
-              f"状态={dict(c)}")
-    print("\n  明细（异常项：有 RL 却未进 enter，或无 RL 却 enter）：")
-    odd = 0
-    for gname, param, st, en, sg, kl, kr in rows:
-        has_rl = ("有RL" in param) or gname in ("幅值×峰位", "HN重叠(可辨识)")
-        no_rl = "无RL" in param or gname == "低频漂移"
-        # 「有 RL 却没进诊断」只有在形状足够时才算异常：峰在 band 内部
-        # （k_left>=2 且 k_right>=2）。峰贴边/出窗本就不该进（规格如此）。
-        shape_ok = (kl is not None and kr is not None and kl >= 2 and kr >= 2)
-        if (has_rl and shape_ok and not en) or (no_rl and en):
-            odd += 1
-            print(f"    [{gname}] {param}: {st} enter={en} strong={sg} "
-                  f"k_left={kl} k_right={kr}")
-    if not odd:
-        print("    （无）")
+        c = Counter(r["status"] for r in grp)
+        ent = sum(1 for r in grp if r["enter"])
+        sg = sum(1 for r in grp if r["strong"])
+        st = sum(1 for r in grp if r["strict"])
+        print(f"  {gname:<22} n={len(grp):3d} strict={st:3d} enter={ent:2d} "
+              f"strong={sg:2d} 状态={dict(c)}")
+
+    strict = [r for r in rows if r["strict"]]
+    bad_c = [r for r in strict if not r["ok"]]
+    obs = [r for r in rows if not r["strict"]]
+    print(f"\n  严格断言 {len(strict)} 条，失败 {len(bad_c)} 条；"
+          f"观察项 {len(obs)} 条（弱幅值/噪声边界，不做断言）")
+    for r in bad_c:
+        print(f"    [FAIL] [{r['group']}] {r['param']}: {r['status']} "
+              f"enter={r['enter']} strong={r['strong']} "
+              f"k_left={r['k_left']} k_right={r['k_right']} 预期={r['exp']}")
+    for r in obs:
+        print(f"    [观察] [{r['group']}] {r['param']}: {r['status']} "
+              f"enter={r['enter']} strong={r['strong']}")
 
     print("\n" + "=" * 100)
     print(f"A 结果：{len(res) - bad}/{len(res)} 通过；B 差异 {len(diffs)}；"
-          f"C 异常 {odd}/{len(rows)}")
+          f"C 严格断言 {len(strict) - len(bad_c)}/{len(strict)} 通过")
     print("注意：C 的假阳性率只代表给定模拟分布，不能替代真实对照谱统计上界。")
-    raise SystemExit(1 if (bad or diffs) else 0)
+    raise SystemExit(1 if (bad or diffs or bad_c) else 0)
 
 
 if __name__ == "__main__":
