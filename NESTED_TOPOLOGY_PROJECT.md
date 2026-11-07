@@ -18,6 +18,14 @@
 > 堆分支；§7 补语义边界、§8 M3 扩为三类合成谱、§9/§10/§12 同步。
 >
 > 另：§4.3 只证明**表达能力差异**，不等于证明真实界面就是文献的物理电路。
+>
+> **v1.3（2026-11-07，M1 落地 + 文献校准）**：M1 已实现为 `bm_top.py`
+> （自检 8 项全过，见 §13）。文献校准带来一处**结构性修正**：感抗支路
+> 不止 `R∥L` 一种，Triviño-Peláez et al. 2026（*Electrochim. Acta*）用的是
+> `R_L + L` **串联**支路再与 CPE 并联，两者低频极限不同（`R∥L→0`，
+> `R+L→R_L`），`bm_top` 同时支持 `branch="parallel"|"series"`。
+> 物理校准：低频感抗来自**吸附中间体覆盖度的有限时间弛豫**，中频容性是
+> 中间体的形成/积累，**不需要扩散**——所以感抗支路只用 R、L（或 τ）。
 
 ---
 
@@ -74,9 +82,11 @@ Shahri et al. 2024 Table 1 的 circuit 1/4，两层形式（本项目先做到�
 
 ```
 Z_CPE(Y,n) = 1 / [Y·(jω)^n]
-Z_ad       = R_ad·jωτ_ad/(1+jωτ_ad)          ← 就是 bm_ad.z_ad，R∥L
 
-Z_inner = R2 + Z_ad
+Z_branch = R_ad·jωτ_ad/(1+jωτ_ad)     （branch="parallel"，R∥L，Shahri 2024）
+         = R_L + jωL                  （branch="series"，R+L，Triviño-Peláez 2026）
+
+Z_inner = R2 + Z_branch
 Z_par2  = 1 / [Y2(jω)^{n2} + 1/Z_inner]
 Z_mid   = R1 + Z_par2
 Z_B     = Rs + 1 / [Y1(jω)^{n1} + 1/Z_mid]
@@ -369,7 +379,7 @@ select_across_families(best_of_each) →
 | 阶段 | 内容 | 产出 | 回归要求 |
 |---|---|---|---|
 | **M0 立项** ✅ | 表达力证据 + **可辨识性证据** + 规划层 | `NESTED_TOPOLOGY_PROJECT.md` v1.2、`MODEL_COVERAGE_PLAN.md`、`theoretical_bound.py`、`identifiability_check.py` | 四份产物可独立复现；确认的是**表达能力差异**，不升级成物理结论 |
-| **M1 元件 + 正演（默认关）** | `bm_families/nested.py`：`z_cpe`/`j_z_cpe`、`z_nested`/`j_z_nested`；**数学极限**（§2.3）、无源性、jax 一致性、CPE 窗口参数化自检 | 新模块 + 自检 | `python -m bm_families.nested` 全过；不动现有文件 |
+| **M1 元件 + 正演** ✅ | `bm_top.py`：`z_cpe`（窗口幅值参数化）、`z_rl_parallel` / `z_rl_series`、`z_nested` / `j_z_nested`（支持 `branch` 与 `layers`） | `bm_top.py` + 自检 8 项 | `python bm_top.py` 全过；**未改动任何现有文件** |
 | **M2 接入独立采样路径** | 经 `registry` / `fit_family()` 接入，**不改 `bm_core.model_z` / `make_model` 的 Voigt 分支** | 代码 + 单测 | **`topology=voigt` 逐位不变** |
 | **M3 合成标定（v1.2 扩充）** | 三类谱：① 纯 nested 生成（自身还原）② **纯 Voigt 生成**（nested 是否过度拟合）③ **混合边界生成**（退化/截断/噪声下是否错误切换）；另加 §4.6 的 `Rs` 可辨识性、窗口截断、`Rs↔(Y1,n1)` 相关、扩展窗口收敛性 | 标定表 + 单测 | `Rad/τ` 后验中位数误差 ≤20%；`Rs` 明确标为不可辨识；三类谱选择器零错误切换 |
 | **M4 自动判定** | `select_across_families` + 跨族配对 LOO（**同一似然、同一噪声口径**）+ 护栏 + 修 KK 低频误归因（§4.5） | 代码 + 单测 | Blank（无环）保留 voigt；AZ31 切 nested |
@@ -502,3 +512,56 @@ python test_drt_signed.py
 | 动 `select_k` | 否 | 否 | **否** | 不改（Voigt 族内语义） |
 | 对 DRT 的影响 | 能看见（正 γ） | 看不见（负 γ，M5 有符号 DRT） | **DRT 分解前提不成立**（M5 最大难点） | 明确各族的预判语义边界 |
 | 默认 | 关 | 关 | **`topology=voigt` 逐位不变** | 规划层，无运行期默认 |
+
+---
+
+## 13. M1 实现记录（2026-11-07）
+
+### 13.1 交付物
+
+`bm_top.py`（根目录，**未改动 `bm_core.py` / `bm_ad.py` / `bm_real.py` 任何一行**）：
+
+| 接口 | 内容 |
+|---|---|
+| `omega_ref(f)` | 窗口几何中心角频率 `2π√(f_min·f_max)` |
+| `z_cpe(f, Q, n, f_ref)` | CPE，用窗口幅值 `Q=|Z(ω_ref)|` 参数化，避免直接采 `Y` |
+| `z_rl_parallel(f, R, tau)` | `R∥L`：`R·jωτ/(1+jωτ)` |
+| `z_rl_series(f, R, L)` | `R+L`：`R + jωL` |
+| `z_nested(f, p, f_ref, branch, layers)` | 完整两层（`layers=1` 退化为单层，供 M3 用） |
+| `j_z_nested(...)` | jax 版（x64 已开） |
+| `param_spec()` | 参数名 → 含义/单位/先验建议，M2/M3 直接引用 |
+
+### 13.2 验收标准与结果（`python bm_top.py` → 8 项全过）
+
+| # | 验收项 | 判据 | 实测 |
+|---|---|---|---|
+| 1 | CPE 窗口参数化 | `|Z(ω_ref)| = Q` | rel err `0` |
+| 2 | 解析式 vs 逐节点展开 | <1e-12 | `0`（两种 branch） |
+| 3 | **渐近极限** | parallel: `Rs+R1+R2` / `Rs`；series: `Rs+R1+R2+R_L` / `Rs` | `665` / `10`、`1465` / `10`，err ≤3e-9 |
+| 4 | 无源性 | 全域 `min Re ≥ 0` | `10.18 Ω` |
+| 5 | 退化：`n=1` | CPE ∝ 1/f | 4.6e-13 |
+| 6 | 退化：`layers=1` | 与手写单层一致 | `0` |
+| 7 | 边界稳定性 | `Q∈[1e-3,1e6]`、`n∈[0.5,1]`、`R2∈[1e-3,1e6]`、`τ∈[1e-6,1e4]` × 18 dec | 非有限 0 个 |
+| 8 | jax 一致性 | <1e-12 | 3.7e-16（两种 branch） |
+
+### 13.3 与立项书 v1.2 的差异（已回写 §2.2）
+
+- 感抗支路增加 `branch="series"`（`R_L + L`），对应文献 #3；
+- 两种支路的低频极限不同：`parallel → Rs+R1+R2`、`series → Rs+R1+R2+R_L`。
+  M3 合成标定必须**分别**做，不能混用同一组真值。
+
+### 13.4 文献校准要点
+
+| 来源 | 对本项目的作用 |
+|---|---|
+| Zhang et al. 2024, *npj Mater. Degrad.*（#2） | 贝叶斯 ECM 比较口径：**divergence > 0.1% 判不可信**、参数还原 **4% 相对误差**、CPE 用 `Q/α` 参数化 |
+| Triviño-Peláez et al. 2026, *Electrochim. Acta*（#3） | 低频感抗 = **吸附中间体覆盖度弛豫 + 活性位再生**，与扩散无关；感抗支路为 `R+L` 串联与 CPE 并联 |
+
+> 注意：#2 的 4% / 0.1% 是**模拟数据**上的判据，不能直接当真实谱的验收线；
+> M3 沿用其口径，M4 真实谱另行报告。
+
+### 13.5 下一步（M2 接入前的前置条件）
+
+M2 要接采样器，但立项书 §7.0 的冻结状态尚未解除。M2 之前需要先确认：
+`bm_families/` 注册表接口（`MODEL_COVERAGE_PLAN.md` §3）是否先落地，
+或允许 `bm_top` 先以独立 `fit_top()` 试跑（不碰 `bm_core.make_model`）。

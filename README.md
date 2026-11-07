@@ -270,7 +270,8 @@ bm_real.py        主流程与 K 选择
 bm_kk.py          拟合前 Lin-KK 分级门禁（ok/warn/fail/unavailable）
 bm_corr.py        全参数后验相关矩阵 + 90% 区间（可单独对 npz 重算）
 bm_diff.py        扩散元件 + HN↔Warburg 退化诊断 + Ws/Wo 可分辨性
-bm_ad.py          低频吸附电感元件 R_ad∥L_ad（M1：元件 + 初值反演 + 自检，未接入）
+bm_ad.py          低频吸附电感元件 R_ad∥L_ad（M1–M5，默认关）
+bm_top.py         嵌套并联拓扑（M1：CPE + R∥L/R+L 支路 + 正演 + 自检，未接采样器）
 drt.py            传统 Tikhonov DRT 预判断
 bm_experiments.py R̂ / ESS / 树深 / acf
 bm_check.py       18 项数学自检
