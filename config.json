@@ -20,6 +20,8 @@
     "diffusion": "none",
     "auto_mechanism": false,
     "auto_mechanism_full": false,
+    "adsorption": null,
+    "auto_adsorption": false,
     "sigma_floor": 0.0
   },
 

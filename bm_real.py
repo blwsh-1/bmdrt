@@ -76,6 +76,11 @@ try:                                    # 全参数相关矩阵（"别只看误�
 except Exception:                       # pragma: no cover
     CORR = None
 
+try:                                    # 吸附 RL 元件（M4：corner 的 τ/Rad 粗估）
+    import bm_ad as AD
+except Exception:                       # pragma: no cover
+    AD = None
+
 warnings.filterwarnings("ignore")
 
 import matplotlib
@@ -497,6 +502,82 @@ def _diff_line(r):
                            f"（R_W 与 τ_D 同向滑动，单独引用任一参数要带这句）")
 
     return "；".join(out) if out else "（无参数）"
+
+
+def _ad_line(r):
+    """吸附 RL 摘要 + **按拐点位置分区间**的可辨识性降级说明（立项 §2.3）。
+
+    与 `_diff_line` 同一套写法：窗口外两侧定住的是完全不同的组合，
+    不能一句"可辨识"蒙过去。
+
+      f_c ≳ f_max（τ 小）→ Z_ad ≈ jω·(R_ad·τ_ad)，与串联 L **完全简并**：
+          只有 L_eff = R_ad·τ_ad 可信，R_ad 与 τ_ad 各自都定不住。
+      f_min ≲ f_c ≲ f_max → 完整 RL 半圆在窗内，R_ad 与 τ_ad 都可辨识。
+      f_c ≲ f_min（τ 大）→ Z_ad ≈ R_ad（纯实部），被 R_inf 吸收，环不可见。
+
+    另加 M3 标定发现的简并警示：corr(R_ad, R_inf) 强负时（环宽且居中），
+    常数项与欧姆电阻沿补偿方向滑动，只能报"存在低频感性弛豫"。
+    """
+    s = r.get("s") or {}
+    if "Rad" not in s or "tau_ad" not in s:
+        return "（无参数）"
+    out = []
+    ra = np.asarray(s["Rad"], float)
+    ta = np.asarray(s["tau_ad"], float)
+    mra, mta = float(np.median(ra)), float(np.median(ta))
+    f_c = 1.0 / (2 * np.pi * mta) if mta > 0 else float("nan")
+    f_lo, f_hi = float(r.get("f_lo") or 0.0), float(r.get("f_hi") or 1e300)
+
+    out.append(f"R_ad = {mra:.4g} Ω "
+               f"[{np.percentile(ra, 5):.4g}, {np.percentile(ra, 95):.4g}]")
+    out.append(f"τ_ad = {mta:.4g} s → f_c = {f_c:.3g} Hz")
+    out.append(f"L_ad = R_ad·τ_ad = {mra * mta:.4g} H（派生量，只报告不采样）")
+
+    # 拐点出窗概率（fit_one 已算），以及它对应的降级措辞
+    p_out = r.get("f_c_out_prob")
+    if f_c > f_hi * 10:
+        out.append(f"** f_c ≫ f_max：Z_ad ≈ jωL_eff，与串联电感完全简并——"
+                   f"只有 L_eff = {mra * mta:.4g} H 可信，"
+                   f"R_ad 与 τ_ad 单独都不可信 **")
+    elif f_c < f_lo / 10:
+        out.append(f"** f_c ≪ f_min：Z_ad ≈ R_ad（纯实部），已被 R_inf 吸收——"
+                   f"环在窗内不可见，R_ad 的绝对值没有意义 **")
+    elif np.isfinite(p_out) and p_out > 0.5:
+        out.append(f"** P(f_c > f_max) = {p_out:.2f} > 0.5：拐点大概率在窗口上方，"
+                   f"按「只有 L_eff 可信」处理 **")
+    elif f_lo <= f_c <= f_hi:
+        out.append("f_c 落在窗口内 → R_ad 与 τ_ad 都可辨识"
+                   "（完整 RL 半圆在窗内）")
+    else:
+        out.append(f"f_c={f_c:.3g} Hz 在窗口边缘 1 dec 内 → 可辨识性介于"
+                   f"两渐近区之间，引用 R_ad 要带不确定度")
+
+    # 幅值相对噪声（v1.1 口径：按 σ̂，不是 |Z|max）
+    p_small = r.get("p_ad_small")
+    if np.isfinite(p_small):
+        out.append(f"P(R_ad < 3σ̂) = {p_small:.2f}"
+                   f"{'（幅值与噪声同量级，环可能不显著）' if p_small > 0.3 else ''}")
+
+    # R_ad–R_inf 简并（M3 标定）：从 param_corr 或样本直接算
+    rho = None
+    pc = r.get("param_corr") or {}
+    for item in list(pc.get("strong") or []) + list(pc.get("medium") or []):
+        if {item.get("a"), item.get("b")} == {"R_ad", "R_inf"} \
+                and _finite(item.get("rho")):
+            rho = float(item["rho"])
+            break
+    if rho is None and "R_inf" in s and ra.size >= 30:
+        ri = np.asarray(s["R_inf"], float)
+        if np.std(ra) > 0 and np.std(ri) > 0:
+            rho = float(np.corrcoef(np.log(np.maximum(ra, 1e-300)),
+                                    np.log(np.maximum(ri, 1e-300)))[0, 1])
+    if rho is not None:
+        out.append(f"corr(R_ad, R_inf) = {rho:+.3f}"
+                   + ("（**强负：常数项与欧姆电阻简并，只报「存在低频感性弛豫」，"
+                      "不报 R_ad 单独值**）" if rho <= -0.8 else ""))
+    return "；".join(out)
+
+
 def z_band(s, f, include_L: bool, n: int = 300):
     """逐样本正演 Z(f)，返回实部/虚部 (5, 50, 95) 分位。
 
@@ -729,8 +810,13 @@ def adjust_peaks(pk, K, dsplit: float = 0.5):
     return comps
 
 
-def init_values(pk, res, K, zeta_fixed=1.0):
-    """DRT 峰 → 模型初值（约束空间）。K 与峰数不一致时先 adjust_peaks。"""
+def init_values(pk, res, K, zeta_fixed=1.0, ad_init=None):
+    """DRT 峰 → 模型初值（约束空间）。K 与峰数不一致时先 adjust_peaks。
+
+    ad_init：`bm_ad.inv_from_lowfreq` 的返回（M4 接线）。只有显式传入且
+    `init_reliable=True` 才播种 Rad/tau_ad —— 不可靠时宁可从先验中位数
+    起步（§7.3：初值只影响采样效率，不影响后验）。
+    """
     comps = adjust_peaks(pk, K)
     if not comps:
         return None
@@ -750,6 +836,11 @@ def init_values(pk, res, K, zeta_fixed=1.0):
             v.append(vk)
             rem *= (1 - vk)
         d["v"] = np.array(v)
+    if ad_init and ad_init.get("init_reliable"):
+        _ra, _ta = ad_init.get("Rad"), ad_init.get("tau_ad")
+        if _ra is not None and _ta is not None and _ra > 0 and _ta > 0:
+            d["Rad"] = float(_ra)
+            d["tau_ad"] = float(_ta)
     return d
 
 
@@ -758,14 +849,14 @@ def init_values(pk, res, K, zeta_fixed=1.0):
 # --------------------------------------------------------------------------
 
 def fit_one(f, Z, K, include_L, zeta, init=None, seed=0, kw=None, diffusion=None,
-            diag=None, sigma_floor=0.0):
+            diag=None, sigma_floor=0.0, adsorption=None):
     """跑一次 NUTS，返回全部指标（不打印、不画图）。
 
     diag：事后诊断阈值（corr_strong / corr_medium / diff_resolution_tol），
     由 config.json 的 diag 段传入；缺省时用模块内置默认值。
 
     sigma_floor：噪声地板（相对 zmax）。0.0 = 关闭，行为与改动前一致。
-    只在做「无噪合成数据」或「极高信噪比」时才需要开，见 bm_core.make_model。
+    adsorption：None = 基础模型（逐位不变）；"RL" = 采样吸附元件（M2/M4）。
     """
     diag = diag or {}
     kw = dict(KW) if kw is None else dict(kw)
@@ -774,7 +865,8 @@ def fit_one(f, Z, K, include_L, zeta, init=None, seed=0, kw=None, diffusion=None
     s, mc = B.fit(f, Z, K=K, alpha=0.5, sigma=None, include_L=include_L,
                   zeta_fixed=(None if zeta == "free" else float(zeta)),
                   init_values=init, diffusion=diffusion,
-                  sigma_floor=float(sigma_floor or 0.0), **kw)
+                  sigma_floor=float(sigma_floor or 0.0),
+                  adsorption=adsorption, **kw)
     dt = time.time() - t0
     ch = mc.get_samples(group_by_chain=True)
 
@@ -815,6 +907,19 @@ def fit_one(f, Z, K, include_L, zeta, init=None, seed=0, kw=None, diffusion=None
             diff_amp_key = _k
             p_diff_small = float(np.mean(np.asarray(s[_k], float) < 1e-3 * zmax_obs))
             break
+
+    # ---- 吸附 RL 派生量（M4；未采样时全 NaN，默认路径零影响）----
+    p_ad_small, f_c_out_prob, L_ad_med = float("nan"), float("nan"), float("nan")
+    if adsorption == "RL" and "Rad" in s and "tau_ad" in s:
+        _ra = np.asarray(s["Rad"], float)
+        _ta = np.asarray(s["tau_ad"], float)
+        # σ̂ 取该模型自采的虚部噪声（v1.1 口径：按噪声尺度，不是 |Z|max；
+        # none 的残差 std 在这里拿不到，自采 σ 是同一量纲的自然替代）
+        _sig = float(np.median(s["s_im"])) if "s_im" in s else float("nan")
+        if np.isfinite(_sig) and _sig > 0:
+            p_ad_small = float(np.mean(_ra < 3.0 * _sig))
+        f_c_out_prob = float(np.mean(1.0 / (2 * np.pi * _ta) > float(f.max())))
+        L_ad_med = float(np.median(_ra * _ta))       # L_ad = R_ad·τ_ad，派生量
 
     # ---- HN ↔ Warburg 退化指纹（逐分量）----
     # 为什么单列一项：单个 HN 能在窗口内把半无限 Warburg 逼近到 1e-6，
@@ -941,6 +1046,8 @@ def fit_one(f, Z, K, include_L, zeta, init=None, seed=0, kw=None, diffusion=None
         n_warburg_like=int(sum(1 for s in sig if s["level"] != "no")),
         warburg_multi=wmul,
         diffusion=diffusion, param_corr=pc, diffusion_resolution=dres,
+        adsorption=adsorption, p_ad_small=p_ad_small,
+        f_c_out_prob=f_c_out_prob, L_ad=L_ad_med,
         f_lo=float(f.min()), f_hi=float(f.max()), n_pts=int(f.size),
         zmax_obs=zmax_obs, p_diff_small=p_diff_small, diff_amp_key=diff_amp_key,
         idata=idata, elpd=elpd, elpd_se=elpd_se, bad_k=bad_k,
@@ -1301,6 +1408,223 @@ def select_mechanism(none_res, ws_res, gate, exploratory=False):
     return out
 
 
+# --------------------------------------------------------------------------
+# 吸附 RL：门控 + 外层选择器（M4，立项 §6；语义与扩散的 gate/select 同构，
+# select_k() 一行不动）
+# --------------------------------------------------------------------------
+
+def detect_ad(f, Z, res_none, frac_lo: float = 0.40,
+              acf_thr: float = 0.8, low_snr_thr: float = 1.5) -> dict:
+    """拟合后门控（零额外拟合成本）：none 的残差 + 原始数据形状。
+
+    四条件（§6.1）+ 三道假阳性闸（§6.1.1，R7）：
+      · sign_inductive：最低频段残差虚部均值 > 0（观测比拟合更"感性"）。
+        残差口径 = 观测 − 拟合（与 resid_bins 一致），bins 取最低段。
+      · systematic：acf > 0.8 或低频 rms/σ > 1.5 —— 随机噪声翻不了符号。
+      · 闸①内部极小：最低 frac_lo 频点内 −Im 先降后升，极小点两侧各 ≥2 点。
+        **完全单调上翘一律不算**（Drift/气泡/仪器低频噪声的共同形状）。
+      · 闸②半圆完整性：ΔRe（band 内实部跨度）与 2|Im|_peak 同量级（0.3–3×），
+        环两臂要回到同一实轴基线；只翘不复位的排除。
+      · 闸③可复现性：本函数拿不到重复谱 → 不判否，只在 reason 记
+        "置信度降级"。有重复数据时由调用方补判。
+
+    返回全部可 JSON 序列化：enter（进不进比较）、strong（三闸全过）、
+    checks、corner（峰位/Rad 粗估，复用 bm_ad.inv_from_lowfreq）、reason。
+    只看证据不做决策——是否换模型由 select_adsorption 的配对 LOO 定。
+    """
+    f = np.asarray(f, float)
+    Z = np.asarray(Z, complex)
+    order = np.argsort(f)
+    f, Z = f[order], Z[order]
+    out = dict(enter=False, strong=False, status="no_candidate", reason="",
+               checks={}, corner=None, frac_lo=frac_lo)
+    chk = out["checks"]
+
+    # ---- 条件 1/2：符号 + 系统性（用 none 已算好的 bins/acf，零成本）----
+    bins = res_none.get("bins") or res_none.get("resid_bins") or []
+    s_im = float(res_none.get("s_im", res_none.get("sigma_im", 0.0)) or 0.0)
+    acf = abs(float(res_none.get("acf") or 0.0))
+    sign_ind, low_snr = False, float("nan")
+    if bins:
+        b = bins[0]                          # resid_bins 按 log f 从低到高排
+        mean_im = float(b.get("mean_im", 0.0))
+        sign_ind = mean_im > 0
+        if s_im > 0:
+            low_snr = float(b.get("rms_im", 0.0)) / s_im
+    systematic = (acf > acf_thr) or (np.isfinite(low_snr) and low_snr > low_snr_thr)
+    chk.update(sign_inductive=bool(sign_ind), low_mean_im=(float(bins[0].get("mean_im", float("nan"))) if bins else None),
+               systematic=bool(systematic), acf=acf,
+               low_rms_over_sigma=(float(low_snr) if np.isfinite(low_snr) else None))
+    if not sign_ind:
+        out.update(status="capacitive_tail",
+                   reason="低频虚部残差为负（更容性）→ 交给扩散路径，不是吸附候选")
+        return out
+    if not systematic:
+        out.update(status="noise_only",
+                   reason=f"低频感性偏移未过系统性判据（acf={acf:.2f} ≤ {acf_thr}，"
+                          f"低频 rms/σ={low_snr:.2f} ≤ {low_snr_thr}）——更像噪声翻转")
+        return out
+
+    # ---- 闸①/②：原始数据形状（最低 frac_lo 频点）----
+    lf = np.log10(f)
+    m = lf <= float(np.quantile(lf, frac_lo))
+    n_band = int(m.sum())
+    neg_im = -Z.imag[m]
+    interior = half = False
+    if n_band >= 5:
+        k = int(np.argmin(neg_im))
+        interior = bool(2 <= k <= n_band - 3)      # 两侧各 ≥2 点
+        if interior:
+            im_pk = float(Z.imag[m][k])            # 极小点的 Im（感性 → 正）
+            re_band = Z.real[m]
+            d_re = float(np.max(re_band) - np.min(re_band))
+            amp = 2.0 * abs(im_pk)
+            half = bool(amp > 0 and 0.3 <= d_re / amp <= 3.0)
+            # R_ad 粗估走 §7.3 恒等式（峰值 Im_max = R/2）；τ 由峰位反算。
+            # 完整反演（含可靠性标记）见 bm_ad.inv_from_lowfreq，采样初值
+            # 接线在 M6 一起做，这里只给门控报告用。
+            out["corner"] = dict(f_peak=float(f[m][k]),
+                                 Rad=2.0 * max(im_pk, 0.0),
+                                 tau_ad=AD.tau_from_peak(float(f[m][k])) if AD else None,
+                                 im_peak=im_pk, d_re=d_re,
+                                 re_over_im_ratio=float(d_re / amp) if amp > 0 else None,
+                                 n_band=n_band, k=int(k))
+    chk.update(interior_min=interior, half_circle=half)
+    if not interior:
+        out.update(status="monotonic_rise",
+                   reason="闸①：低频段 −Im 在 band 内单调（极小贴边）——"
+                          "完全单调上翘按 Drift/漂移处理，不算吸附（R7）。"
+                          "注意：-Im 的极小贴向 band 下沿 = 真实环峰在更低频（窗口外），"
+                          "那属于'拐点低于 f_min → 被 R_inf 吸收'，同样不该建环")
+        return out
+    if not half:
+        out.update(status="partial_arc",
+                   reason="闸②：有感抗极小但 ΔRe 与 2|Im|_peak 不同量级——"
+                          "只翘不复位，不是闭合半圆。降为 weak：不进比较")
+        enter = True
+        out.update(enter=enter, strong=False, status="weak_candidate",
+                   reason=out["reason"] + "（符号+系统性已过，仅形状不完整）")
+        return out
+
+    out.update(enter=True, strong=True, status="strong_candidate",
+               reason="符号+系统性+内部极小+半圆完整：进入 none vs ad 比较"
+                      "（可复现性无重复谱可查，置信度记为单谱级）")
+    return out
+
+
+def select_adsorption(none_res, ad_res, gate, exploratory: bool = False) -> dict:
+    """外层选择器：none vs ad(RL)。**不修改 select_k() 语义**。
+
+    对齐 select_mechanism 的口径（§6.2）：
+      · **先拦后比**（R9）：ad 采样不健康（分级 0 / Pareto-k>0.7 超 10% /
+        LOO 不可用）直接 guard_degraded，失败结果绝不送去比 LOO；
+      · 阻断型物理护栏（两条）：P(R_ad < 3σ̂) > 0.5（幅值与噪声同量级，
+        v1.1 按 σ 不按 |Z|max）、P(f_c > f_max) > 0.5（退化为串联 L，
+        已被 include_L 建模）；
+      · **降级不阻断**：corr(R_ad, R_inf) ≤ −0.8（M3 标定的简并区）只把
+        R_ad 的报告口径降级为"存在低频感性弛豫"，不阻止切换——Δ 显著时
+        拦回 none 等于丢掉更好的模型（实测 Δelpd=+121、acf 0.89→0.49）；
+      · gate.strong=False 不进比较（三闸有任一未全过 = 假阳性风险未排除）；
+      · 切换门槛 Δ ≥ max(2, 1.5·dse)，Δ 为配对差（ad − none，正 = ad 更好）；
+      · 0 ≤ Δ < 门槛 → uncertain（合法输出，保持 none）；Δ < 0 → ad_worse。
+    """
+    out = dict(choice="none", status="not_tested", reason="", gate=gate,
+               delta=None, dse=None, threshold=None, guards={}, note=[])
+    if not gate or not gate.get("strong"):
+        g_stat = (gate or {}).get("status", "missing")
+        out.update(status="gate_not_strong",
+                   reason=f"门控 {g_stat}（三闸未全过），不进比较，保持 none")
+        return out
+    if ad_res is None:
+        out.update(status="fit_missing", reason="ad 未拟合，保持 none")
+        return out
+
+    guards = {
+        "ad_grade0": ad_res.get("grade") == 0,
+        "ad_bad_k": float(ad_res.get("bad_k") or 0) > 0.10,
+        "ad_loo_unavailable": not _finite(ad_res.get("elpd")),
+        "amp_unidentifiable": (_finite(ad_res.get("p_ad_small"))
+                               and float(ad_res["p_ad_small"]) > 0.5),
+        "corner_out_of_window": (_finite(ad_res.get("f_c_out_prob"))
+                                 and float(ad_res["f_c_out_prob"]) > 0.5),
+    }
+    out["guards"] = {k: bool(v) for k, v in guards.items()}
+    # Rad–R_inf 简并（M3 标定）**不是阻断条件**：实测某谱 Δelpd=+121、
+    # acf 0.89→0.49，环明显为真，若因"R_ad 绝对值不可单独引用"就拦回 none，
+    # 等于为了报告口径丢掉一个显著更好的模型。§6.2 的护栏清单本来也没列它，
+    # M3 的原话是「只报存在低频感性弛豫，不报 R_ad 单独值」= 改报告口径。
+    degenerate = _rad_rinf_degenerate(ad_res)
+    out["rad_rinf_degenerate"] = bool(degenerate)
+
+    if any(guards.values()):
+        bad = [k for k, v in guards.items() if v]
+        why = []
+        if guards["ad_grade0"] or guards["ad_bad_k"] \
+                or guards["ad_loo_unavailable"]:
+            why.append("ad 采样/LOO 不健康（先拦后比：失败结果不参与配对比较）")
+        if guards["amp_unidentifiable"]:
+            why.append("P(R_ad < 3σ̂) > 0.5：环幅值与噪声同量级，报了也没意义")
+        if guards["corner_out_of_window"]:
+            why.append("P(f_c > f_max) > 0.5：拐点在窗口上方，Z_ad 与串联 L "
+                       "简并——要报就报 L_eff，不要报 R_ad/τ_ad 单独值")
+        out.update(choice="none", status="guard_degraded",
+                   reason="不加 ad：" + "；".join(why) + f"（guards: {'、'.join(bad)}）")
+        return out
+
+    cmp = _paired_loo_diff(none_res, ad_res)     # Δ = ad − none，正 = ad 更好
+    if cmp is None:
+        out.update(status="comparison_incomplete",
+                   reason="两个家族没有可配对的逐点 LOO，保持 none")
+        return out
+    out.update(delta=cmp["delta"], dse=cmp["dse"], n=cmp["n"])
+    thr = max(2.0, 1.5 * cmp["dse"])
+    out["threshold"] = thr
+
+    if exploratory:
+        out["note"].append("quick 档采样预算撑不起严格结论，下面的比较只筛方向")
+
+    if cmp["delta"] < 0:
+        out.update(choice="none", status="ad_worse",
+                   reason=f"Δelpd(ad−none)={cmp['delta']:.2f} < 0，保持 none")
+        return out
+    if cmp["delta"] >= thr:
+        out.update(choice="ad", status="switched",
+                   reason=f"Δelpd(ad−none)={cmp['delta']:.2f} ≥ "
+                          f"max(2, 1.5·dse)={thr:.2f}（dse={cmp['dse']:.2f}），"
+                          f"切换到吸附 RL" + ("；quick 档需正式档复核" if exploratory else ""))
+        if degenerate:
+            out["note"].append(
+                "**R_ad 与 R_inf 强负相关（简并区）：模型切换成立（Δ 显著），"
+                "但 R_ad 的绝对值不能单独引用**——常数项与欧姆电阻沿补偿方向"
+                "滑动。报告只说「存在低频感性弛豫」，要报幅值就报 L_ad=R_ad·τ_ad "
+                "或带上相关性说明（见 _ad_line / M3 标定）。")
+        return out
+    out.update(choice="none", status="uncertain",
+               reason=f"Δelpd(ad−none)={cmp['delta']:.2f} 为正但未达 {thr:.2f}"
+                      f"（dse={cmp['dse']:.2f}）；证据不足，保持 none")
+    return out
+
+
+def _rad_rinf_degenerate(res, thr: float = -0.8) -> bool:
+    """corr(R_ad, R_inf) 强负 → 简并。两条口径都查：
+    param_corr 的 strong 列表（{a,b,rho}），以及后验样本直接算
+    （新列可能不在 strong 阈值里，但 −0.8 一定在 medium 以上）。"""
+    pc = res.get("param_corr") or {}
+    for item in list(pc.get("strong") or []) + list(pc.get("medium") or []):
+        pair = {item.get("a"), item.get("b")}
+        if pair == {"R_ad", "R_inf"} and _finite(item.get("rho")) \
+                and float(item["rho"]) <= thr:
+            return True
+    s = res.get("s")
+    if s is not None and "Rad" in s and "R_inf" in s:
+        a, b = np.asarray(s["Rad"], float), np.asarray(s["R_inf"], float)
+        if a.size >= 30 and np.std(a) > 0 and np.std(b) > 0:
+            rho = float(np.corrcoef(np.log(np.maximum(a, 1e-300)),
+                                    np.log(np.maximum(b, 1e-300)))[0, 1])
+            return rho <= thr
+    return False
+
+
 def component_review(res, f):
     """拟合后的**组分可辨识性审查**（与 K 选择分离，不改变 K）。
 
@@ -1487,6 +1811,8 @@ def report(res, include_L, zeta, f):
             print(f"  P({r['diff_amp_key']} < 1e-3·|Z|max) = {r['p_diff_small']:.2f}"
                   f"  ← 后验概率，衡量「幅值相对整条谱是否可忽略」；"
                   f"**不等于「没有扩散」**")
+    if r.get("adsorption") == "RL" and "Rad" in r["s"]:
+        print("  吸附项：" + _ad_line(r))
 
     # ---- 退化检查 ----
     sig = r.get("degeneracy") or []
@@ -1949,6 +2275,16 @@ def save_out(stem, f, Z, res, pres, include_L, zeta, tips, K_sel_note):
         param_corr=res.get("param_corr"),
         diffusion_resolution=res.get("diffusion_resolution"),
         auto_mechanism=res.get("auto_mechanism"),
+        # 吸附 RL（M4）：门控证据 + 选择结论 + 派生可辨识量，全部有则写。
+        # 与 auto_mechanism 并列——事后复核"这条谱有没有判过吸附、为什么"。
+        ad_gate=res.get("ad_gate"),
+        ad_selection=res.get("ad_selection"),
+        adsorption=res.get("adsorption"),
+        p_ad_small=(res.get("p_ad_small")
+                    if _finite(res.get("p_ad_small")) else None),
+        f_c_out_prob=(res.get("f_c_out_prob")
+                      if _finite(res.get("f_c_out_prob")) else None),
+        L_ad_uH=(res.get("L_ad") * 1e6 if _finite(res.get("L_ad")) else None),
         # DRT 去电感通道的决策（used/L/四道检查/扣前后残差）+ 噪声地板
         drt_deinduce=res.get("drt_deinduce"),
         sigma_floor=res.get("sigma_floor"),
@@ -1996,13 +2332,16 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
         include_L=None, zeta="1.0", dry=False, quick=False, ta=None,
         diffusion=None, kk_mode="gate", kk_opts=None, diag=None,
         drt_opts=None, sigma_floor=0.0, auto_mechanism=False,
-        auto_mechanism_full=False):
+        auto_mechanism_full=False, adsorption=None, auto_adsorption=False):
     """kk_mode: gate(fail 即拒绝定 K) | warn(只报告) | off(不跑门禁)。
     kk_opts 是传给 kk_check 的数值参数（c/max_M/res_tol/auto_L/...），
     不在代码里写死，由 config.json 统一管。
     diag 同理：事后诊断阈值（相关矩阵 / 扩散可分辨性），来自 config.json。
     drt_opts 是 DRT 去电感通道的阈值（min_share/tol_stab/min_gain/tol_neg）。
     sigma_floor 是噪声地板（相对 zmax），0.0 = 关闭。
+    adsorption：None(默认，逐位不变) / "RL" 手动加吸附元件。
+    auto_adsorption：True 时在 none 家族跑完后过 detect_ad 门控，三闸全过才
+    补跑 (K, adsorption='RL') 并配对比较（M4，§6.3 一期屏蔽 both，R8）。
     """
     drt_opts = drt_opts or {}
     sigma_floor = float(sigma_floor or 0.0)
@@ -2012,6 +2351,15 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
 
     if diffusion:
         print(f"  扩散项：{diffusion}（对比基线时用 --diffusion none）")
+    if adsorption or auto_adsorption:
+        print(f"  吸附项：{adsorption or '自动判定'}"
+              f"{'（与扩散互斥：一期屏蔽 both，见立项 §6.3）' if diffusion else ''}"
+              f"（关闭用 --adsorption none）")
+    if diffusion and adsorption:
+        # 立项 §6.3/R8：R_ad 与 R_W 在极低频不可分辨，同时放开会让后验
+        # 退化成脊线、R̂ 爆表。一期不做组合，直接拒绝而不是静默降级。
+        raise SystemExit("一期不支持 --diffusion 与 --adsorption 同时开启"
+                         "（R_ad 与 R_W 在低频段不可分辨，见 ADSORPTION_PROJECT.md §6.3）")
 
     if include_L is None:
         include_L = detect_L(f, Z)
@@ -2093,20 +2441,23 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
         print(f"  K 上界 {kmax} 是人为设定，选出的 K 只在这个范围内最优；"
               f"--wide 扫 1..{kmax}，--krange a,b 自定义")
 
-    def _fit_ks(diffusion_use, tag="", k_list=None):
-        """给定扩散家族，跑 K 扫描 + select_k。select_k 的语义不动。
+    def _fit_ks(diffusion_use, tag="", k_list=None, adsorption_use=None,
+                ad_init=None):
+        """给定扩散/吸附家族，跑 K 扫描 + select_k。select_k 的语义不动。
 
-        `k_list` 非空时只跑这些 K（跨家族补跑 Ws 用：固定 none 选出的 K，
-        不重扫，成本约 +1 次拟合）。
+        `k_list` 非空时只跑这些 K（跨家族补跑 Ws / ad 用：固定 none 选出的
+        K，不重扫，成本约 +1 次拟合）。
+        `ad_init` 是 `bm_ad.inv_from_lowfreq` 的粗估，仅在吸附家族且
+        init_reliable 时并入播种（见 init_values）。
         """
         res_list = []
         for K in (list(k_list) if k_list else ks):
-            init = init_values(pk, pres, K) if pk else None
+            init = init_values(pk, pres, K, ad_init=ad_init) if pk else None
             print(f"\n  --- K={K} 拟合中（播种={'是' if init else '否'}"
                   f"{('，' + tag) if tag else ''}）---")
             r = fit_one(f, Z, K, include_L, zeta, init=init, kw=kw,
                         diffusion=diffusion_use, diag=diag,
-                        sigma_floor=sigma_floor)
+                        sigma_floor=sigma_floor, adsorption=adsorption_use)
             print(f"      {r['t']:.0f}s  R̂max={r['rhat_max']:.3f} "
                   f"bulk={r['bulk_min']:.0f} tail={r['tail_min']:.0f} "
                   f"div={r['ndiv']} 触顶={r['tds']['frac_cap'] * 100:.1f}% "
@@ -2149,7 +2500,22 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
             print("  （只跑了一个 K，未做模型选择）")
         return best, note, res_list
 
-    best, note, res_list = _fit_ks(diffusion)
+    # 吸附粗估（§7.3）：手动 RL 或自动判定都用它做播种。粗估失败不致命，
+    # 退回先验中位数起步（只影响采样效率，不影响后验）。
+    ad_init = None
+    if (adsorption == "RL" or auto_adsorption) and AD is not None:
+        try:
+            ad_init = AD.inv_from_lowfreq(f, Z)
+            if not ad_init.get("init_reliable"):
+                print(f"  吸附粗估不可靠（interior={ad_init['interior']}, "
+                      f"low_half={ad_init['low_half']}, "
+                      f"prom={ad_init['prominence']:.2f}）→ 从先验起步")
+        except Exception as e:                   # noqa: BLE001
+            ad_init = None
+            print(f"  吸附粗估失败（{type(e).__name__}: {e}）→ 从先验起步")
+
+    best, note, res_list = _fit_ks(diffusion, adsorption_use=adsorption,
+                                   ad_init=ad_init)
 
     # ---- ③c 外层机制选择：none vs Ws（独立于 select_k）----
     # 只有默认 none 且显式 --auto-mechanism 才触发；手动 --diffusion Ws/Wo
@@ -2188,6 +2554,45 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
                 print("  → 采用 Ws 家族结果（K 固定为 none 选出的 K）")
                 best, note = best_ws, note_ws
     best["auto_mechanism"] = auto_mech
+
+    # ---- ③d 吸附判定：none vs ad(RL)（M4，独立于 select_k，§6.3 一期屏蔽 both）----
+    ad_gate, ad_sel = None, None
+    if auto_adsorption and adsorption is None and diffusion is None:
+        print("\n=== ③d 吸附判定（none vs ad(RL)，独立于 select_k） ===")
+        if auto_mech and auto_mech.get("choice") == "Ws":
+            # 机制已判扩散：一期不做 Ws+ad 组合（R_ad 与 R_W 低频不可分辨，R8）
+            ad_sel = dict(choice="none", status="ws_taken",
+                          reason="机制选择已判定 Ws（容性尾）；一期屏蔽 Ws+ad 组合，"
+                                 "不再评估吸附环",
+                          gate=None, delta=None, dse=None, threshold=None,
+                          guards={}, note=[])
+            print(f"  → 跳过吸附判定：{ad_sel['reason']}")
+        else:
+            ad_gate = detect_ad(f, Z, best)
+            print(f"  门控：{ad_gate['status']} — {ad_gate['reason']}")
+            if not ad_gate.get("enter"):
+                ad_sel = dict(choice="none", status="skipped_by_gate",
+                              reason=ad_gate["reason"], gate=ad_gate,
+                              delta=None, dse=None, threshold=None,
+                              guards={}, note=[])
+                print(f"  → 不补跑 ad：{ad_gate['reason']}")
+            else:
+                k_fixed = int(best["K"])
+                print(f"  补跑 ad(RL)：固定 K={k_fixed}（不重扫 K，"
+                      f"成本约 +1 次拟合）")
+                best_ad, note_ad, _ = _fit_ks(
+                    None, tag=f"ad/K={k_fixed}", k_list=[k_fixed],
+                    adsorption_use="RL", ad_init=ad_init)
+                ad_sel = select_adsorption(best, best_ad, ad_gate,
+                                           exploratory=bool(quick))
+                print(f"\n  → 吸附选择：{ad_sel['status']} — {ad_sel['reason']}")
+                for t in ad_sel.get("note", []):
+                    print(f"    · {t}")
+                if ad_sel["choice"] == "ad":
+                    print("  → 采用 ad(RL) 家族结果（K 固定为 none 选出的 K）")
+                    best, note = best_ad, note_ad
+    best["ad_gate"] = ad_gate
+    best["ad_selection"] = ad_sel
 
     if kk is not None:
         best["kk"] = kk
@@ -2281,16 +2686,24 @@ def main():
                          "不要为了让 R̂ 好看而调")
     ap.add_argument("--no-deinduce", action="store_true",
                     help="关闭 DRT 去电感通道，DRT 直接用原始 Z（对照用）")
+    ap.add_argument("--adsorption", default="none", choices=["none", "RL"],
+                    help="加吸附 RL 元件（低频感性环）：none(默认，逐位不变) / RL。"
+                         "与 --diffusion 互斥（一期屏蔽组合，见 ADSORPTION_PROJECT.md §6.3）")
+    ap.add_argument("--auto-adsorption", action="store_true",
+                    help="none 家族跑完后过 detect_ad 门控，三闸全过才补跑 ad(RL) "
+                         "并配对比较（不修改 select_k 语义）")
     a = ap.parse_args()
     if a.zeta == "free":
         print("** --zeta free：HN 的解析 DRT 在 ζφ>1 时会出负值，"
               "后验曲线只作可视化；峰位/面积的解释要先做可辨识性检查 **")
     diff = None if a.diffusion == "none" else a.diffusion
+    ads = None if a.adsorption == "none" else a.adsorption
     run(a.csv, K_force=a.K, krange=a.krange, wide=a.wide, kmax=a.kmax,
         include_L=a.L, zeta=a.zeta, dry=a.dry, quick=a.quick, ta=a.ta,
         diffusion=diff, kk_mode=a.kk,
         drt_opts={"deinduce": not a.no_deinduce},
-        sigma_floor=(a.sigma_floor or 0.0))
+        sigma_floor=(a.sigma_floor or 0.0),
+        adsorption=ads, auto_adsorption=a.auto_adsorption)
 
 
 if __name__ == "__main__":

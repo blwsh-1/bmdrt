@@ -104,7 +104,8 @@ DEFAULTS = {
     "fit": {"krange": None, "wide": False, "kmax": 5, "quick": False,
             "ta": None, "include_L": None, "zeta": "1.0",
             "sigma_floor": 0.0, "auto_mechanism": False,
-            "auto_mechanism_full": False},
+            "auto_mechanism_full": False,
+            "adsorption": None, "auto_adsorption": False},
     "kk": {"mode": "gate", "c": 0.85, "max_M": 50, "res_tol": 0.05,
            "auto_L": True, "auto_tail": True, "auto_cap": True},
     "drt": {"deinduce": True, "n_hi": 5, "min_share": 5e-3,
@@ -263,7 +264,11 @@ def process_one(path: Path, cfg: dict) -> dict:
                       drt_opts=drtcfg,
                       sigma_floor=float(fit.get("sigma_floor", 0.0) or 0.0),
                       auto_mechanism=bool(fit.get("auto_mechanism", False)),
-                      auto_mechanism_full=bool(fit.get("auto_mechanism_full", False)))
+                      auto_mechanism_full=bool(fit.get("auto_mechanism_full", False)),
+                      adsorption=(None if str(fit.get("adsorption") or "none").lower()
+                                  in ("none", "", "null")
+                                  else str(fit.get("adsorption"))),
+                      auto_adsorption=bool(fit.get("auto_adsorption", False)))
                 js = outdir / f"real_{stem}.json"
                 rec["ok"] = js.exists()
                 rec["json"] = str(js) if js.exists() else None
@@ -503,9 +508,16 @@ def _move_to(p: Path, sub: str, cfg: dict) -> Path:
 def _apply_cli(cfg: dict, opt: dict):
     fit = cfg["fit"]
     for k in ("krange", "wide", "kmax", "quick", "ta", "zeta", "diffusion",
-              "auto_mechanism", "auto_mechanism_full"):
+              "auto_mechanism", "auto_mechanism_full", "auto_adsorption"):
         if opt.get(k) is not None:
             fit[k] = opt[k]
+    # --adsorption：与 --diffusion 同处理，"none"/""/"null" 归一成 None。
+    # **必须归一到规范大写 "RL"**：下游 make_model / fit_one 的判据是
+    # `adsorption == "RL"`（大小写敏感），直接 .lower() 会让开关静默失效
+    # —— 与 --diffusion 不同，那边的取值本身就是小写（ws/wo）。
+    if opt.get("adsorption") is not None:
+        _ad = str(opt["adsorption"]).strip().lower()
+        fit["adsorption"] = {"rl": "RL"}.get(_ad)
     # --sigma-floor 之前不在拷贝列表里，命令行传参被静默忽略（审查 P2-3）。
     if opt.get("sigma_floor") is not None:
         fit["sigma_floor"] = float(opt["sigma_floor"])
@@ -707,6 +719,7 @@ def parse_opts(argv: list[str]) -> tuple[list[str], dict]:
            "ta": None, "zeta": None, "L": None, "no_move": False,
            "out": None, "inbox": None, "interval": None, "kk": None,
            "auto_mechanism": None, "auto_mechanism_full": None,
+           "adsorption": None, "auto_adsorption": None,
            "sigma_floor": None, "no_deinduce": False,
            "fit": False, "fast": False}
     paths, i = [], 0
@@ -727,6 +740,8 @@ def parse_opts(argv: list[str]) -> tuple[list[str], dict]:
             opt["auto_mechanism"] = True
         elif a == "--auto-mechanism-full":
             opt["auto_mechanism_full"] = True
+        elif a == "--auto-adsorption":
+            opt["auto_adsorption"] = True
         elif a == "--fit":
             opt["fit"] = True
         elif a == "--fast":

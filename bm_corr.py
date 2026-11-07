@@ -82,6 +82,11 @@ def _columns(s: dict, include_L, mm=None):
     add("Rw", s.get("Rw"))
     add("Rwo", s.get("Rwo"))
     add("tauD", s.get("tauD"))
+    # 吸附 RL（M4）：Rad 与 R_inf 的补偿方向（Z_ad = R − R/(1+jωτ) 的常数
+    # 部分被 R_inf 吸收）是已知简并，必须进矩阵才看得见（M3 标定实测拐点
+    # 居中时 corr(Rad,R_inf) 强负、R_ad 报出 -90% 的假值）。
+    add("R_ad", s.get("Rad"))
+    add("tau_ad", s.get("tau_ad"))
 
     # ---- 分量参数 ----
     if mm is not None:

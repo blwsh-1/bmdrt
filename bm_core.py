@@ -97,6 +97,11 @@ try:                                    # 扩散元件是可选层，缺了不�
 except Exception:                       # pragma: no cover
     D = None
 
+try:                                    # 吸附 RL 元件（M2）同样是可选层
+    import bm_ad as A
+except Exception:                       # pragma: no cover
+    A = None
+
 
 # --------------------------------------------------------------------------
 # 阻抗与 DRT 的解析式（纯 numpy，供前向计算和后处理用）
@@ -172,6 +177,7 @@ def model_z(f, p, include_L=True):
     "基础模型"和"基础模型 + 扩散项"，不需要分支参数。
       · p["Aw"]              → 半无限 Warburg，A_W 单位 Ω·s^(-1/2)
       · p["Rwo"] + p["tauD"] → 有限长阻挡 Warburg（coth）
+      · p["Rad"] + p["tau_ad"] → 吸附 RL（M2，Z = R·jωτ/(1+jωτ)）
     """
     z = np.full(len(f), float(p["R_inf"]), complex)
     if include_L and "L" in p:
@@ -185,6 +191,10 @@ def model_z(f, p, include_L=True):
             z = z + D.z_winf(f, float(p["Aw"]))
         if "Rwo" in p and "tauD" in p:
             z = z + D.z_wopen(f, float(p["Rwo"]), float(p["tauD"]))
+    if "Rad" in p and "tau_ad" in p:
+        if A is None:                   # pragma: no cover
+            raise ImportError("需要吸附项但 bm_ad 不可用")
+        z = z + A.z_ad(f, float(p["Rad"]), float(p["tau_ad"]))
     return z
 
 
@@ -195,7 +205,8 @@ def model_z(f, p, include_L=True):
 def make_model(K: int = 10, alpha: float | None = 1.0, sigma: tuple | None = None,
                include_L: bool = False, pad_dec: float = 1.5,
                zeta_fixed: float | None = None, phi_lo: float = 0.5,
-               diffusion: str | None = None, sigma_floor: float = 0.0):
+               diffusion: str | None = None, sigma_floor: float = 0.0,
+               adsorption: str | None = None):
     """alpha=None → 让 α~Exp(1) 进采样（复现论文）；否则固定。
 
     zeta_fixed：把 ζ 钉死（如 1.0 = 纯 ZARC 基底），用于隔离
@@ -291,6 +302,18 @@ def make_model(K: int = 10, alpha: float | None = 1.0, sigma: tuple | None = Non
         if include_L:
             L = numpyro.sample("L", dist.LogNormal(jnp.log(1e-6), 2.0))
             Zt = Zt + 1j * omega * L
+        # ---- 吸附 RL 项（M2，默认不加，行为与旧版一致）----
+        # 恒等式 Z_ad = R − R/(1+jωτ)：常数部分与 R_inf 竞争，采样参数是
+        # 环直径 Rad 与弛豫时间 tau_ad（L_ad=Rad·tau_ad 只报告不采样，
+        # 见 bm_ad 命名表）。先验与 Rw/Rwo、tauD 同尺度同理由：宽 σ=2，
+        # 不替数据做主；tau_ad 中心放窗口几何中心，±1.7 dec。
+        if adsorption == "RL":
+            if A is None:               # pragma: no cover
+                raise ImportError("adsorption='RL' 但 bm_ad 不可用")
+            Rad = numpyro.sample("Rad", dist.LogNormal(jnp.log(0.1 * zmax), 2.0))
+            tau_ad = numpyro.sample("tau_ad",
+                                    dist.LogNormal(jnp.log(1.0 / omega_ref), 2.0))
+            Zt = Zt + A.j_z_ad(omega, Rad, tau_ad)
 
         if sigma is None:
             if sigma_floor > 0:
@@ -500,6 +523,9 @@ def sample_params(s: dict, i: int, include_L: bool = True) -> dict:
     if "Rwo" in s and "tauD" in s:
         p["Rwo"] = s["Rwo"][i]
         p["tauD"] = s["tauD"][i]
+    if "Rad" in s and "tau_ad" in s:
+        p["Rad"] = s["Rad"][i]
+        p["tau_ad"] = s["tau_ad"][i]
     return p
 
 
@@ -509,7 +535,7 @@ def fit(f, Z, K: int = 10, alpha: float | None = 1.0, sigma: tuple | None = None
         target_accept: float = 0.9, zeta_fixed: float | None = None,
         init_values: dict | None = None, max_tree_depth: int = 10,
         extra_fields: tuple = (), diffusion: str | None = None,
-        sigma_floor: float = 0.0):
+        sigma_floor: float = 0.0, adsorption: str | None = None):
     """跑 NUTS。
 
     num_chains > 1 时才有 R-hat；单链的 R-hat 恒等于 1，不能当收敛证据。
@@ -525,6 +551,9 @@ def fit(f, Z, K: int = 10, alpha: float | None = 1.0, sigma: tuple | None = None
     diffusion：透传给 `make_model`。None = 基础模型（与改动前逐位一致）。
 
     sigma_floor：透传给 `make_model`。0.0 = 关闭（默认，行为不变）。
+
+    adsorption：透传给 `make_model`。None = 基础模型（与改动前逐位一致）；
+    "RL" = 采样 Rad / tau_ad 并加 Z_ad（M2，见 bm_ad / ADSORPTION_PROJECT）。
     """
     if not HAS_NUMPYRO:                 # pragma: no cover
         raise ImportError("需要 numpyro 才能采样。纯后处理/自检（bm_check、"
@@ -535,7 +564,7 @@ def fit(f, Z, K: int = 10, alpha: float | None = 1.0, sigma: tuple | None = None
     Z = np.asarray(Z, complex)
     m = make_model(K, alpha=alpha, sigma=sigma, include_L=include_L,
                    zeta_fixed=zeta_fixed, diffusion=diffusion,
-                   sigma_floor=sigma_floor)
+                   sigma_floor=sigma_floor, adsorption=adsorption)
     # init_strategy 不能传 None（numpyro 0.19 会走到 substitute(data=None) 分支报
     # "Only one of data or substitute_fn"），只在真要初始化时才加这个 kwarg。
     kw = dict(target_accept_prob=target_accept, max_tree_depth=max_tree_depth)
