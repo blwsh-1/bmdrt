@@ -56,6 +56,10 @@ python bmdrt.py
 # Windows 一键：双击 bmdrt.bat
 ```
 
+> **解释器**：本项目实际跑通的环境是 `D:\autoeis_env\Scripts\python.exe`（Python 3.10.7），
+> `bmdrt.bat` 已把它写死。若你的 `python` 指向别的环境（例如系统里另装的 3.13），
+> 模块自检会直接 `ModuleNotFoundError: numpy`——用绝对路径调解释器即可，不要重新装包。
+
 输出按「一个输入 → 一个独立目录」组织，互不覆盖：
 
 ```
@@ -271,7 +275,8 @@ bm_kk.py          拟合前 Lin-KK 分级门禁（ok/warn/fail/unavailable）
 bm_corr.py        全参数后验相关矩阵 + 90% 区间（可单独对 npz 重算）
 bm_diff.py        扩散元件 + HN↔Warburg 退化诊断 + Ws/Wo 可分辨性
 bm_ad.py          低频吸附电感元件 R_ad∥L_ad（M1–M5，默认关）
-bm_top.py         嵌套并联拓扑（M1：CPE + R∥L/R+L 支路 + 正演 + 自检，未接采样器）
+bm_top.py         嵌套并联拓扑（M1 正演 + M3 原型 fit_top 独立 NUTS，未经注册表）
+bm_top_gen.py     嵌套并联拓扑的**独立生成器**（M3 档 1：四种拓扑手写导纳递推）
 drt.py            传统 Tikhonov DRT 预判断
 bm_experiments.py R̂ / ESS / 树深 / acf
 bm_check.py       18 项数学自检
@@ -405,13 +410,14 @@ not_compared, rejected_by_kk}`（旧结果文件里的 `ok` 是 `converged` 的�
 | `DIFFUSION_PLAN.md` | 扩散扩展方案：数学、先验、测试矩阵、模型选择 |
 | `ADSORPTION_PROJECT.md` | **低频吸附电感元件立项书**：`R_ad∥L_ad` 定义、负 RC 恒等式、DRT 盲区、三区间可辨识性、M0–M6 里程碑与验收标准 |
 | `MODEL_COVERAGE_PLAN.md` | **模型体系规划与覆盖地图**：三层架构（基础 / 特殊响应 / 族选择与可辨识性）、11 项现象覆盖状态与证据等级、注册表接口约定、可辨识性报告规范、按证据排序的立项队列与准入规则 |
-| `BM_TOP_M3_PLAN.md` | **`fit_top()` 接口设计与 M3 验收清单（草案）**：现有采样接口摊开、候选 A/B/C 对比、参数先验冻结表、生成器独立性、三档验收与失败记录规范 |
-| `NESTED_TOPOLOGY_PROJECT.md` | **嵌套并联电路拓扑立项书**：为何串联 Voigt 表达不了低频感抗环（三个硬约束）、理论上限对照（30.5% vs 6.7%）、渐近极限、`Rs≈0` 不可辨识警报、CPE 窗口幅值参数化、M0–M6（**M1–M6 暂缓**） |
+| `BM_TOP_M3_PLAN.md` | **`fit_top()` 接口设计与 M3 验收清单（v3，已按审查冻结）**：现有采样接口摊开、候选 A/B/C 对比、参数先验冻结表、生成器独立性、三档验收与失败记录规范、`fit_top()` 实现记录与冒烟边界 |
+| `NESTED_TOPOLOGY_PROJECT.md` | **嵌套并联电路拓扑立项书**：为何串联 Voigt 表达不了低频感抗环（三个硬约束）、理论上限对照（30.5% vs 6.7%）、渐近极限、`Rs≈0` 不可辨识警报、CPE 窗口幅值参数化、M0–M6（M0/M1 完成；M2 以独立 `fit_top()` 替代，未动 `bm_core`；M3 进行中） |
 | `evidence/nested_topology/theoretical_bound.py` | 表达力证据：scipy 全局最小二乘对照，内置合成谱自包含，也可用 `--data` 跑真实谱 |
 | `evidence/nested_topology/identifiability_check.py` | 可辨识性证据：渐近极限 / `Rs` 剖面 / 高频窗口截断，同样支持内置合成与 `--data` |
 | `AD_M6_SAMPLING.md` | **吸附电感 M6 抽样验证记录**：18 条真实含环谱盘点、4+10 分层抽样设计、首个真实正例（正式档复核）、门控两处缺陷、`inv_from_lowfreq` 偏差实证、抽样置信上界与分阶段全量方案 |
 | `AD_GATE_SPEC.md` | **吸附门控边界状态规格**：`enter`/`strong` 严格分离、五状态定义、新增 `edge_peak`、`d_low` 与采样密度判据（`2/dens`）、"不增加假阳性"的不变性论证、M6 开发顺序与验收口径 |
 | `evidence/ad_m6/sampling_check.py` | M6 抽样脚本：`inventory` 盘点 / `prepare` 转 csv+分层 / `summarize` 汇总结果 / `edges` 边界峰与 `d_low` 分析 |
+| `evidence/kk_review/verify_review.py` | **外部审查意见的逐条核实**（残差口径是绝对还是相对 / Lin-KK 是否自带串联电感、M 有没有被强行加大 / 三条护栏常数），只读复现，不改代码与结果 |
 | `docs/cases/blank_0.1KBr_pH10/` | **真实 EIS 谱模型选择诊断案例**（最新版本）：四层可辨识性规格、逐频点 LOO 与配对 dse、精确 HN 参考频率贡献、2×3 统一比较、合成谱用例与历史回放。文档 / 脚本 / CSV / JSON 齐备；NPZ 与 run.log 按约定不入库 |
 
 `evidence/b2x/paired_loo.py` 用于跨配置配对 LOO：

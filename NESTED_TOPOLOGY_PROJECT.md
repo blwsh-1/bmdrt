@@ -372,16 +372,19 @@ select_across_families(best_of_each) →
 
 ## 8. 里程碑
 
-> **状态（v1.2）：M0 完成，M1–M6 暂缓。** 先按 `MODEL_COVERAGE_PLAN.md`
-> 落地第三层架构（注册表 + 可辨识性报告规范），并把本立项书的三处模型问题
-> 修订完，再开工。审查意见明确"现在不用急着改代码，先把模型体系规划好"。
+> **状态（2026-11-07 更新）：M0 ✅、M1 ✅；M2 改为"独立 `fit_top()`"绕开注册表（§13.5 的
+> 备选方案被采纳，`bm_core.make_model` 一行未动）；M3 进行中（档 1 独立生成器已完成，
+> 见 `BM_TOP_M3_PLAN.md` §5/§12）；M4–M6 未开始。**
+>
+> 原 v1.2 的顺序（先落 `MODEL_COVERAGE_PLAN.md` 的第三层架构再开工）已按审查结论调整：
+> 第三层架构仍然不做，但允许以**独立模块 + 独立采样器**的方式先取得 M3 证据。
 
 | 阶段 | 内容 | 产出 | 回归要求 |
 |---|---|---|---|
 | **M0 立项** ✅ | 表达力证据 + **可辨识性证据** + 规划层 | `NESTED_TOPOLOGY_PROJECT.md` v1.2、`MODEL_COVERAGE_PLAN.md`、`theoretical_bound.py`、`identifiability_check.py` | 四份产物可独立复现；确认的是**表达能力差异**，不升级成物理结论 |
-| **M1 元件 + 正演** ✅ | `bm_top.py`：`z_cpe`（窗口幅值参数化）、`z_rl_parallel` / `z_rl_series`、`z_nested` / `j_z_nested`（支持 `branch` 与 `layers`） | `bm_top.py` + 自检 8 项 | `python bm_top.py` 全过；**未改动任何现有文件** |
-| **M2 接入独立采样路径** | 经 `registry` / `fit_family()` 接入，**不改 `bm_core.model_z` / `make_model` 的 Voigt 分支** | 代码 + 单测 | **`topology=voigt` 逐位不变** |
-| **M3 合成标定（v1.2 扩充）** | 三类谱：① 纯 nested 生成（自身还原）② **纯 Voigt 生成**（nested 是否过度拟合）③ **混合边界生成**（退化/截断/噪声下是否错误切换）；另加 §4.6 的 `Rs` 可辨识性、窗口截断、`Rs↔(Y1,n1)` 相关、扩展窗口收敛性 | 标定表 + 单测 | `Rad/τ` 后验中位数误差 ≤20%；`Rs` 明确标为不可辨识；三类谱选择器零错误切换 |
+| **M1 元件 + 正演** ✅ | `bm_top.py`：`z_cpe`（窗口幅值参数化）、`z_rl_parallel` / `z_rl_series`、`z_nested` / `j_z_nested`（支持 `branch` 与 `layers`） | `bm_top.py` + 自检 9 项 | `python bm_top.py` 全过；**未改动任何现有文件** |
+| **M2 接入独立采样路径** 🔶 绕开 | **未走 `registry`**：改为 `bm_top.fit_top()` 独立 NUTS（审查批准的候选 A），`bm_core.model_z` / `make_model` 一行未动，代价是暂时没有统一注册表 | `fit_top()` + 冒烟记录 | `topology=voigt` 路径完全未被触碰（不是"逐位不变"，是"没有路径"） |
+| **M3 合成标定（v1.2 扩充）** 🔶 进行中 | 三类谱：① 纯 nested 生成（自身还原）② **纯 Voigt 生成**（nested 是否过度拟合）③ **混合边界生成**（退化/截断/噪声下是否错误切换）；另加 §4.6 的 `Rs` 可辨识性、窗口截断、`Rs↔(Y1,n1)` 相关、扩展窗口收敛性 | 标定表 + 单测 | `Rad/τ` 后验中位数误差 ≤20%；`Rs` 明确标为不可辨识；三类谱选择器零错误切换。**当前进度**：档 1 独立生成器完成（`bm_top_gen.py`，四拓扑 rel err < 1e-10），档 2/3 未开始 |
 | **M4 自动判定** | `select_across_families` + 跨族配对 LOO（**同一似然、同一噪声口径**）+ 护栏 + 修 KK 低频误归因（§4.5） | 代码 + 单测 | Blank（无环）保留 voigt；AZ31 切 nested |
 | **M5 峰数预判适配** | nested 族的 `L` 怎么定（见下）；**nested 不使用 Voigt 的 DRT 峰数语义** | 代码 + 单测 | 不把 `L` 误报成 DRT 峰数；DRT 预判不被环撑大 |
 | **M6 真实数据 + 全量回归** | AZ31 + Blank + 117 条 2E | 证据 + 报告（含解释边界） | 三道回归全过；关键输出逐位一致 |

@@ -43,6 +43,9 @@ evidence/nested_topology/*
 !evidence/ad_m6/
 evidence/ad_m6/*
 !evidence/ad_m6/sampling_check.py
+!evidence/kk_review/
+evidence/kk_review/*
+!evidence/kk_review/verify_review.py
 
 # ---------------------------------------------------------------------------
 # 原始测量数据：可能含未发表数据，默认不上传
