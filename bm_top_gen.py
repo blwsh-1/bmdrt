@@ -279,7 +279,7 @@ def _selftest(args) -> int:
         passed = e_max < 1e-10 and bad == 0
         ok &= passed
         worst[key] = e_max
-        print(f"[1-1] {key:<12} 90 组 × 3 频栅：最大 rel err {e_max:.2e}"
+        print(f"[1-1] {key:<12} 30 组参数 × 3 频栅（90 次对拍）：最大 rel err {e_max:.2e}"
               f"（{e_arg}）  非有限 {bad} 个  {'✓' if passed else '✗'}")
         rec["checks"].setdefault("1-1", {})[key] = {
             "max_rel_err": e_max, "nonfinite": bad, "pass": bool(passed)}

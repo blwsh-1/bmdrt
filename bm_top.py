@@ -562,8 +562,10 @@ def fit_top(f, Z, *, branch: str = "parallel", layers: int = 2,
 
     from numpyro.diagnostics import summary
     st = summary(s_ch, prob=0.9, group_by_chain=True)
-    rhat = [float(np.nanmax(np.asarray(v["r_hat"]))) for v in st.values()]
-    ess = [float(np.nanmin(np.asarray(v["n_eff"]))) for v in st.values()]
+    # 逐参数记录：只报 max 时看不出是哪个参数在拖后腿（地形问题通常集中在 1–2 个）
+    rhat_map = {k: float(np.nanmax(np.asarray(v["r_hat"]))) for k, v in st.items()}
+    ess_map = {k: float(np.nanmin(np.asarray(v["n_eff"]))) for k, v in st.items()}
+    rhat, ess = list(rhat_map.values()), list(ess_map.values())
     div = mcmc.get_extra_fields().get("diverging")
 
     return {
@@ -580,6 +582,8 @@ def fit_top(f, Z, *, branch: str = "parallel", layers: int = 2,
         "divergences": int(np.sum(div)) if div is not None else None,
         "rhat_max": max(rhat) if rhat else None,
         "ess_min": min(ess) if ess else None,
+        "rhat_by_param": rhat_map,
+        "ess_by_param": ess_map,
         "branch": branch, "layers": layers,
         "f_ref": float(np.sqrt(f.min() * f.max())),
     }

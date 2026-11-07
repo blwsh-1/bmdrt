@@ -72,6 +72,19 @@ def make_spectrum(noise: float = 0.02, seed: int = 0, branch: str = "parallel",
     return f, Z, zmax
 
 
+def _truth_of_comb(name: str, truth: dict):
+    """组合参数对应的真值（真值来自同一组 `truth_params`）。"""
+    if name == "R1+R2":
+        return truth["R1"] + truth["R2"]
+    if name.startswith("L_ad"):
+        if "R_ad" in truth:
+            return truth["R_ad"] * truth["tau_ad"]
+        return truth["R_L"] * truth["tau_L"]
+    if name.startswith("R2·Q2"):
+        return truth["R2"] * truth["Q2"] ** truth["n2"]
+    return None
+
+
 def summarize(res: dict, truth: dict, branch: str, layers: int,
               sigma_note: str) -> dict:
     """把一个 `fit_top` 结果压成可记录的指标。"""
@@ -100,11 +113,42 @@ def summarize(res: dict, truth: dict, branch: str, layers: int,
                 np.asarray(s[k]).size > 1]
     M = np.column_stack([np.asarray(s[k], float).ravel() for k in mat_keys])
     C = np.corrcoef(M, rowvar=False)
+    idx = {k: i for i, k in enumerate(mat_keys)}
     pairs = []
     for i in range(len(mat_keys)):
         for j in range(i + 1, len(mat_keys)):
             pairs.append((mat_keys[i], mat_keys[j], float(C[i, j])))
     pairs.sort(key=lambda t: -abs(t[2]))
+
+    # 审查点名要看：优先恢复参数 vs 形状参数（§6.2 的"结构简并"来源）
+    pri_keys = [k for k in ("R_ad", "tau_ad", "R_L", "tau_L") if k in idx]
+    shape_keys = [k for k in ("Rs", "R1", "R2", "Q1", "n1", "Q2", "n2") if k in idx]
+    pri_shape = [{"a": a, "b": b, "rho": float(C[idx[a], idx[b]])}
+                 for a in pri_keys for b in shape_keys]
+
+    # 组合参数（§6.2："无法分别辨识者，报告可辨识的组合"）
+    comb = {}
+    if {"R1", "R2"} <= set(s):
+        comb["R1+R2"] = np.asarray(s["R1"], float).ravel() + np.asarray(s["R2"], float).ravel()
+    if branch == "parallel":
+        comb["L_ad(=R_ad·tau_ad)"] = (np.asarray(s["R_ad"], float).ravel()
+                                      * np.asarray(s["tau_ad"], float).ravel())
+    else:
+        comb["L_ad(=R_L·tau_L)"] = (np.asarray(s["R_L"], float).ravel()
+                                    * np.asarray(s["tau_L"], float).ravel())
+    if branch == "parallel" and "R2" in s:      # CPE 的"等效容抗"组合，Q 与 n 强耦合时看
+        comb["R2·Q2^n2"] = (np.asarray(s["R2"], float).ravel()
+                            * np.asarray(s["Q2"], float).ravel()
+                            ** np.median(np.asarray(s["n2"], float).ravel()))
+    for k, v in comb.items():
+        lo, med, hi = np.percentile(v, [5, 50, 95])
+        rec = {"median": float(med), "p05": float(lo), "p95": float(hi),
+               "width90": float(hi - lo), "n": int(v.size)}
+        tv = _truth_of_comb(k, truth)
+        if tv is not None:
+            rec.update(truth=float(tv), rel_err=float((med - tv) / tv),
+                       covered=bool(lo <= tv <= hi))
+        out.setdefault("combinations", {})[k] = rec
 
     pw = res.get("pointwise_elpd")
     pk = np.asarray(res.get("pareto_k", []), float)
@@ -113,6 +157,8 @@ def summarize(res: dict, truth: dict, branch: str, layers: int,
     out["diagnostics"] = {
         "rhat_max": res.get("rhat_max"),
         "ess_min": res.get("ess_min"),
+        "rhat_by_param": res.get("rhat_by_param") or {},
+        "ess_by_param": res.get("ess_by_param") or {},
         "divergences": div,
         "div_frac": (None if div is None else float(div) / max(n_draws, 1)),
         "n_draws": n_draws,
@@ -122,6 +168,9 @@ def summarize(res: dict, truth: dict, branch: str, layers: int,
         "pareto_k_gt07_frac": (float(np.mean(pk > 0.7)) if pk.size else None),
         "corr_max_abs": (abs(pairs[0][2]) if pairs else None),
         "corr_top": [{"a": a, "b": b, "rho": r} for a, b, r in pairs[:5]],
+        "corr_pri_vs_shape": pri_shape,
+        "corr_pri_vs_shape_max": (max(abs(c["rho"]) for c in pri_shape)
+                                  if pri_shape else None),
     }
     return out
 
@@ -148,7 +197,8 @@ def acceptance(rec: dict, n_freq: int,
 
 def run_stage(stage: str, *, seed: int, noise: float, branch: str, layers: int,
               n_warmup: int, n_samples: int, n_chains: int, progress: bool,
-              init_mode: str = "prior") -> dict:
+              init_mode: str = "prior", target_accept: float = 0.9,
+              max_tree_depth: int = 10, samples_path: str | None = None) -> dict:
     f, Z, zmax = make_spectrum(noise=noise, seed=seed, branch=branch, layers=layers)
     truth = truth_params(branch, layers)
 
@@ -165,15 +215,19 @@ def run_stage(stage: str, *, seed: int, noise: float, branch: str, layers: int,
     t0 = time.time()
     res = T.fit_top(f, Z, branch=branch, layers=layers,
                     n_warmup=n_warmup, n_samples=n_samples, num_chains=n_chains,
-                    seed=seed, sigma=sigma, init_values=init, progress=progress)
+                    seed=seed, sigma=sigma, init_values=init, progress=progress,
+                    target_accept=target_accept, max_tree_depth=max_tree_depth)
     dt = time.time() - t0
+    if samples_path:
+        np.savez_compressed(samples_path, **{k: np.asarray(v) for k, v in res["s"].items()})
 
     rec = summarize(res, truth, branch, layers,
                     "fixed 2%·zmax" if stage == "a" else "free LogNormal(0.01·zmax,1)")
     rec.update(stage=stage, seed=seed, noise=noise, branch=branch, layers=layers,
                n_chains=n_chains, n_samples=n_samples, n_warmup=n_warmup,
                n_freq=int(f.size), zmax=zmax, seconds=round(dt, 1),
-               init_mode=init_mode, truth=truth)
+               init_mode=init_mode, target_accept=target_accept,
+               max_tree_depth=max_tree_depth, truth=truth)
     rec["acceptance"] = acceptance(rec, int(f.size))
     return rec
 
@@ -195,6 +249,17 @@ def print_record(rec: dict) -> None:
                   f"{v['rel_err']:>+9.2%}{cover:>6}")
         else:
             print(f"{k:<8}{'—':>10}{v['median']:>12.4g}{ci:>26}")
+    comb = rec.get("combinations") or {}
+    if comb:
+        print(f"\n{'组合参数':<20}{'真值':>12}{'中位':>12}{'90% 区间':>26}{'相对误差':>10}{'覆盖':>6}")
+        for k, v in comb.items():
+            ci = "[{:.4g}, {:.4g}]".format(v["p05"], v["p95"])
+            if "truth" in v:
+                cover = "✓" if v["covered"] else "✗"
+                print(f"{k:<20}{v['truth']:>12.4g}{v['median']:>12.4g}{ci:>26}"
+                      f"{v['rel_err']:>+9.2%}{cover:>6}")
+            else:
+                print(f"{k:<20}{'—':>12}{v['median']:>12.4g}{ci:>26}")
     print(f"\n诊断  R̂max={d['rhat_max']:.4f}  ESSmin={d['ess_min']:.0f}  "
           f"div={d['divergences']} ({d['div_frac']:.4%})")
     print(f"      elpd={d['elpd']:.2f}±{d['elpd_se']:.2f}  "
@@ -203,6 +268,14 @@ def print_record(rec: dict) -> None:
     print("      最强相关：")
     for c in d["corr_top"][:3]:
         print(f"        corr({c['a']}, {c['b']}) = {c['rho']:+.3f}")
+    rb = d.get("rhat_by_param") or {}
+    if rb:
+        bad = sorted(rb.items(), key=lambda kv: -kv[1])[:3]
+        print("      R̂ 最差参数：" + "，".join(f"{k}={v:.4f}" for k, v in bad))
+    if d.get("corr_pri_vs_shape_max") is not None:
+        worst = max(d["corr_pri_vs_shape"], key=lambda c: abs(c["rho"]))
+        print(f"      优先恢复 × 形状参数 最大 |ρ| = {abs(worst['rho']):.3f}"
+              f"（{worst['a']} vs {worst['b']}）")
     a = rec["acceptance"]
     print(f"\n判定（仅本组）：{'通过' if a['pass'] else '未通过'}"
           f"  优先恢复参数最大误差 {a['pri_err_worst']:.2%}")
@@ -220,19 +293,35 @@ def main(argv=None) -> int:
     ap.add_argument("--smoke", action="store_true", help="1 链 150 样本，只验链路")
     ap.add_argument("--init", choices=["prior", "oracle"], default="prior",
                     help="prior=默认随机初值（正式用）；oracle=真值初值（只做诊断）")
+    ap.add_argument("--warmup", type=int, default=None, help="覆盖 warmup 步数")
+    ap.add_argument("--samples", type=int, default=None, help="覆盖每链样本数")
+    ap.add_argument("--chains", type=int, default=None, help="覆盖链数")
+    ap.add_argument("--target-accept", type=float, default=0.9)
+    ap.add_argument("--max-tree-depth", type=int, default=10)
+    ap.add_argument("--save-samples", action="store_true", help="把后验样本存成 npz 备查")
     ap.add_argument("--progress", action="store_true", help="打印 MCMC 进度条")
     ap.add_argument("--json", default=None)
     args = ap.parse_args(argv)
 
     kw = dict(n_warmup=150, n_samples=150, n_chains=1) if args.smoke else \
         dict(n_warmup=600, n_samples=1200, n_chains=4)
+    if args.warmup:
+        kw["n_warmup"] = args.warmup
+    if args.samples:
+        kw["n_samples"] = args.samples
+    if args.chains:
+        kw["n_chains"] = args.chains
 
     stages = ["a", "b"] if args.stage == "both" else [args.stage]
     recs = []
     for st in stages:
+        sp = None
+        if args.save_samples and args.json:
+            sp = str(Path(args.json).with_suffix(f".{st}.samples.npz"))
         rec = run_stage(st, seed=args.seed, noise=args.noise, branch=args.branch,
                         layers=args.layers, progress=args.progress,
-                        init_mode=args.init, **kw)
+                        init_mode=args.init, target_accept=args.target_accept,
+                        max_tree_depth=args.max_tree_depth, samples_path=sp, **kw)
         print_record(rec)
         recs.append(rec)
 
