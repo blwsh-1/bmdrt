@@ -416,6 +416,7 @@ not_compared, rejected_by_kk}`（旧结果文件里的 `ok` 是 `converged` 的�
 | `evidence/nested_topology/identifiability_check.py` | 可辨识性证据：渐近极限 / `Rs` 剖面 / 高频窗口截断，同样支持内置合成与 `--data` |
 | `evidence/nested_topology/m3_stage2.py` | 档 2 参数恢复驱动：A（固定 σ）/ B（自由 σ）分记、`--truth-set a/b` 切真值组、逐 seed 扫描、多 seed 稳健性汇总（均值/SD/max\|err\|/逐 seed 达标）、逐参数 R̂/ESS、组合参数与相关矩阵、`--save-samples` 留后验 |
 | `evidence/nested_topology/m3_design_check.py` | **事前可辨识性筛查**：真值处一阶 Fisher → 各参数"数据能定到多准"，与先验 sd 比判"是否先验主导"；跑 MCMC 之前就能筛掉本来就定不住的参数。含 A/B1/B2/B3 候选真值扫描与"换杠杆"对照 |
+| `evidence/nested_topology/m3_rank_check.py` | 秩与拆分方向：噪声无关 Jacobian 的秩/条件数（判定"结构性"还是"实践性"不可辨识）+ `R1/(R1+R2)` 的 delta 法区间 |
 | `evidence/nested_topology/g1_seeds_a.{json,log}` | 档 2 第一组（parallel L2，固定 2% 噪声）5 个 seed 的逐次记录与汇总 |
 | `evidence/nested_topology/g2_seeds_b.{json,log}` | 档 2 B 组（`R_ad=300`）2 个 seed：形状参数未收缩的负结果，`R1/(R1+R2)` 90% 区间覆盖 `[0.01,0.99]` |
 | `AD_M6_SAMPLING.md` | **吸附电感 M6 抽样验证记录**：18 条真实含环谱盘点、4+10 分层抽样设计、首个真实正例（正式档复核）、门控两处缺陷、`inv_from_lowfreq` 偏差实证、抽样置信上界与分阶段全量方案 |

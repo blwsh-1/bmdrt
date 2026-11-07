@@ -45,6 +45,9 @@ evidence/nested_topology/*
 !evidence/nested_topology/m3_design_check.log
 !evidence/nested_topology/m3_design_scan.json
 !evidence/nested_topology/m3_design_scan.log
+!evidence/nested_topology/m3_rank_check.py
+!evidence/nested_topology/m3_rank_check.json
+!evidence/nested_topology/m3_rank_check.log
 !evidence/nested_topology/m3_stage1.json
 !evidence/nested_topology/g1_seeds_a.json
 !evidence/nested_topology/g1_seeds_a.log
