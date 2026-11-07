@@ -241,14 +241,16 @@ Z = Rs + 1 / (1/Z_CPE1 + 1/(R1 + Z_branch))
 | 层次 | 指标 | 回答的问题 | 落在哪 |
 |---|---|---|---|
 | 单次精度 | 该次拟合的后验中位数相对误差 ≤4%（2% 噪声档） | 这一次拟合够不够工程精度 | `acceptance()["pri_err_le_4pct"]` |
-| 多 seed 稳健性 | 误差均值 / SD / 最大绝对误差 / 逐 seed 达标个数 | 结果对采样随机性有多敏感 | `aggregate_seeds()` |
+| 多 seed 稳健性 | 误差均值 / SD / 最大绝对误差 / 逐 seed 达标个数 | 结果对**该组设计里变动的随机源**有多敏感（来源见 `seed_variation`，不预设是采样随机性） | `aggregate_seeds()` |
 | 后验不确定性 | 90% 区间宽度、是否覆盖真值 | 估计的不确定性有多大 | `params[*]["width90"/"covered"]` |
 
 三条口径纪律：
 
 1. **4% 判据只用于单次拟合，不改写成"5 个 seed 平均误差 <4%"**。多 seed 共用同一组
-   真值、同一频栅、同一份合成谱，只是采样随机性的重复，不是 5 次独立实验；
-   均值折零（如 `+5.9%` 与 `−5.5%`）完全可能来自两个都没达标的样本。
+   真值、同一频栅，不是 5 次独立实验；均值折零（如 `+5.9%` 与 `−5.5%`）完全可能
+   来自两个都没达标的样本。**"这 5 次变了什么"由记录里的 `data_seed` /
+   `sampler_seed` 判定**（§20.11）：旧版一个 seed 同时喂两处，SD 混合了噪声实现与
+   采样随机性，不能归因；现在分开记录，两种设计各自只变一个来源。
 2. **`SD` 与判据阈值同量级时**（`tau_ad` 的 SD 是 4.4%，判据 4%），单次达标/不达标
    接近抛硬币，结论只能按分布说。
 3. **宽区间参数的覆盖率不算证据**。区间宽 100% 以上时，"覆盖真值"没有信息量；
@@ -1123,13 +1125,14 @@ if float(sigma_floor) > 0.0:
 | `summarize()` → `split_r` | **逐 draw** 算 `r=R1/(R1+R2)`，存中位 / `sd` / p05 / p95 / `width90` / 真值 / 偏差 / 覆盖 |
 | `split_stats()` | 多 seed 汇总：`sd_median`（主终点）、均值、极值、`width90_median`、覆盖数 |
 | `split_verdict()` | 三档判据；**链未收敛时返回"不可判"**（不收敛会把后验 SD 压小，`sd_r≤0.05` 是假达标） |
-| `aggregate_seeds()` → `primary_endpoint` | 写进 JSON 的判定块（判据、读数、结论、来源） |
+| `aggregate_seeds()` → `primary_endpoint` | 写进 JSON 的判定块：`valid` / `value`（**可判才给数，否则 `null`**）/ `observed_value`（原始读数）/ `verdict` / `reason_if_invalid` / 来源 |
 
 必须逐 draw 算再统计：先取 `R1`/`R2` 的中位再相除是另一个量（中位不保序于非线性变换，
 且会抹掉两者 `ρ≈−0.99` 的负相关）。
 
 正式命令也要跟着改（见 §20.11）：固定采样器 seed、变数据 seed，才能说是"独立噪声
-实现"的重复。
+实现"的重复。**退出码另有一套判据**（`r` 条件只看运行有效性），见 §20.13——不要用
+退出码 0/1 去读主终点成败。
 
 ```
 python evidence/nested_topology/m3_stage2.py --stage r \
@@ -1293,12 +1296,50 @@ res = T.fit_top(..., seed=seed, ...)              # 采样器
 
 | 实验 | data seed | sampler seed | 回答的问题 |
 |---|---|---|---|
-| 固定谱重复采样 | 固定（如全 0） | 变化 | NUTS 对随机初始化是否敏感 |
+| 固定谱重复采样 | 固定（如全 0） | 变化 | **采样随机性**（初值 + NUTS 随机流）是否影响后验 |
 | 独立噪声重复 | 变化 | 固定或按规则变化 | 参数恢复对噪声实现是否稳健 |
+
+命名上有个细节要守：`sampler_seed` 控制的是 NUTS 的**整条随机数流**，不只是初始点，
+所以第一组该叫"**采样随机性敏感性基线**"，不能叫"初始化敏感性基线"。
 
 M3.5 用**第二种**（`--seeds 0,0,0,0,0 --data-seeds 0,1,2,3,4`）：主终点问的是
 "数据能否约束 `r`"，噪声实现是这里该变的随机源。`_seed_variation()` 从记录里读两个
 集合，把"固定谱 / 独立噪声 / 两者都变"直接写进表和 JSON，不靠人记。
+
+### 20.13 判定链路：退出码、收敛数、主终点必须分开（第八轮审查后）
+
+第八轮审查指出三处"用错判据"的风险，都属记录链路问题，不涉及统计定义：
+
+| 问题 | 旧行为 | 现在 |
+|---|---|---|
+| **退出码** | `ok = all(acceptance.pass)`，对 `r` 条件也成立 | `exit_gate()`：`a`/`b` 沿用 `acceptance`（**不改旧语义**），`r` 只看 `run_validity()`（R̂/ESS/div/长度） |
+| **收敛计数** | 表里"收敛判定 n/n"与 `n_converged` 实为 `acceptance` 全过数 | 拆成 `n_mcmc_converged`（R̂/ESS/div）与 `n_pass_acceptance`（含覆盖与 4%），两个字段都进 JSON |
+| **主终点读数** | `primary_endpoint.value` 无条件给数 | 可判时 `value=sd_median`；不可判时 `value=null`、`valid=false`，原始读数留在 `observed_value`，另给 `reason_if_invalid` |
+
+为什么不能混：`acceptance` 里的 `covered` / `pri_err_le_4pct` 是 M3 的**精度**门槛。
+拿它决定 M3.5 的退出码，会出现两种错配——`sd_r` 达标但 `R_ad` 单次误差 >4% → 退出码 1，
+看起来像 M3.5 失败；旧判据全过但链没收敛、后验 SD 被压小 → 退出码 0，看起来像成功。
+`sd_r` 能不能读只取决于**链有没有收敛**，这是 `run_validity()` 管的事。
+
+`primary_endpoint.value` 置 `null` 的理由是下游：只提取 `value` 的脚本不会去读
+`verdict`，一个"看着正常"的 `0.02` 会被当成有效主终点。`observed_value` 保留原始
+读数，追溯不丢。
+
+收敛判据清单只有一个来源（`CONVERGENCE_CHECKS = rhat / ess / div`），`run_validity()`
+与 `_mcmc_converged()` 共用，避免"两套收敛定义"。
+
+### 20.14 第八轮完成记录（2026-11-08）
+
+| 项 | 结果 |
+|---|---|
+| 退出码分离 | 新增 `run_validity()` / `exit_gate()`；记录里落 `run_valid` 与 `exit_gate`；最终块逐条件打印"运行有效性 / MCMC 收敛 / acceptance 全过 / 退出码依据" |
+| M3.5 结论 | 最终块单独打印 `M3.5 研究结论（只看 sd_r）`，与退出码并列但不互相定义 |
+| 收敛计数 | `print_seed_table`/`aggregate_seeds`/`print_robustness` 统一为 `n_mcmc_converged` + `n_pass_acceptance`；表头 `判定`→`accept` |
+| 主终点 | `valid` / `value`(可判才给数) / `observed_value` / `reason_if_invalid`；打印加"**无效读数**，仅追溯" |
+| 随机源措辞 | `aggregate_seeds` docstring 与 `print_robustness` 标题不再预写"采样随机性"；`_seed_variation` 固定谱情形注明"含初值与 NUTS 随机流"；§6.2 的三层表同步 |
+| rank 脚本 | 头部"rank<n → 结构性不可辨识"改为"局部秩亏，不足以推全局"；`split_block` 前向统一到 `D.spectrum`（= `z_nested`），数值逐位不变（`sd_log` 50.40/16.87/0.46/0.61） |
+| 验证 | `exit_gate` 四例单测（r 两种混搭、a/b 各一）符合预期；`--stage r` 短跑（非冒烟）最终块正确、退出码 1 来自运行有效性；`--stage r --smoke --seeds 0,0 --data-seeds 0,1` 时 `primary_endpoint.value=null`、`observed_value=0.0208` |
+| 未做 | 正式 5 seed 未跑；采样随机性敏感性基线（`--data-seeds` 全 0、`--seeds` 变化）留作主实验后的诊断，不是主终点成立的必要条件 |
 
 ### 20.12 第七轮完成记录（2026-11-08）
 

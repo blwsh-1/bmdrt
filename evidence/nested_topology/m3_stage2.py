@@ -35,6 +35,17 @@ R 条件的两条硬约束（§20.10）
       依赖该点自身，`elpd_i` 不是 `p(Z_j|Z_-j)` 的估计。`acceptance()` 会把
       `pareto_k_ok` 摘进 `skipped_checks`，输出里另有明示。
 
+退出码与三套判据（§20.13）
+--------------------------
+    | 判据 | 内容 | 谁决定退出码 |
+    |---|---|---|
+    | `run_validity` | R̂ / ESS / divergence / 逐点数组长度 | **R 条件** |
+    | `acceptance` | 上面 + 覆盖 + 优先恢复参数 4% | **A / B 条件** |
+    | `split_verdict` | 多 seed `sd_r`（M3.5 主终点） | 都不决定；单列打印 |
+
+    旧 `acceptance` 的覆盖与 4% 是 M3 的**精度**门槛，不是 M3.5 的成败判据；
+    `r` 条件仍照算并落盘（追溯用），但只由 `run_validity` 决定退出码。
+
 用法
 ----
     # 单组正式跑（4 链 × 1200 样本）
@@ -318,6 +329,43 @@ def acceptance(rec: dict, n_freq: int,
             "pass": all(checks.values())}
 
 
+# 采样器健康度的三个判据。收敛统计与"运行有效性"共用这一份清单，
+# 避免出现"两套收敛定义"（§20.13）。
+CONVERGENCE_CHECKS = ("rhat_lt_1.01", "ess_gt_200", "div_lt_0.1pct")
+
+
+def run_validity(rec: dict) -> dict:
+    """**运行有效性**：链健康 + 逐点数组长度。**不含**精度、不含覆盖。
+
+    为什么必须跟 `acceptance()` 分开：M3.5 的结论由 `sd_r` 给出，而 `sd_r` 能不能
+    读只取决于链有没有收敛。旧 `acceptance` 里的 `covered` / `pri_err_le_4pct` 是
+    M3 的**精度**门槛——拿它决定 M3.5 的退出码，会出现两种错配：
+
+    · 主终点 `sd_r` 达标，但 `R_ad` 单次误差 >4% → 退出码 1，看起来像 M3.5 失败；
+    · 旧判据全过（参数恢复得准），但链没收敛、后验 SD 被压小 → 退出码 0，
+      看起来像 M3.5 成功。
+
+    两套口径都落盘，但只有这里（`r` 条件）决定退出码。
+    """
+    c = rec["acceptance"]["checks"]
+    gates = {k: bool(c[k]) for k in CONVERGENCE_CHECKS if k in c}
+    if "pointwise_len_ok" in c:              # 只查长度，与解释无关，保留
+        gates["pointwise_len_ok"] = bool(c["pointwise_len_ok"])
+    return {"checks": gates, "pass": all(gates.values())}
+
+
+def exit_gate(rec: dict) -> dict:
+    """退出码依据哪套判据（§20.13）。
+
+    · `a` / `b`（M3）：沿用 `acceptance().pass` —— **不改旧语义**，与前几轮记录可比；
+    · `r`（M3.5）：只看 `run_validity().pass`。旧 acceptance 仍照算并落盘，只作
+      追溯，不冒充 M3.5 结论。
+    """
+    if rec["stage"] == "r":
+        return {"used": "run_validity", "pass": bool(rec["run_valid"]["pass"])}
+    return {"used": "acceptance", "pass": bool(rec["acceptance"]["pass"])}
+
+
 def run_stage(stage: str, *, data_seed: int, sampler_seed: int, noise: float,
               branch: str, layers: int,
               n_warmup: int, n_samples: int, n_chains: int, progress: bool,
@@ -377,6 +425,8 @@ def run_stage(stage: str, *, data_seed: int, sampler_seed: int, noise: float,
     rec["acceptance"] = acceptance(
         rec, int(f.size),
         predictive_diag=bool(rec["diagnostics"]["predictive_diag_valid"]))
+    rec["run_valid"] = run_validity(rec)       # 链健康 + 长度，不含精度/覆盖
+    rec["exit_gate"] = exit_gate(rec)          # 本次记录对退出码负责的判据
     return rec
 
 
@@ -438,8 +488,17 @@ def print_record(rec: dict) -> None:
         print(f"      优先恢复 × 形状参数 最大 |ρ| = {abs(worst['rho']):.3f}"
               f"（{worst['a']} vs {worst['b']}）")
     a = rec["acceptance"]
-    print(f"\n判定（仅本组）：{'通过' if a['pass'] else '未通过'}"
-          f"  优先恢复参数最大误差 {a['pri_err_worst']:.2%}")
+    rv = rec.get("run_valid") or {"pass": a["pass"], "checks": a["checks"]}
+    if rec["stage"] == "r":
+        print(f"\n运行有效性：{'通过' if rv['pass'] else '未通过'}"
+              f"（R̂ / ESS / divergence / 数据长度）→ **M3.5 退出码依据**")
+        print(f"旧 M3 acceptance（含覆盖与 4% 精度）："
+              f"{'全过' if a['pass'] else '未全过'}"
+              f"  优先恢复参数最大误差 {a['pri_err_worst']:.2%}"
+              f"——这是 M3 的**精度**判据，不作 M3.5 结论")
+    else:
+        print(f"\n判定（仅本组）：{'通过' if a['pass'] else '未通过'}"
+              f"  优先恢复参数最大误差 {a['pri_err_worst']:.2%}")
     for k, v in a["checks"].items():
         print(f"      {'✓' if v else '✗'} {k}")
     if a.get("skipped_checks"):
@@ -466,7 +525,8 @@ def _seed_variation(recs: list[dict]) -> str:
     if None in ds or None in ss:               # 老记录没有这两个字段
         return "未知（老记录只存了单个 seed，两种随机源未分离）"
     if len(ds) == 1 and len(ss) > 1:
-        return f"固定谱（data_seed={sorted(ds)[0]}）、只变采样器 → 敏感性=采样随机性"
+        return (f"固定谱（data_seed={sorted(ds)[0]}）、只变采样器 → 敏感性=采样随机性"
+                f"（含初值与 NUTS 随机流，不只是初始点）")
     if len(ds) > 1 and len(ss) == 1:
         return (f"独立噪声实现（sampler_seed={sorted(ss)[0]} 固定）→ 变化的来源是"
                 f"噪声实现，不是采样器 seed")
@@ -481,11 +541,11 @@ def _mcmc_converged(rec: dict) -> bool:
 
     为什么要单独拆出来：`acceptance()` 的 `pass` 混了"恢复得准不准"，而 sd_r
     能不能读只取决于链有没有收敛。不收敛的链会把后验 SD 压小（链没走开），
-    此时"sd_r≤0.05"是假达标。
+    此时"sd_r≤0.05"是假达标。判据清单与 `run_validity()` 共用
+    `CONVERGENCE_CHECKS`，避免出现两套收敛定义。
     """
     c = rec["acceptance"]["checks"]
-    return bool(c.get("rhat_lt_1.01") and c.get("ess_gt_200")
-                and c.get("div_lt_0.1pct"))
+    return all(bool(c.get(k)) for k in CONVERGENCE_CHECKS)
 
 
 def split_stats(recs: list[dict]) -> dict | None:
@@ -551,7 +611,7 @@ def print_seed_table(recs: list[dict]) -> dict:
            f"{'覆盖':>6}{'ρ(ad,τ)':>10}{'ρ(R1,R2)':>11}")
     if has_split:
         hdr += f"{'r 中位':>9}{'sd_r':>8}"
-    hdr += f"{'R̂max':>8}{'ESSmin':>8}{'div':>9}{'判定':>6}"
+    hdr += f"{'R̂max':>8}{'ESSmin':>8}{'div':>9}{'gate':>7}"
     print(hdr)
     for r in recs:
         p, d, c = r["params"], r["diagnostics"], r.get("combinations", {})
@@ -571,9 +631,10 @@ def print_seed_table(recs: list[dict]) -> dict:
             sp = r.get("split_r") or {}
             line += (f"{_fmt_num(sp.get('median'), 9, '4f')}"
                      f"{_fmt_num(sp.get('sd'), 8, '4f')}")
+        gate = r.get("exit_gate") or {"pass": r["acceptance"]["pass"]}
         line += (f"{_fmt_num(d['rhat_max'], 8, '4f')}{_fmt_num(d['ess_min'], 8, '0f')}"
                  f"{_fmt_num(d['div_frac'], 8, '.3%')}"
-                 f"{'✓' if r['acceptance']['pass'] else '✗':>6}")
+                 f"{'✓' if gate['pass'] else '✗':>7}")
         print(line)
 
     e1s = [r["params"].get(p1, {}).get("rel_err") for r in recs]
@@ -583,6 +644,7 @@ def print_seed_table(recs: list[dict]) -> dict:
     cov1 = sum(1 for r in recs if r["params"].get(p1, {}).get("covered"))
     cov2 = sum(1 for r in recs if r["params"].get(p2, {}).get("covered"))
     npass = sum(1 for r in recs if r["acceptance"]["pass"])
+    nconv = sum(1 for r in recs if _mcmc_converged(r))
     n = len(recs)
     print("-" * 96)
     print(f"汇总  {p1} 误差 中位 {stats.median(e1s):+.2%}  范围 "
@@ -592,8 +654,13 @@ def print_seed_table(recs: list[dict]) -> dict:
           f"范围 [{min(e2s):+.2%}, {max(e2s):+.2%}]  同号 "
           f"{sum(1 for x in e2s if x > 0)}/{len(e2s)} 正")
     print(f"      90% 区间覆盖：{p1} {cov1}/{n}、{p2} {cov2}/{n}；"
-          f"收敛判定 {npass}/{n}；|{p2}|≤4% 的 seed "
+          f"|{p2}|≤4% 的 seed "
           f"{sum(1 for x in e2s if abs(x) <= 0.04)}/{len(e2s)}")
+    print(f"      MCMC 收敛（R̂/ESS/div）：{nconv}/{n}；"
+          f"acceptance 全过（含覆盖与 4% 精度）：{npass}/{n}"
+          f" ← 后者**不是**收敛数")
+    print("      gate = 退出码依据（a/b：acceptance 全过；r：运行有效性），"
+          "不是 M3.5 主终点结论（§20.13）")
     print("      注：seed 数是探索性重复，不是 90% 覆盖率的统计检验。")
     sp = split_stats(recs)
     if sp:
@@ -604,7 +671,8 @@ def print_seed_table(recs: list[dict]) -> dict:
         print(f"      → {split_verdict(sp)}；单 seed 达 ≤0.05 的个数 "
               f"{sp['n_sd_le_0.05']}/{sp['n']}（探索性，不作判据）；"
               f"链收敛 {sp['n_mcmc_converged']}/{sp['n']}")
-    return {"n_seeds": n, "n_converged": npass,
+    return {"n_seeds": n, "n_pass_acceptance": npass,
+            "n_mcmc_converged": nconv,
             "seed_variation": _seed_variation(recs),
             "covered": {p1: cov1, p2: cov2},
             "split": sp,
@@ -621,12 +689,17 @@ def aggregate_seeds(recs: list[dict], params: list[str] | None = None) -> dict:
 
     三个层次分开记（审查要求）：
       1. 单次精度：每次拟合的 |中位误差| 是否 ≤4%（`acceptance()` 里的判据，逐 seed）；
-      2. 多 seed 稳健性：误差均值 / SD / 最大绝对误差 —— 反映采样随机性；
+      2. 多 seed 稳健性：误差均值 / SD / 最大绝对误差 —— **变化来源由
+         `_seed_variation()` 从记录里读**，这里不预设"就是采样随机性"；
       3. 后验不确定性：90% 区间宽度与覆盖次数。
 
     这里**不给**"5 个 seed 的均值 ≤4% 就算达标"的结论：这些重复共用同一组真值、
     同一频栅，不是 5 次独立实验。均值 0% 也推不出"精度 4%"，正负抵消的单次误差
     同样没达精度。
+
+    另外三个计数**不能混**：`n_mcmc_converged` 只看 R̂/ESS/divergence；
+    `n_pass_acceptance` 是旧判据（含覆盖与 4%）；两者都不是"实验成功"。
+    判定 M3.5 成败的是 `primary_endpoint`。
 
     **变化的到底是什么，由 `_seed_variation()` 从记录里读**，不写死。旧版
     `run_stage` 用一个 `seed` 同时喂数据生成与 NUTS，所以"5 seed"其实是 5 份
@@ -657,6 +730,7 @@ def aggregate_seeds(recs: list[dict], params: list[str] | None = None) -> dict:
     out = {"n_seeds": len(recs),
            "seed_variation": _seed_variation(recs),
            "n_pass_acceptance": sum(1 for r in recs if r["acceptance"]["pass"]),
+           "n_mcmc_converged": sum(1 for r in recs if _mcmc_converged(r)),
            "params": {}, "combinations": {}}
 
     for k in params:
@@ -688,10 +762,20 @@ def aggregate_seeds(recs: list[dict], params: list[str] | None = None) -> dict:
     sp = split_stats(recs)
     if sp:
         out["split"] = sp
+        judgeable = sp["n_mcmc_converged"] == sp["n"]
         out["primary_endpoint"] = {
             "name": "r=R1/(R1+R2) 的多 seed 后验 SD",
             "criterion": "sd_r ≤ 0.05（预注册 §20.4）；≥0.30 判负",
-            "value": sp["sd_median"],
+            # `value` 只在**可判**时给数：链没收敛时 sd_r 被压小，那个数字看着
+            # 完全正常（甚至"达标"），下游脚本只取 value 就会当成有效结果。
+            # 原始读数不丢，放在 observed_value。
+            "valid": bool(judgeable),
+            "value": (sp["sd_median"] if judgeable else None),
+            "observed_value": sp["sd_median"],
+            "reason_if_invalid": (None if judgeable else
+                                  f"{sp['n'] - sp['n_mcmc_converged']}/{sp['n']} "
+                                  f"个 seed 的链未过 R̂/ESS/div 门禁，"
+                                  f"后验 SD 不可读；observed_value 仅供追溯"),
             "verdict": split_verdict(sp),
             "source": "summarize() 的 split_r（逐 draw 计算，非线性化预测）",
         }
@@ -702,7 +786,8 @@ def print_robustness(agg: dict) -> None:
     """三层指标并排打印。列名写死，避免把'均值'读成'精度'。"""
     n = agg["n_seeds"]
     print(f"\n{'='*104}")
-    print("多 seed 稳健性（**不改变单次 4% 判据**；本表只描述对采样随机性的敏感度）")
+    print("多 seed 稳健性（**不改变单次 4% 判据**；本表只描述波动，"
+          "波动来源见下方『随机源』，不预设是采样随机性）")
     print(f"{'='*104}")
     print(f"{'参数':<20}{'均值':>10}{'SD':>9}{'中位':>9}{'max|err|':>10}"
           f"{'|err|≤4%':>10}{'覆盖':>8}{'区间宽中位':>12}")
@@ -717,17 +802,24 @@ def print_robustness(agg: dict) -> None:
                   f"{_fmt_pct(v['median'], 9)}{_fmt_pct(v['max_abs'], 10)}"
                   f"{frac4:>10}{cov:>8}{v['width90_median']:>11.1%}")
     print("-" * 104)
-    print(f"收敛（acceptance 全过）：{agg['n_pass_acceptance']}/{n}。")
+    print(f"MCMC 收敛（R̂/ESS/div）：{agg.get('n_mcmc_converged', 0)}/{n}；"
+          f"acceptance 全过（含覆盖与 4% 精度）：{agg['n_pass_acceptance']}/{n}"
+          f" ← **不是**收敛数，也不是 M3.5 结论")
     print(f"随机源：{agg.get('seed_variation', '—')}")
     sp = agg.get("split")
     if sp:
-        print(f"主终点 r=R1/(R1+R2)：sd_r 中位 {sp['sd_median']:.4f}"
+        pe = agg.get("primary_endpoint") or {}
+        mark = "" if pe.get("valid", True) else "（**无效读数**，仅追溯）"
+        print(f"主终点 r=R1/(R1+R2)：sd_r 中位 {sp['sd_median']:.4f}{mark}"
               f"（均值 {sp['sd_mean']:.4f}，范围 {sp['sd_min']:.4f}…{sp['sd_max']:.4f}）；"
               f"90% 区间宽中位 {sp['width90_median']:.4f}；真值覆盖 {sp['covered']}/{sp['n']}")
         print(f"        → {split_verdict(sp)}"
               + (f"；真值 r={sp['truth']:.4f}" if sp["truth"] is not None else ""))
         print("        注：sd_r 是后验 SD，不是线性化预测；判据只看中位，"
               "不看单个 seed 是否 ≤0.05。")
+        if not pe.get("valid", True):
+            print(f"        JSON 里 primary_endpoint.value = null，"
+                  f"原始读数在 observed_value（{sp['sd_median']:.4f}）")
     print("注意 ①：均值接近 0 **不等于**达到 4% 精度——正负误差可以互相抵消。")
     print("注意 ②：区间宽远超 100% 的参数，其'覆盖真值'没有信息量（宽区间包得住任何值）。")
     print("注意 ③：SD 与 4% 目标同量级时，单次拟合判达标/不达标接近抛硬币；")
@@ -830,12 +922,31 @@ def main(argv=None) -> int:
             robustness = aggregate_seeds(sub)
             print_robustness(robustness)
 
-    ok = all(r["acceptance"]["pass"] for r in recs) if not args.smoke else True
+    # 退出码分两套口径（§20.13）：M3 条件沿用 acceptance（不改旧语义），
+    # R 条件只看运行有效性——旧 acceptance 里的覆盖/4% 是 M3 的精度门槛，
+    # 让它决定 M3.5 的成败等于用错判据。
+    ok = True if args.smoke else all(r["exit_gate"]["pass"] for r in recs)
     print(f"\n{'='*74}")
     if args.smoke:
         print("冒烟结束：只证明链路通，结果不可引用（1 链 150 样本不收敛）")
     else:
-        print("两组都通过" if ok else "有未通过项——按 §8 记录，失败不删不改 seed")
+        for st in stages:
+            sub = [r for r in recs if r["stage"] == st]
+            nv = sum(1 for r in sub if r["run_valid"]["pass"])
+            nc = sum(1 for r in sub if _mcmc_converged(r))
+            na = sum(1 for r in sub if r["acceptance"]["pass"])
+            used = sub[0]["exit_gate"]["used"]
+            print(f"[{st}] 运行有效性 {nv}/{len(sub)}（R̂/ESS/div/长度）  "
+                  f"MCMC 收敛 {nc}/{len(sub)}  acceptance 全过 {na}/{len(sub)}"
+                  f"  → 退出码依据："
+                  f"{'运行有效性' if used == 'run_validity' else 'acceptance'}")
+        for st in stages:
+            if st != "r":
+                continue
+            sp = split_stats([r for r in recs if r["stage"] == st])
+            if sp:
+                print(f"M3.5 研究结论（R 条件，只看 r 的 sd_r）：{split_verdict(sp)}")
+        print("通过" if ok else "有未通过项——按 §8 记录，失败不删不改 seed")
     if len(recs) > 1:
         print(f"{len(recs)} 次拟合总耗时 {time.time()-t_all:.0f}s")
 

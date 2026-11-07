@@ -18,7 +18,7 @@
     "data_seed": 0,
     "sampler_seed": 0,
     "zmax": 3049.109465143577,
-    "seconds": 76.0
+    "seconds": 85.3
   },
   "compare": {
     "status": "exact",

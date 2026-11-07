@@ -4,12 +4,14 @@
 三件事，都是**噪声无关**或**线性化**的量，不需要跑 MCMC：
 
 1. **数值秩**：噪声无关 Jacobian `J = ∂Z/∂θ`（θ 为 log 参数）的奇异值与条件数。
-   `rank < n_params` → 结构性不可辨识（映射本身丢了一维）；
+   `rank < n_params` 表示**当前真值点、当前频栅、当前参数化下出现局部秩亏**——这是
+   该点邻域局部不可辨识的证据，**不能**单凭它就推断"整个模型结构性不可辨识"
+   （映射在大范围内可能折叠，也可能只是这一个点退化）；
    `rank == n_params` 但 `σ_min` 极小 → 只是当前噪声水平下不可辨识。
 
    **读法限定**：这是**一个真值点、一条频栅、一个参数化**下的有限差分 Jacobian，
    结论只能是"该点邻域局部满列秩"。它**不能**证明整个参数空间处处无结构性
-   不可辨识（映射在大范围内可能折叠）。要谈全局得另做扫描，本脚本不做。
+   不可辨识。要谈全局得另做扫描，本脚本不做。
 2. **条件化 sd**：`sqrt(uᵀ(JᵀJ)⁻¹u)`，u 为指定方向。与"边际 sd" `1/‖J u‖`
    对比，可以看出共线造成的放大倍数。
 3. **拆分比例 r = R1/(R1+R2)** 的 delta 法 sd：`sd_r = r(1−r)·sd_log(u)`，
@@ -44,7 +46,6 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import bm_top_gen as G                                    # noqa: E402
 import m3_design_check as D                               # noqa: E402
 
 F = np.logspace(-2, 5, 61)
@@ -162,8 +163,13 @@ def scaling_check(p: dict) -> dict:
 
 
 def split_block(tag: str, p: dict, sigma=None, rel: bool = False) -> dict:
-    """拆分方向的条件化 sd 与 r 的 delta 法区间。"""
-    z0 = G.gen_parallel_L2(F, p)
+    """拆分方向的条件化 sd 与 r 的 delta 法区间。
+
+    前向谱走 `D.spectrum`（即 `bm_top.z_nested`，`fit_top` 用的那条路径），
+    与 `jacobian` 同源。之前这里单独调 `bm_top_gen.gen_parallel_L2`，虽然档 1
+    已证二者等值 ≤1e-14，但"同一份权重配不同前向实现"是没有必要的口径差。
+    """
+    z0 = D.spectrum(p, F)
     J = jac(p)
     w = (np.concatenate([0.02 * np.abs(z0)] * 2) if rel
          else np.full(2 * F.size, float(sigma)))

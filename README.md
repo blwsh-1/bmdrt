@@ -410,13 +410,13 @@ not_compared, rejected_by_kk}`（旧结果文件里的 `ok` 是 `converged` 的�
 | `DIFFUSION_PLAN.md` | 扩散扩展方案：数学、先验、测试矩阵、模型选择 |
 | `ADSORPTION_PROJECT.md` | **低频吸附电感元件立项书**：`R_ad∥L_ad` 定义、负 RC 恒等式、DRT 盲区、三区间可辨识性、M0–M6 里程碑与验收标准 |
 | `MODEL_COVERAGE_PLAN.md` | **模型体系规划与覆盖地图**：三层架构（基础 / 特殊响应 / 族选择与可辨识性）、11 项现象覆盖状态与证据等级、注册表接口约定、可辨识性报告规范、按证据排序的立项队列与准入规则 |
-| `BM_TOP_M3_PLAN.md` | **`fit_top()` 接口设计与 M3 验收清单（v3，已按审查冻结）**：现有采样接口摊开、候选 A/B/C 对比、参数先验冻结表、生成器独立性、三档验收与失败记录规范、`fit_top()` 实现记录、档 1 记录（§12）、档 2 第一组 5 seed（§15）、事前可辨识性筛查（§16）、M3 收尾（§19）、M3.5 逐点相对噪声的接口/回归/预注册与 LOO 有效性、双 seed 分离（§20） |
+| `BM_TOP_M3_PLAN.md` | **`fit_top()` 接口设计与 M3 验收清单（v3，已按审查冻结）**：现有采样接口摊开、候选 A/B/C 对比、参数先验冻结表、生成器独立性、三档验收与失败记录规范、`fit_top()` 实现记录、档 1 记录（§12）、档 2 第一组 5 seed（§15）、事前可辨识性筛查（§16）、M3 收尾（§19）、M3.5 逐点相对噪声的接口/回归/预注册与 LOO 有效性、双 seed 分离、判定链路分离（退出码 / 收敛数 / 主终点，§20.13–20.14） |
 | `NESTED_TOPOLOGY_PROJECT.md` | **嵌套并联电路拓扑立项书**：为何串联 Voigt 表达不了低频感抗环（三个硬约束）、理论上限对照（30.5% vs 6.7%）、渐近极限、`Rs≈0` 不可辨识警报、CPE 窗口幅值参数化、M0–M6（M0/M1 完成；M2 以独立 `fit_top()` 替代，未动 `bm_core`；M3 进行中） |
 | `evidence/nested_topology/theoretical_bound.py` | 表达力证据：scipy 全局最小二乘对照，内置合成谱自包含，也可用 `--data` 跑真实谱 |
 | `evidence/nested_topology/identifiability_check.py` | 可辨识性证据：渐近极限 / `Rs` 剖面 / 高频窗口截断，同样支持内置合成与 `--data` |
-| `evidence/nested_topology/m3_stage2.py` | 参数恢复驱动：`--stage a`（固定 σ）/ `b`（自由 σ）/ `r`（**逐点相对 `rel-perpoint-2pct`**，M3.5）分记、`--truth-set a/b` 切真值组、**`--data-seeds` 与 `--seeds` 分离数据/采样器随机源**、多 seed 稳健性汇总（均值/SD/max\|err\|/逐 seed 达标）、**预注册主终点 `sd_r`（逐 draw 算 `r=R1/(R1+R2)`，带收敛门禁）**、逐参数 R̂/ESS、组合参数与相关矩阵、`--save-samples` 留后验 |
+| `evidence/nested_topology/m3_stage2.py` | 参数恢复驱动：`--stage a`（固定 σ）/ `b`（自由 σ）/ `r`（**逐点相对 `rel-perpoint-2pct`**，M3.5）分记、`--truth-set a/b` 切真值组、**`--data-seeds` 与 `--seeds` 分离数据/采样器随机源**、多 seed 稳健性汇总（均值/SD/max\|err\|/逐 seed 达标）、**预注册主终点 `sd_r`（逐 draw 算 `r=R1/(R1+R2)`，带收敛门禁；不可判时 `value=null`、原始读数在 `observed_value`）**、**`exit_gate()` 分离退出码判据（`r` 只看运行有效性、`a`/`b` 沿用 `acceptance`）**、`n_mcmc_converged` 与 `n_pass_acceptance` 分列、逐参数 R̂/ESS、组合参数与相关矩阵、`--save-samples` 留后验 |
 | `evidence/nested_topology/m3_design_check.py` | **事前可辨识性筛查**：真值处一阶 Fisher → 各参数"数据能定到多准"，与先验 sd 比判"是否先验主导"；跑 MCMC 之前就能筛掉本来就定不住的参数。含 A/B1/B2/B3 候选真值扫描与"换杠杆"对照 |
-| `evidence/nested_topology/m3_rank_check.py` | 秩与拆分方向：噪声无关 Jacobian 的秩/条件数（判定"结构性"还是"实践性"不可辨识）+ `R1/(R1+R2)` 的 delta 法区间；含**列归一化**版本（无量纲条件数、相对阈值秩）与 `J_log=J_θ·θ` 尺度恒等式核对；归一化前后最弱方向在**同一坐标系**比夹角（`cos≈1.000`，更正上一轮的 0.60）；秩明确标为**局部**满列秩 |
+| `evidence/nested_topology/m3_rank_check.py` | 秩与拆分方向：噪声无关 Jacobian 的秩/条件数（判定"结构性"还是"实践性"不可辨识）+ `R1/(R1+R2)` 的 delta 法区间；含**列归一化**版本（无量纲条件数、相对阈值秩）与 `J_log=J_θ·θ` 尺度恒等式核对；归一化前后最弱方向在**同一坐标系**比夹角（`cos≈1.000`，更正上一轮的 0.60）；秩明确标为**局部**满列秩；`split_block` 前向统一走 `z_nested`（与 `jacobian` 同源） |
 | `evidence/nested_topology/m3_regress_scalar.py` | **标量噪声路径回归**：同环境同 seed 重跑冻结配置，与 `g1_seeds_a.json` 对比，分"逐位一致 / 容差一致 / 失败"三档（`bm_top` 引入逐点 σ 后用它证明旧路径没动） |
 | `evidence/nested_topology/g1_seeds_a.{json,log}` | 档 2 第一组（parallel L2，固定 2% 噪声）5 个 seed 的逐次记录与汇总 |
 | `evidence/nested_topology/g2_seeds_b.{json,log}` | 档 2 B 组（`R_ad=300`）2 个 seed：形状参数未收缩的负结果，`R1/(R1+R2)` 90% 区间覆盖 `[0.01,0.99]` |
