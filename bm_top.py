@@ -117,8 +117,31 @@ def j_z_rl_series(omega, R, L):
 # 拓扑
 # --------------------------------------------------------------------------
 
-PARAM_KEYS = ("Rs", "R1", "R2", "Q1", "n1", "Q2", "n2",
-              "R_ad", "tau_ad", "R_L", "tau_L", "L_ad")
+# 完整元数据表（含派生量与两种支路），**不是**采样清单；
+# 采样参数请用 sampled_keys(branch, layers)。
+ALL_PARAM_KEYS = ("Rs", "R1", "R2", "Q1", "n1", "Q2", "n2",
+                  "R_ad", "tau_ad", "R_L", "tau_L", "L_ad")
+PARAM_KEYS = ALL_PARAM_KEYS          # 向后兼容别名
+
+
+def sampled_keys(branch: str = "parallel", layers: int = 2) -> tuple:
+    """当前拓扑**真正需要采样**的参数。
+
+    - `layers=1` 没有第二个并联节点 → 不采 `R2` / `Q2` / `n2`；
+    - `branch="parallel"` 不采 `R_L` / `tau_L`，反之不采 `R_ad` / `tau_ad`；
+    - `L_ad` 永远是派生量（`R_L·tau_L`），不采样。
+
+    给未使用的参数也建先验，会引入纯由先验决定的无效维度，NUTS 会在那里空转。
+    """
+    if branch not in ("parallel", "series"):
+        raise ValueError(f"branch 只能是 'parallel'/'series'，收到 {branch!r}")
+    if layers not in (1, 2):
+        raise ValueError(f"layers 只能是 1/2，收到 {layers!r}")
+    keys = ["Rs", "R1", "Q1", "n1"]
+    if layers >= 2:
+        keys += ["R2", "Q2", "n2"]
+    keys += ["R_ad", "tau_ad"] if branch == "parallel" else ["R_L", "tau_L"]
+    return tuple(keys)
 
 
 def z_nested(f, p: dict, f_ref: float | None = None,
@@ -147,13 +170,14 @@ def z_nested(f, p: dict, f_ref: float | None = None,
     else:
         zb = z_rl_series(f, float(p["R_L"]), float(p["L_ad"]))
 
-    z_inner = float(p["R2"]) + zb
     if layers >= 2:
+        z_inner = float(p["R2"]) + zb
         zc2 = z_cpe(f, float(p["Q2"]), float(p["n2"]), f_ref=w_ref / (2 * np.pi))
         z_par2 = 1.0 / (1.0 / zc2 + 1.0 / z_inner)
         z_mid = float(p["R1"]) + z_par2
     else:
-        z_mid = float(p["R1"]) + z_inner
+        # 单层：R1 与支路直接串联，**不含 R2**（R2 只属于第二层并联节点）
+        z_mid = float(p["R1"]) + zb
     z_par1 = 1.0 / (1.0 / zc1 + 1.0 / z_mid)
     return float(p["Rs"]) + z_par1
 
@@ -165,13 +189,13 @@ def j_z_nested(omega, p: dict, w_ref, branch: str = "parallel", layers: int = 2)
         zb = j_z_rl_parallel(omega, p["R_ad"], p["tau_ad"])
     else:
         zb = j_z_rl_series(omega, p["R_L"], p["L_ad"])
-    z_inner = p["R2"] + zb
     if layers >= 2:
+        z_inner = p["R2"] + zb
         zc2 = j_z_cpe(omega, p["Q2"], p["n2"], w_ref)
         z_par2 = 1.0 / (1.0 / zc2 + 1.0 / z_inner)
         z_mid = p["R1"] + z_par2
     else:
-        z_mid = p["R1"] + z_inner
+        z_mid = p["R1"] + zb
     z_par1 = 1.0 / (1.0 / zc1 + 1.0 / z_mid)
     return p["Rs"] + z_par1
 
@@ -265,7 +289,7 @@ def _selftest():
     p = dict(base)
     zc1 = z_cpe(f, p["Q1"], p["n1"])
     zb = z_rl_parallel(f, p["R_ad"], p["tau_ad"])
-    z1 = p["Rs"] + 1.0 / (1.0 / zc1 + 1.0 / (p["R1"] + p["R2"] + zb))
+    z1 = p["Rs"] + 1.0 / (1.0 / zc1 + 1.0 / (p["R1"] + zb))
     e = float(np.max(np.abs(z_nested(f, p, layers=1) - z1)) / np.max(np.abs(z1)))
     print(f"[6] layers=1 与手写单层一致：rel err {e:.2e}")
     ok &= e < 1e-12
@@ -299,6 +323,21 @@ def _selftest():
         ok &= np.isfinite(z0)
     else:
         print("[8] jax 不可用，跳过")
+
+    # 9) sampled_keys：派生量与未使用参数不得进采样清单
+    print("[9] sampled_keys 分支/层数矩阵：")
+    for br in ("parallel", "series"):
+        for ly in (1, 2):
+            ks = sampled_keys(br, ly)
+            need2 = ly >= 2
+            good = ("L_ad" not in ks
+                    and (("R2" in ks) == need2)
+                    and (("Q2" in ks) == need2)
+                    and (("n2" in ks) == need2)
+                    and (("R_ad" in ks) == (br == "parallel"))
+                    and (("R_L" in ks) == (br == "series")))
+            print(f"    {br:<8} layers={ly} → {ks}")
+            ok &= good
 
     print("=" * 72)
     print("全部通过" if ok else "有失败项")

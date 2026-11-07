@@ -45,10 +45,16 @@ numpyro.sample("obs_im", Normal(Zt.imag, s_im), obs=Zi)
 ```python
 omega_ref(f); z_cpe(f, Q, n, f_ref); z_rl_parallel(f, R, tau);
 z_rl_series(f, R, L); z_nested(f, p, f_ref, branch, layers);
-j_z_nested(omega, p, w_ref, branch, layers); param_spec()
+j_z_nested(omega, p, w_ref, branch, layers);
+param_spec()                       # 完整元数据（含派生量/两种支路）
+sampled_keys(branch, layers)       # 当前拓扑真正要采的参数
 ```
 
-自检 8/8（`python bm_top.py`）。
+自检 **9/9**（`python bm_top.py`）。
+
+**单层定义（v3 修正）**：`layers=1` 时 `Z = Rs + 1/(1/Z_CPE1 + 1/(R1 + Z_branch))`，
+**不含 `R2`** —— `R2` 只属于第二层并联节点。此前实现误写成 `R1+R2+Z_branch`，
+自检 [6] 也跟着按错误定义写，所以没抓到；两处已同时修正。
 
 ---
 
@@ -81,7 +87,34 @@ fit_top(f, Z, *, branch="parallel", layers=2,
 
 诊断直接调 `bm_experiments` / `bm_real._paired_loo_diff`，不重写。
 
-### 2.3 不做的
+### 2.3 采样参数集合（v3 新增）
+
+**不能**把 `param_spec()` 或 `PARAM_KEYS` 直接当采样清单：`L_ad` 是派生量，
+`parallel/series` 与 `layers=1/2` 各自只用一部分参数。用 `sampled_keys`：
+
+| branch | layers | 采样参数 |
+|---|---|---|
+| parallel | 2 | `Rs, R1, Q1, n1, R2, Q2, n2, R_ad, tau_ad` |
+| parallel | 1 | `Rs, R1, Q1, n1, R_ad, tau_ad` |
+| series | 2 | `Rs, R1, Q1, n1, R2, Q2, n2, R_L, tau_L` |
+| series | 1 | `Rs, R1, Q1, n1, R_L, tau_L` |
+
+`fit_top` 必须按 `sampled_keys` 建先验；给未使用参数建先验会引入纯先验决定的
+无效维度，NUTS 会在那里空转。`L_ad = R_L·tau_L` 在 `fit_top` 内确定性派生后
+传给 `z_nested`。
+
+### 2.4 `pointwise_elpd` 的构造（v3 明确）
+
+不能把 NumPyro 两个观测变量的 log-likelihood 原样交给 ArviZ。必须显式构造：
+
+```
+log p_j = log p(Z'_j | θ) + log p(Z''_j | θ)
+形状：(chain, draw, N_frequency)
+```
+
+这样 PSIS-LOO 才会把同一频率的实虚部当作**一个**留出单元。
+
+### 2.5 不做的
 
 不改 `make_model` / `fit_one` / `select_k`；不建注册表；不做跨族选择。
 
@@ -164,6 +197,14 @@ M3 第一轮跑完后，**只允许因量纲写错改一次**，并记录改动�
 
 实现方式：逐节点导纳递推，**手写**，不 import `bm_top.z_nested`。
 用 `Y = 1/(Q·ω_ref^n)` 从 `Q` 换算。
+
+**`layers=1` 的独立公式必须与 v3 单层定义一致**（不含 `R2`）：
+
+```
+Z = Rs + 1 / (1/Z_CPE1 + 1/(R1 + Z_branch))
+```
+
+不能为了"和当前代码一致"而复制旧的 `R1+R2+Z_branch`。
 
 ### 5.2 与拟合器的交叉验证
 
@@ -273,3 +314,5 @@ at_bound_frac_uniform, median_err, covered
 | 正式 R̂ 验收 | ≥4 链 |
 | 参数恢复 | 分优先/形状/组合三类，不要求全部单独恢复 |
 | M3 范围 | 本阶段只做参数恢复预实验，不冒称完整 M3 |
+| 单层定义 | `layers=1` 不含 `R2`；numpy/jax/生成器三处一致 |
+| 采样参数 | 由 `sampled_keys(branch, layers)` 决定，不用 `PARAM_KEYS` |

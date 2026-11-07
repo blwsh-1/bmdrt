@@ -529,7 +529,8 @@ python test_drt_signed.py
 | `z_rl_series(f, R, L)` | `R+L`：`R + jωL` |
 | `z_nested(f, p, f_ref, branch, layers)` | 完整两层（`layers=1` 退化为单层，供 M3 用） |
 | `j_z_nested(...)` | jax 版（x64 已开） |
-| `param_spec()` | 参数名 → 含义/单位/先验建议，M2/M3 直接引用 |
+| `param_spec()` | 完整参数元数据（含派生量与两种支路），**不是采样清单** |
+| `sampled_keys(branch, layers)` | 当前拓扑真正要采的参数；`L_ad` 永不采样 |
 
 ### 13.2 验收标准与结果（`python bm_top.py` → 8 项全过）
 
@@ -543,6 +544,18 @@ python test_drt_signed.py
 | 6 | 退化：`layers=1` | 与手写单层一致 | `0` |
 | 7 | 边界稳定性 | `Q∈[1e-3,1e6]`、`n∈[0.5,1]`、`R2∈[1e-3,1e6]`、`τ∈[1e-6,1e4]` × 18 dec | 非有限 0 个 |
 | 8 | jax 一致性 | <1e-12 | 3.7e-16（两种 branch） |
+| 9 | `sampled_keys` 矩阵 | 派生量/未使用参数不得进采样清单 | 4 种组合全过 |
+
+### 13.2.1 v3 修正（2026-11-07）
+
+审查发现两处实现问题，已修：
+
+1. **`layers=1` 正演写错**：原实现是 `R1 + R2 + Z_branch`，与文档定义
+   `R1 + Z_branch` 不一致（`R2` 只属于第二层并联节点）。numpy / jax 两处已改，
+   自检 [6] 原先按错误定义写所以没抓到，一并修正。
+2. **`PARAM_KEYS` 被当成采样清单**：它含派生量 `L_ad` 与非当前分支参数。
+   新增 `sampled_keys(branch, layers)`，`PARAM_KEYS` 改名
+   `ALL_PARAM_KEYS`（保留别名）作完整元数据。
 
 ### 13.3 与立项书 v1.2 的差异（已回写 §2.2）
 
