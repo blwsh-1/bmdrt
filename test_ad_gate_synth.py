@@ -178,8 +178,8 @@ def grid(n=60, fmin=1e-2, fmax=1e5, jitter=0.0, seed=5):
 # 采样密度口径与生产一致：dens = n / log10(f_max/f_min)（见 edges()）。
 # 真实 AZ31：50 点 / 7 dec = 7.14；真实 2E：56 点 / 5 dec = 11.2。
 F60 = grid()                     # 8.57 pts/dec（默认）
-F_AZ = grid(n=50)                # 7.14 pts/dec，对齐 AZ31
-F_2E = grid(n=78)                # 11.14 pts/dec，对齐 2E
+F_AZ = grid(n=50)                # 7.14 pts/dec，匹配 AZ31 的平均密度
+F_2E = grid(n=78)                # 11.14 pts/dec，匹配 2E 的平均密度
 FJ = grid(n=60, jitter=0.15)     # 8.57 pts/dec + 15% 非均匀
 
 
@@ -207,6 +207,15 @@ def _chk(name, f, Zobs, exp_status, exp_enter, exp_strong):
     detail = (f"{g['status']} enter={g['enter']} strong={g['strong']} "
               f"k_left={c.get('k_left')} k_right={c.get('k_right')}")
     return ok, f"{name}: 期望 {exp_status}/{exp_enter}/{exp_strong} → {detail}"
+
+
+def kleft_of(f, Z):
+    """独立计算峰左侧点数（与 detect_ad 同口径），用于验证构造确实贴边。"""
+    lf = np.log10(f)
+    m = lf <= np.quantile(lf, 0.40)
+    fb, zb = f[m], Z[m]
+    k = int(np.argmax(zb.imag))
+    return int(np.count_nonzero(fb < fb[k])), float(fb[k])
 
 
 def cases():
@@ -251,22 +260,65 @@ def cases():
     out.append((ok9, f"S9 漂移+伪感抗: {g9['status']} enter={g9['enter']} "
                      f"strong={g9['strong']}（只要求不自动选）"))
 
-    # C1 k_left=1 但符号不通过（负虚部贴边）
-    fc1 = float(F60[1])
-    Zc1 = make_spectrum(F60) - z_rl(F60, 100.0, fc1)
-    out.append(_chk("C1 贴边+符号不过", F60, Zc1, "capacitive_tail", False, False))
-    # C2 k_left=1、符号通过、系统性不通过（大噪声）
-    Zc2 = make_spectrum(F60, rl=(100.0, float(F60[1])), noise=0.25, seed=7)
+    # ---- C1–C3：贴边 + 两道前置闸门的组合。断言必须落到 checks 的底层字段，
+    #      不能只看最终 status —— 否则"符号闸门失败"也会被 capacitive_tail 放行。
+    f1 = float(F60[1])
+
+    # 贴边峰：窄高斯（真 RL 峰较宽，argmax 会偏到 band 内部，造不出 k_left=1）
+    bump1 = 1j * 100.0 * np.exp(-0.5 * (np.log10(F60 / f1) / 0.12) ** 2)
+
+    # C1：k_left=1，但符号闸门不通过。
+    # 构造：整段低频偏负（-60 Ω），只在 f1 处抬到 +30 —— 峰位在 f1（k_left=1），
+    # 但最低频段残差均值仍为负 → 必须在符号关返回。
+    Zc1 = make_spectrum(F60) - 1j * 60.0 + 0.9 * bump1
+    g1 = gate(F60, Zc1)
+    c1 = g1["checks"]
+    kl1, _ = kleft_of(F60, Zc1)
+    ok1 = (kl1 == 1
+           and c1.get("sign_inductive") is False
+           and g1["status"] == "capacitive_tail"
+           and g1["enter"] is False and g1["strong"] is False
+           and c1.get("k_left") is None)          # 未进入形状闸
+    out.append((ok1, f"C1 贴边+符号不过: 构造k_left={kl1} "
+                     f"sign={c1.get('sign_inductive')} → {g1['status']} "
+                     f"enter={g1['enter']} k_left(checks)={c1.get('k_left')}"))
+
+    # C2：k_left=1，符号通过、系统性不通过 → 必须在系统性关返回（关键用例）
+    # 构造：整段低频正偏（+20 Ω）+ f1 处尖峰（+120），再加 30% 噪声压垮系统性。
+    Zc2 = make_spectrum(F60) + 1j * 20.0 + bump1
+    rng2 = np.random.default_rng(7)
+    Zc2 = Zc2 + 0.30 * np.abs(Zc2).max() * (rng2.standard_normal(F60.size)
+                                            + 1j * rng2.standard_normal(F60.size))
     g2 = gate(F60, Zc2)
-    out.append(((g2["status"] in ("noise_only", "capacitive_tail")
-                 and not g2["enter"]),
-                f"C2 贴边+系统性不过: {g2['status']} enter={g2['enter']}"))
-    # C3 k_left=1、两关都过、但背景不是 RL（窄虚部鼓包）
-    bump = 1j * 100.0 * np.exp(-0.5 * (np.log10(F60 / float(F60[1])) / 0.12) ** 2)
-    g3 = gate(F60, make_spectrum(F60) + bump)
-    out.append(((g3["status"] == "edge_peak" and g3["enter"] and not g3["strong"]),
-                f"C3 非RL贴边+两关过: {g3['status']} enter={g3['enter']} "
-                f"strong={g3['strong']}（必须进诊断但不得自动选）"))
+    c2 = g2["checks"]
+    kl2, _ = kleft_of(F60, Zc2)
+    ok2 = (kl2 == 1
+           and c2.get("sign_inductive") is True
+           and c2.get("systematic") is False
+           and g2["status"] == "noise_only"
+           and g2["enter"] is False and g2["strong"] is False
+           and c2.get("k_left") is None)          # 未进入形状闸
+    out.append((ok2, f"C2 贴边+系统性不过: 构造k_left={kl2} "
+                     f"sign={c2.get('sign_inductive')} "
+                     f"systematic={c2.get('systematic')} → {g2['status']} "
+                     f"enter={g2['enter']} k_left(checks)={c2.get('k_left')}"))
+
+    # C3：k_left=1，两关都过，但背景不是 RL（窄虚部鼓包）
+    #     → 进 edge_peak（enter=True），但不得自动选择（strong=False）
+    Zc3 = make_spectrum(F60) + bump1
+    g3 = gate(F60, Zc3)
+    c3 = g3["checks"]
+    kl3, _ = kleft_of(F60, Zc3)
+    ok3 = (kl3 == 1
+           and c3.get("sign_inductive") is True
+           and c3.get("systematic") is True
+           and c3.get("k_left") == 1
+           and g3["status"] == "edge_peak"
+           and g3["enter"] is True and g3["strong"] is False)
+    out.append((ok3, f"C3 非RL贴边+两关过: 构造k_left={kl3} "
+                     f"sign={c3.get('sign_inductive')} "
+                     f"systematic={c3.get('systematic')} → {g3['status']} "
+                     f"enter={g3['enter']} strong={g3['strong']}"))
     return out
 
 
