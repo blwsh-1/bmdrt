@@ -350,21 +350,44 @@ def _selftest(args) -> int:
     print(f"[附] 固定口径：{reps} 次重复的 σ̂_re 均值 {est:.3g}"
           f"（目标 {tgt:.3g}，偏差 {abs(est-tgt)/tgt:.1%}）{'✓' if p_fixed else '✗'}")
 
-    # 相对口径的异方差性：残差 std 在低 |Z| / 高 |Z| 三段应差出一个量级
+    # 相对口径的异方差性：**这是断言，不是叙述**。
+    #     σ_j = 0.02·|Z_j| 时，一组点的合并残差 std 收敛到 0.02·RMS(|Z|)
+    #     （方差按 |Z|² 加权，不是按中位数），所以"确实按 |Z| 缩放"必须拿
+    #     RMS 比去核。只判"高段 > 低段"不够——一个与 |Z| 无关的常数 σ
+    #     在三段任意分组下也能凑出方向正确的比值。
     zabs = np.abs(Z0)
-    thirds = np.argsort(zabs)
-    lo_idx, hi_idx = thirds[:thirds.size // 3], thirds[-thirds.size // 3:]
+    order = np.argsort(zabs)
+    lo_idx, hi_idx = order[:order.size // 3], order[-order.size // 3:]
+    rms_lo = float(np.sqrt(np.mean(zabs[lo_idx] ** 2)))
+    rms_hi = float(np.sqrt(np.mean(zabs[hi_idx] ** 2)))
     res_r = np.array([(add_noise(Z0, 0.02, mode="relative", seed=s) - Z0).real
                       for s in range(reps)])
     sd_lo, sd_hi = float(np.std(res_r[:, lo_idx])), float(np.std(res_r[:, hi_idx]))
-    ratio_z = float(np.median(zabs[hi_idx]) / np.median(zabs[lo_idx]))
-    print(f"    相对口径：低 |Z| 三段 σ̂={sd_lo:.3g}，高 |Z| 三段 σ̂={sd_hi:.3g}，"
-          f"比值 {sd_hi/max(sd_lo,1e-300):.1f}（|Z| 中位比 {ratio_z:.1f}）"
-          f"→ 异方差，只能做表达能力对照")
+    ratio_meas = sd_hi / max(sd_lo, 1e-300)
+    ratio_exp = rms_hi / rms_lo
+    p_order = sd_hi > sd_lo                                   # 方向
+    p_ratio = ratio_meas > 1.5                                # 明显 ≠ 1
+    p_scale = abs(ratio_meas / ratio_exp - 1.0) < 0.05        # 比值对得上 RMS 比
+    p_abs = (abs(sd_lo / (0.02 * rms_lo) - 1.0) < 0.03 and
+             abs(sd_hi / (0.02 * rms_hi) - 1.0) < 0.03)        # 绝对值也对得上
+    p_rel = p_order and p_ratio and p_scale and p_abs
+    ok &= p_rel
+    print(f"    相对口径：σ̂ 低 |Z| 三段 {sd_lo:.3g} / 高 |Z| 三段 {sd_hi:.3g}，"
+          f"比值 {ratio_meas:.1f}")
+    print(f"              理论 0.02·RMS = {0.02*rms_lo:.3g} / {0.02*rms_hi:.3g}"
+          f"（RMS 比 {ratio_exp:.1f}）"
+          f"  [方向{'✓' if p_order else '✗'} 比值>1.5 {'✓' if p_ratio else '✗'}"
+          f" 比值对 RMS {'✓' if p_scale else '✗'} 绝对量 {'✓' if p_abs else '✗'}]")
+    print(f"              → 异方差确认{'✓' if p_rel else '✗'}"
+          f"（只能做表达能力对照，不能标定采样器）")
     rec["noise"] = {"fixed_sigma_mean": est, "target": tgt,
                     "fixed_pass": bool(p_fixed),
                     "rel_sd_low": sd_lo, "rel_sd_high": sd_hi,
-                    "rel_ratio": sd_hi / max(sd_lo, 1e-300)}
+                    "rel_ratio": ratio_meas, "rel_ratio_expected": ratio_exp,
+                    "rel_checks": {"order": bool(p_order), "ratio_gt_1.5": bool(p_ratio),
+                                   "ratio_vs_rms": bool(p_scale),
+                                   "absolute": bool(p_abs)},
+                    "rel_pass": bool(p_rel)}
 
     print("=" * 78)
     print("档 1 全部通过" if ok else "档 1 有失败项")

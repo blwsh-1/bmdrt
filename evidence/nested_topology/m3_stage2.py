@@ -126,6 +126,15 @@ def summarize(res: dict, truth: dict, branch: str, layers: int,
     pri_shape = [{"a": a, "b": b, "rho": float(C[idx[a], idx[b]])}
                  for a in pri_keys for b in shape_keys]
 
+    # 多 seed 要盯的几对固定组合（"权衡是否稳定"看的就是这几个 ρ）
+    def _rho(a, b):
+        return float(C[idx[a], idx[b]]) if (a in idx and b in idx) else None
+
+    named = {"R_ad,tau_ad": _rho("R_ad", "tau_ad"),
+             "R_L,tau_L": _rho("R_L", "tau_L"),
+             "R1,R2": _rho("R1", "R2"),
+             "Rs,n1": _rho("Rs", "n1")}
+
     # 组合参数（§6.2："无法分别辨识者，报告可辨识的组合"）
     comb = {}
     if {"R1", "R2"} <= set(s):
@@ -171,6 +180,7 @@ def summarize(res: dict, truth: dict, branch: str, layers: int,
         "corr_pri_vs_shape": pri_shape,
         "corr_pri_vs_shape_max": (max(abs(c["rho"]) for c in pri_shape)
                                   if pri_shape else None),
+        "corr_named": named,
     }
     return out
 
@@ -206,9 +216,11 @@ def run_stage(stage: str, *, seed: int, noise: float, branch: str, layers: int,
     if init_mode == "oracle":
         # 真值经物理 → 无约束转换。只用于"先验/初值是否卡住采样器"的诊断，
         # **不能**当正式结果：链从真值出发时，"收敛得好"可能只是初值的回声。
+        # 必须把 sigma 一起传进去：固定噪声时模型没有 s_re/s_im 位点，
+        # 多给会被 NumPyro 当成多余的树节点。
         init = T.physical_to_unconstrained(
             truth, zmax=zmax, w_ref=float(2 * np.pi * np.sqrt(f.min() * f.max())),
-            branch=branch, layers=layers)
+            branch=branch, layers=layers, sigma=sigma, num_chains=n_chains)
     else:
         init = None                            # 走 numpyro 默认（先验支撑内的随机初值）
 
@@ -283,10 +295,83 @@ def print_record(rec: dict) -> None:
         print(f"      {'✓' if v else '✗'} {k}")
 
 
+def _fmt_pct(x, w: int = 11) -> str:
+    return f"{x:>+{w}.1%}" if x is not None else f"{'—':>{w}}"
+
+
+def _fmt_num(x, w: int = 8, s: str = "g") -> str:
+    s = s.lstrip(".")                     # 允许传 ".3%" 或 "3%"，统一成 "3%"
+    return f"{x:>{w}.{s}}" if x is not None else f"{'—':>{w}}"
+
+
+def print_seed_table(recs: list[dict]) -> dict:
+    """逐 seed 一行，再给汇总。**不汇总成单一数字**——审查要求逐 seed 保留。"""
+    import statistics as stats
+
+    r0 = recs[0]
+    branch = r0["branch"]
+    p1, p2 = ("R_ad", "tau_ad") if branch == "parallel" else ("R_L", "tau_L")
+    lk = (f"L_ad(={p1}·{p2})")
+    print(f"\n{'='*96}")
+    print(f"多 seed 汇总：{branch}_L{r0['layers']}  {r0['noise']:.0%} 噪声（{r0['sigma_note']}）  "
+          f"{r0['n_chains']} 链 × {r0['n_samples']} / warmup {r0['n_warmup']}  "
+          f"ta={r0['target_accept']}  depth={r0['max_tree_depth']}  初值={r0['init_mode']}")
+    print(f"{'='*96}")
+    print(f"{'seed':>5}{'R_ad 误差':>12}{'tau_ad 误差':>13}{'L_ad 误差':>12}"
+          f"{'覆盖':>6}{'ρ(ad,τ)':>10}{'ρ(R1,R2)':>11}"
+          f"{'R̂max':>8}{'ESSmin':>8}{'div':>9}{'判定':>6}")
+    for r in recs:
+        p, d, c = r["params"], r["diagnostics"], r.get("combinations", {})
+        e1 = p.get(p1, {}).get("rel_err")
+        e2 = p.get(p2, {}).get("rel_err")
+        e3 = c.get(lk, {}).get("rel_err")
+        cov = sum(1 for k in (p1, p2) if p.get(k, {}).get("covered"))
+        named = d.get("corr_named") or {}
+        r1, r2 = named.get(f"{p1},{p2}"), named.get("R1,R2")
+        print(f"{r['seed']:>5}"
+              f"{_fmt_pct(e1, 12)}{_fmt_pct(e2, 13)}{_fmt_pct(e3, 12)}"
+              f"{f'{cov}/2':>6}"
+              f"{(f'{r1:+.3f}' if r1 is not None else '—'):>10}"
+              f"{(f'{r2:+.3f}' if r2 is not None else '—'):>11}"
+              f"{_fmt_num(d['rhat_max'], 8, '4f')}{_fmt_num(d['ess_min'], 8, '0f')}"
+              f"{_fmt_num(d['div_frac'], 8, '.3%')}"
+              f"{'✓' if r['acceptance']['pass'] else '✗':>6}")
+
+    e1s = [r["params"].get(p1, {}).get("rel_err") for r in recs]
+    e2s = [r["params"].get(p2, {}).get("rel_err") for r in recs]
+    e1s = [x for x in e1s if x is not None]
+    e2s = [x for x in e2s if x is not None]
+    cov1 = sum(1 for r in recs if r["params"].get(p1, {}).get("covered"))
+    cov2 = sum(1 for r in recs if r["params"].get(p2, {}).get("covered"))
+    npass = sum(1 for r in recs if r["acceptance"]["pass"])
+    n = len(recs)
+    print("-" * 96)
+    print(f"汇总  {p1} 误差 中位 {stats.median(e1s):+.2%}  范围 "
+          f"[{min(e1s):+.2%}, {max(e1s):+.2%}]")
+    print(f"      {p2} 误差 中位 {stats.median(e2s):+.2%}  "
+          f"均值 {stats.mean(e2s):+.2%} ± {stats.stdev(e2s):.2%}  "
+          f"范围 [{min(e2s):+.2%}, {max(e2s):+.2%}]  同号 "
+          f"{sum(1 for x in e2s if x > 0)}/{len(e2s)} 正")
+    print(f"      90% 区间覆盖：{p1} {cov1}/{n}、{p2} {cov2}/{n}；"
+          f"收敛判定 {npass}/{n}；|{p2}|≤4% 的 seed "
+          f"{sum(1 for x in e2s if abs(x) <= 0.04)}/{len(e2s)}")
+    print("      注：seed 数是探索性重复，不是 90% 覆盖率的统计检验。")
+    return {"n_seeds": n, "n_converged": npass,
+            "covered": {p1: cov1, p2: cov2},
+            "err": {p1: {"median": stats.median(e1s), "min": min(e1s),
+                         "max": max(e1s)},
+                    p2: {"median": stats.median(e2s), "mean": stats.mean(e2s),
+                         "sd": stats.stdev(e2s) if len(e2s) > 1 else 0.0,
+                         "min": min(e2s), "max": max(e2s),
+                         "n_positive": sum(1 for x in e2s if x > 0)}}}
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="M3 档 2 单组参数恢复")
     ap.add_argument("--stage", choices=["a", "b", "both"], default="both")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--seeds", default=None,
+                    help="逗号分隔的 seed 列表（如 0,1,2,3,4）；给了就逐 seed 全记录")
     ap.add_argument("--noise", type=float, default=0.02)
     ap.add_argument("--branch", choices=["parallel", "series"], default="parallel")
     ap.add_argument("--layers", type=int, choices=[1, 2], default=2)
@@ -313,17 +398,28 @@ def main(argv=None) -> int:
         kw["n_chains"] = args.chains
 
     stages = ["a", "b"] if args.stage == "both" else [args.stage]
+    seeds = ([args.seed] if not args.seeds
+             else [int(s) for s in args.seeds.split(",") if s.strip()])
+    t_all = time.time()
     recs = []
     for st in stages:
-        sp = None
-        if args.save_samples and args.json:
-            sp = str(Path(args.json).with_suffix(f".{st}.samples.npz"))
-        rec = run_stage(st, seed=args.seed, noise=args.noise, branch=args.branch,
-                        layers=args.layers, progress=args.progress,
-                        init_mode=args.init, target_accept=args.target_accept,
-                        max_tree_depth=args.max_tree_depth, samples_path=sp, **kw)
-        print_record(rec)
-        recs.append(rec)
+        for sd in seeds:
+            sp = None
+            if args.save_samples and args.json:
+                sp = str(Path(args.json).with_suffix(f".{st}.s{sd}.samples.npz"))
+            rec = run_stage(st, seed=sd, noise=args.noise, branch=args.branch,
+                            layers=args.layers, progress=args.progress,
+                            init_mode=args.init, target_accept=args.target_accept,
+                            max_tree_depth=args.max_tree_depth, samples_path=sp, **kw)
+            print_record(rec)
+            recs.append(rec)
+
+    summary = None
+    if len(seeds) > 1 and len(stages) == 1:
+        summary = print_seed_table(recs)
+    elif len(seeds) > 1:
+        for st in stages:
+            summary = print_seed_table([r for r in recs if r["stage"] == st])
 
     ok = all(r["acceptance"]["pass"] for r in recs) if not args.smoke else True
     print(f"\n{'='*74}")
@@ -331,11 +427,22 @@ def main(argv=None) -> int:
         print("冒烟结束：只证明链路通，结果不可引用（1 链 150 样本不收敛）")
     else:
         print("两组都通过" if ok else "有未通过项——按 §8 记录，失败不删不改 seed")
+    if len(recs) > 1:
+        print(f"{len(recs)} 次拟合总耗时 {time.time()-t_all:.0f}s")
 
     if args.json:
         Path(args.json).write_text(
             json.dumps({"time": time.strftime("%Y-%m-%d %H:%M:%S"),
-                        "smoke": bool(args.smoke), "records": recs},
+                        "smoke": bool(args.smoke),
+                        "config": {"branch": args.branch, "layers": args.layers,
+                                   "noise": args.noise, "seeds": seeds,
+                                   "n_chains": kw["n_chains"],
+                                   "n_samples": kw["n_samples"],
+                                   "n_warmup": kw["n_warmup"],
+                                   "target_accept": args.target_accept,
+                                   "max_tree_depth": args.max_tree_depth,
+                                   "init": args.init},
+                        "summary": summary, "records": recs},
                        ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"记录写入 {args.json}")
     return 0 if ok else 1

@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
-"""嵌套并联电路拓扑（M1：只做阻抗计算，不接采样器）。
+"""嵌套并联电路拓扑（M1 正演 + `fit_top()` 独立采样路径）。
 
-**本模块不改 `bm_core.py` / `bm_ad.py` 的任何生产逻辑**；它只提供新拓扑的
-正演与自检。接入采样器是 M2（届时薄封装进 `bm_families/` 注册表）。
+**本模块不改 `bm_core.py` / `bm_ad.py` 的任何生产逻辑**，也不经
+`bm_families/` 注册表——架构冻结未解除期间，`fit_top()` 是一条**并行的
+独立采样路径**，只服务 M3 合成标定。M2「接注册表」因此记为**绕过**，
+不是完成；`topology=voigt` 的生产行为逐位不变。
 
 拓扑（两层，Shahri et al. 2024 Table 1 circuit 1/4 的推广）
 -----------------------------------------------------------
@@ -357,7 +359,8 @@ def _selftest():
             for layers in (1, 2):
                 tab = _prior_table(zmax_t, wref_t, branch, layers)
                 init = physical_to_unconstrained(base, zmax=zmax_t, w_ref=wref_t,
-                                                 branch=branch, layers=layers)
+                                                 branch=branch, layers=layers,
+                                                 sigma=(1.0, 1.0))
                 for k, u in init.items():
                     back = float(np.asarray(biject_to(tab[k].support)(u)))
                     e_max = max(e_max, abs(back - base[k]) / max(abs(base[k]), 1e-30))
@@ -367,6 +370,45 @@ def _selftest():
         print(f"[10] 无约束往返检查跳过（{type(ex).__name__}: {ex}）")
     except Exception as ex:            # 自己的转换写错了 → 必须失败，不能静默跳过
         print(f"[10] 无约束往返检查**失败**（{type(ex).__name__}: {ex}）")
+        ok = False
+
+    # 11) init_values 接真实采样器：位点齐全 + 多链首维（静态审查提的两处边界）
+    #     结构检查覆盖不到这两条——它们分别以 AssertionError / IndexError 出现，
+    #     所以必须真跑一次 fit_top，而不是只看字典的键。
+    try:
+        import numpyro  # noqa: F401
+        f11 = np.logspace(-2.0, 5.0, 21)
+        Z11 = z_nested(f11, base, branch="parallel", layers=2)
+        zmax11 = float(np.max(np.abs(Z11)))
+        wref11 = float(2 * np.pi * np.sqrt(f11[0] * f11[-1]))
+        sig11 = (0.02 * zmax11, 0.02 * zmax11)
+        need_circuit = set(sampled_keys("parallel", 2))
+        for nc, sg, tag in ((1, sig11, "固定 σ"), (4, sig11, "固定 σ"),
+                            (1, None, "自由 σ"), (4, None, "自由 σ")):
+            init11 = physical_to_unconstrained(base, zmax=zmax11, w_ref=wref11,
+                                               sigma=sg, num_chains=nc)
+            r11 = fit_top(f11, Z11, n_warmup=8, n_samples=8, seed=0,
+                          num_chains=nc, sigma=sg, init_values=init11,
+                          progress=False)
+            need = need_circuit | (set() if sg is not None else {"s_re", "s_im"})
+            miss = need - set(r11["s"])
+            print(f"[11] {nc} 链 {tag}：初值 {len(init11)} 位点 → 后验 "
+                  f"{len(r11['s'])} 位点，缺 {sorted(miss) if miss else '无'}")
+            ok &= not miss
+        # 负例：自由 σ 却只给电路初值，必须**报错**（不能静默给个错起点）
+        stray = physical_to_unconstrained(base, zmax=zmax11, w_ref=wref11,
+                                          sigma=sig11, num_chains=1)
+        try:
+            fit_top(f11, Z11, n_warmup=4, n_samples=4, seed=0, num_chains=1,
+                    sigma=None, init_values=stray, progress=False)
+            print("[11] 负例未触发（自由 σ + 缺噪声初值竟能跑）→ 记为失败")
+            ok = False
+        except Exception as ex:
+            print(f"[11] 负例按预期失败：{type(ex).__name__}（自由 σ 缺噪声位点）")
+    except ImportError as ex:          # 缺 numpyro 只跳过
+        print(f"[11] 初值采样检查跳过（{type(ex).__name__}: {ex}）")
+    except Exception as ex:            # 自己的换算写错 → 必须失败
+        print(f"[11] 初值采样检查**失败**（{type(ex).__name__}: {ex}）")
         ok = False
 
     print("=" * 72)
@@ -437,7 +479,9 @@ def _prior_table(zmax, w_ref, branch: str, layers: int) -> dict:
 
 
 def physical_to_unconstrained(p_phys: dict, *, zmax: float, w_ref: float,
-                              branch: str = "parallel", layers: int = 2) -> dict:
+                              branch: str = "parallel", layers: int = 2,
+                              sigma=None, sigma_floor: float = 0.0,
+                              num_chains: int = 1) -> dict:
     """物理参数 → **无约束**空间，供 `fit_top(init_values=...)` 使用。
 
     NumPyro 的 `init_params` 期望的是无约束（unconstrained）初值：正参数是
@@ -448,10 +492,23 @@ def physical_to_unconstrained(p_phys: dict, *, zmax: float, w_ref: float,
     `zmax` 与 `w_ref` 必须与 `fit_top` 内部用的一致：
     `zmax = max|Z|`、`w_ref = 2π√(f_min·f_max)`。
 
+    **返回的字典必须覆盖全部潜在采样位点**，否则 NumPyro 不会替你补：
+    缺 `s_re` 时 `potential_fn` 直接断言失败。因此：
+
+    · `sigma=(s_re, s_im)` 固定噪声 → 只有电路参数（噪声是常数、不采）；
+    · `sigma=None` 自由噪声 → 另加 `s_re`/`s_im`（`sigma_floor>0` 时是
+      `s_re_base`/`s_im_base`，因为模型采样的是 `base`，`s = base + floor`）。
+      初值取 `p_phys["s_re"]`/`["s_im"]`，缺省 `0.01·zmax`（先验中位）。
+
+    **`num_chains>1` 时必须给每个位点形状 `(num_chains,)`**：NumPyro 只做
+    "首维等于链数"的检查（`mcmc.run` 里那句 raise），标量会先在
+    `jnp.shape(x)[0]` 上抛 `IndexError`。本函数按 `num_chains` 广播。
+
     例：
         >>> p = dict(Rs=10, R1=55, R2=600, Q1=200, n1=0.75,
         ...          Q2=900, n2=0.85, R_ad=3000, tau_ad=1.6)
-        >>> init = physical_to_unconstrained(p, zmax=1000.0, w_ref=1.0)
+        >>> init = physical_to_unconstrained(p, zmax=1000.0, w_ref=1.0,
+        ...                                  sigma=(20.0, 20.0), num_chains=4)
     """
     from numpyro.distributions.transforms import biject_to
 
@@ -465,6 +522,33 @@ def physical_to_unconstrained(p_phys: dict, *, zmax: float, w_ref: float,
     missing = set(sampled_keys(branch, layers)) - set(out)
     if missing:
         raise ValueError(f"init_values 缺少参数：{sorted(missing)}")
+
+    if sigma is None:
+        import numpyro.distributions as dist
+
+        floor = float(sigma_floor) * float(zmax)
+        s0 = 0.01 * float(zmax)          # 与先验 LogNormal(log 0.01·zmax, 1) 的中位一致
+        s_re = float(p_phys.get("s_re", s0))
+        s_im = float(p_phys.get("s_im", s0))
+        sup = dist.LogNormal(0.0, 1.0).support      # 与先验同支撑：正数
+        if sigma_floor > 0:
+            for name, s in (("s_re_base", s_re), ("s_im_base", s_im)):
+                if s - floor <= 0.0:
+                    raise ValueError(
+                        f"{name} 的物理初值 {s:.4g} 不大于 floor "
+                        f"{floor:.4g}（= sigma_floor·zmax），无法换算到无约束空间")
+                out[name] = np.asarray(biject_to(sup).inv(
+                    np.asarray(s - floor)), dtype=float).reshape(())
+        else:
+            for name, s in (("s_re", s_re), ("s_im", s_im)):
+                if s <= 0.0:
+                    raise ValueError(f"{name} 的物理初值必须为正，收到 {s:.4g}")
+                out[name] = np.asarray(biject_to(sup).inv(np.asarray(s)),
+                                       dtype=float).reshape(())
+
+    if int(num_chains) > 1:
+        out = {k: np.repeat(np.asarray(v, dtype=float).reshape(1), int(num_chains))
+               for k, v in out.items()}
     return out
 
 
@@ -491,6 +575,13 @@ def fit_top(f, Z, *, branch: str = "parallel", layers: int = 2,
     `log`、`n1/n2` 取 logit 型伸缩）。物理参数请先过
     `physical_to_unconstrained(...)`。语义写清楚是因为传错的代价是静默的：
     数值不会报错，只会让 warmup 无意义地变长。
+
+    两点硬约束（NumPyro 0.19 的实际行为，自检 [11] 守着）：
+
+    · **位点必须齐全**——`sigma=None` 时还有 `s_re`/`s_im`（`sigma_floor>0`
+      时是 `s_re_base`/`s_im_base`）；漏了会以 `AssertionError` 失败，不是静默；
+    · **`num_chains>1` 时每位点首维须等于链数**——标量会抛 `IndexError`。
+      `physical_to_unconstrained(..., num_chains=n, sigma=...)` 会一并处理。
 
     返回 `dict`，`s` 与 `fit_one` 同名；`pointwise_elpd` 是逐频率点的 LOO。
     """
