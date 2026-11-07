@@ -118,7 +118,7 @@ def j_z_rl_series(omega, R, L):
 # --------------------------------------------------------------------------
 
 PARAM_KEYS = ("Rs", "R1", "R2", "Q1", "n1", "Q2", "n2",
-              "R_ad", "tau_ad", "R_L", "L_ad")
+              "R_ad", "tau_ad", "R_L", "tau_L", "L_ad")
 
 
 def z_nested(f, p: dict, f_ref: float | None = None,
@@ -189,7 +189,8 @@ def param_spec():
         "R_ad": ("吸附支路电阻（branch=parallel）", "Ω", "LogNormal(log(0.1·zmax), 2.0)"),
         "tau_ad": ("吸附支路弛豫时间", "s", "LogNormal(log(1/ω_ref), 2.0)"),
         "R_L":  ("感抗支路串联电阻（branch=series）", "Ω", "LogNormal(log(0.1·zmax), 2.0)"),
-        "L_ad": ("感抗支路电感（branch=series）", "H", "LogNormal(log(R_L·τ_ref), 2.0)"),
+        "tau_L": ("感抗支路特征时间 L/R_L（branch=series）", "s", "LogNormal(log(1/ω_ref), 2.0)"),
+        "L_ad": ("感抗支路电感 = R_L·tau_L（**派生量，不采样**）", "H", "—"),
     }
 
 
