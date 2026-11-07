@@ -1,0 +1,256 @@
+# -*- coding: utf-8 -*-
+"""M3 档 2：单组参数恢复（`BM_TOP_M3_PLAN.md` §6.2 / §12）。
+
+一次只跑一个条件，分两个子步骤：
+
+    A  固定噪声 `sigma = (0.02·zmax, 0.02·zmax)` —— 隔离后验几何，只看
+       `R_ad` / `tau_ad` 能不能从数据里回来；
+    B  自由噪声（`sigma=None`，走 `LogNormal(log 0.01·zmax, 1)`）—— 看噪声
+       参数与电路参数共同采样是否引入新的简并。
+
+**两步必须分开记录**。A 通过不等于 B 通过：A 里 σ 是已知的，B 多两个自由度，
+后验几何完全不同（`bm_core` 记录过无噪声 + 自由 σ 的漏斗）。
+
+合成谱由 `bm_top_gen` 独立生成（不调 `bm_top.z_nested`），噪声按 §4.1 的
+固定标准差、实虚独立口径。
+
+用法
+----
+    # 单组正式跑（4 链 × 1200 样本）
+    python evidence/nested_topology/m3_stage2.py --stage both
+
+    # 只跑 A、换 seed、写 JSON
+    python evidence/nested_topology/m3_stage2.py --stage a --seed 1 --json out.json
+
+    # 链路自检（1 链 150 样本，只证明能跑通，结果不可引用）
+    python evidence/nested_topology/m3_stage2.py --smoke
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import time
+from pathlib import Path
+
+import numpy as np
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+
+import bm_top as T                      # noqa: E402  （拟合器）
+import bm_top_gen as G                  # noqa: E402  （独立生成器）
+
+# 审查批准的基准真值（沿用 §11.2 冒烟的那组，便于对照）
+TRUTH = dict(Rs=10.0, R1=55.0, R2=600.0, Q1=200.0, n1=0.75,
+             Q2=900.0, n2=0.85, R_ad=3000.0, tau_ad=1.6)
+
+F_GRID = (1e-2, 1e5, 61)
+
+
+SERIES_TRUTH = dict(R_L=800.0, tau_L=1.625)     # L_ad = 1300，与 parallel 支路可比
+
+
+def truth_params(branch: str, layers: int) -> dict:
+    """当前拓扑的真值（只含该拓扑真正采样的参数）。"""
+    p = dict(TRUTH)
+    if branch == "series":
+        p.pop("R_ad", None)
+        p.pop("tau_ad", None)
+        p.update(SERIES_TRUTH)
+    return {k: p[k] for k in T.sampled_keys(branch, layers) if k in p}
+
+
+def make_spectrum(noise: float = 0.02, seed: int = 0, branch: str = "parallel",
+                  layers: int = 2):
+    """独立生成 + 加噪。返回 (f, Z, zmax)。"""
+    f = np.logspace(np.log10(F_GRID[0]), np.log10(F_GRID[1]), F_GRID[2])
+    Z0 = G.gen(f, truth_params(branch, layers), branch=branch, layers=layers)
+    zmax = float(np.max(np.abs(Z0)))
+    Z = G.add_noise(Z0, noise, mode="fixed", seed=seed, zmax=zmax)
+    return f, Z, zmax
+
+
+def summarize(res: dict, truth: dict, branch: str, layers: int,
+              sigma_note: str) -> dict:
+    """把一个 `fit_top` 结果压成可记录的指标。"""
+    s = res["s"]
+    keys = list(T.sampled_keys(branch, layers))
+    if branch == "series":
+        keys.append("L_ad")                     # 派生量也看一下
+    out = {"sigma_note": sigma_note, "params": {}, "diagnostics": {}}
+
+    for k in keys:
+        if k not in s:
+            continue
+        v = np.asarray(s[k], float).ravel()
+        lo, med, hi = np.percentile(v, [5, 50, 95])
+        rec = {"median": float(med), "p05": float(lo), "p95": float(hi),
+               "width90": float(hi - lo), "n": int(v.size)}
+        if k in truth:
+            tv = float(truth[k])
+            rec.update(truth=tv,
+                       rel_err=float((med - tv) / tv),
+                       covered=bool(lo <= tv <= hi))
+        out["params"][k] = rec
+
+    # 成对相关：只取采样参数，避免派生量重复计入
+    mat_keys = [k for k in T.sampled_keys(branch, layers) if k in s and
+                np.asarray(s[k]).size > 1]
+    M = np.column_stack([np.asarray(s[k], float).ravel() for k in mat_keys])
+    C = np.corrcoef(M, rowvar=False)
+    pairs = []
+    for i in range(len(mat_keys)):
+        for j in range(i + 1, len(mat_keys)):
+            pairs.append((mat_keys[i], mat_keys[j], float(C[i, j])))
+    pairs.sort(key=lambda t: -abs(t[2]))
+
+    pw = res.get("pointwise_elpd")
+    pk = np.asarray(res.get("pareto_k", []), float)
+    div = res.get("divergences")
+    n_draws = int(np.asarray(s[mat_keys[0]]).size)
+    out["diagnostics"] = {
+        "rhat_max": res.get("rhat_max"),
+        "ess_min": res.get("ess_min"),
+        "divergences": div,
+        "div_frac": (None if div is None else float(div) / max(n_draws, 1)),
+        "n_draws": n_draws,
+        "elpd": res.get("elpd"), "elpd_se": res.get("elpd_se"),
+        "pointwise_len": (None if pw is None else int(np.asarray(pw).size)),
+        "pareto_k_max": (float(np.max(pk)) if pk.size else None),
+        "pareto_k_gt07_frac": (float(np.mean(pk > 0.7)) if pk.size else None),
+        "corr_max_abs": (abs(pairs[0][2]) if pairs else None),
+        "corr_top": [{"a": a, "b": b, "rho": r} for a, b, r in pairs[:5]],
+    }
+    return out
+
+
+def acceptance(rec: dict, n_freq: int,
+               err_targets=(0.01, 0.04, 0.08)) -> dict:
+    """§6.3 的机器判定。只判**这一次**记录，不当覆盖率结论。"""
+    d = rec["diagnostics"]
+    p = rec["params"]
+    pri = ["R_ad", "tau_ad"] if "R_ad" in p else ["R_L", "tau_L"]
+    worst_err = max(abs(p[k].get("rel_err", np.inf)) for k in pri if k in p)
+    checks = {
+        "rhat_lt_1.01": (d["rhat_max"] is not None and d["rhat_max"] < 1.01),
+        "ess_gt_200": (d["ess_min"] is not None and d["ess_min"] > 200),
+        "div_lt_0.1pct": (d["div_frac"] is not None and d["div_frac"] < 1e-3),
+        "pointwise_len_ok": (d["pointwise_len"] == n_freq),
+        "pareto_k_ok": (d["pareto_k_max"] is not None and d["pareto_k_max"] <= 0.7),
+        "covered": all(bool(p[k].get("covered")) for k in pri if k in p),
+        "pri_err_le_4pct": bool(worst_err <= err_targets[1]),
+    }
+    return {"checks": checks, "pri_err_worst": float(worst_err),
+            "pass": all(checks.values())}
+
+
+def run_stage(stage: str, *, seed: int, noise: float, branch: str, layers: int,
+              n_warmup: int, n_samples: int, n_chains: int, progress: bool,
+              init_mode: str = "prior") -> dict:
+    f, Z, zmax = make_spectrum(noise=noise, seed=seed, branch=branch, layers=layers)
+    truth = truth_params(branch, layers)
+
+    sigma = (noise * zmax, noise * zmax) if stage == "a" else None
+    if init_mode == "oracle":
+        # 真值经物理 → 无约束转换。只用于"先验/初值是否卡住采样器"的诊断，
+        # **不能**当正式结果：链从真值出发时，"收敛得好"可能只是初值的回声。
+        init = T.physical_to_unconstrained(
+            truth, zmax=zmax, w_ref=float(2 * np.pi * np.sqrt(f.min() * f.max())),
+            branch=branch, layers=layers)
+    else:
+        init = None                            # 走 numpyro 默认（先验支撑内的随机初值）
+
+    t0 = time.time()
+    res = T.fit_top(f, Z, branch=branch, layers=layers,
+                    n_warmup=n_warmup, n_samples=n_samples, num_chains=n_chains,
+                    seed=seed, sigma=sigma, init_values=init, progress=progress)
+    dt = time.time() - t0
+
+    rec = summarize(res, truth, branch, layers,
+                    "fixed 2%·zmax" if stage == "a" else "free LogNormal(0.01·zmax,1)")
+    rec.update(stage=stage, seed=seed, noise=noise, branch=branch, layers=layers,
+               n_chains=n_chains, n_samples=n_samples, n_warmup=n_warmup,
+               n_freq=int(f.size), zmax=zmax, seconds=round(dt, 1),
+               init_mode=init_mode, truth=truth)
+    rec["acceptance"] = acceptance(rec, int(f.size))
+    return rec
+
+
+def print_record(rec: dict) -> None:
+    d, p = rec["diagnostics"], rec["params"]
+    print(f"\n{'='*74}")
+    print(f"档 2  [{rec['stage']}] {rec['branch']}_L{rec['layers']}  "
+          f"seed={rec['seed']}  噪声={rec['noise']:.0%}  噪声口径={rec['sigma_note']}")
+    print(f"       {rec['n_chains']} 链 × {rec['n_samples']} 样本 / warmup {rec['n_warmup']}"
+          f"  初值={rec['init_mode']}  → {rec['seconds']}s")
+    print(f"{'='*74}")
+    print(f"{'参数':<8}{'真值':>10}{'中位':>12}{'90% 区间':>26}{'相对误差':>10}{'覆盖':>6}")
+    for k, v in p.items():
+        ci = "[{:.4g}, {:.4g}]".format(v["p05"], v["p95"])
+        if "truth" in v:
+            cover = "✓" if v["covered"] else "✗"
+            print(f"{k:<8}{v['truth']:>10.4g}{v['median']:>12.4g}{ci:>26}"
+                  f"{v['rel_err']:>+9.2%}{cover:>6}")
+        else:
+            print(f"{k:<8}{'—':>10}{v['median']:>12.4g}{ci:>26}")
+    print(f"\n诊断  R̂max={d['rhat_max']:.4f}  ESSmin={d['ess_min']:.0f}  "
+          f"div={d['divergences']} ({d['div_frac']:.4%})")
+    print(f"      elpd={d['elpd']:.2f}±{d['elpd_se']:.2f}  "
+          f"pointwise_len={d['pointwise_len']} (N={rec['n_freq']})  "
+          f"pareto_k_max={d['pareto_k_max']:.3f}  k>0.7 占比={d['pareto_k_gt07_frac']:.1%}")
+    print("      最强相关：")
+    for c in d["corr_top"][:3]:
+        print(f"        corr({c['a']}, {c['b']}) = {c['rho']:+.3f}")
+    a = rec["acceptance"]
+    print(f"\n判定（仅本组）：{'通过' if a['pass'] else '未通过'}"
+          f"  优先恢复参数最大误差 {a['pri_err_worst']:.2%}")
+    for k, v in a["checks"].items():
+        print(f"      {'✓' if v else '✗'} {k}")
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description="M3 档 2 单组参数恢复")
+    ap.add_argument("--stage", choices=["a", "b", "both"], default="both")
+    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--noise", type=float, default=0.02)
+    ap.add_argument("--branch", choices=["parallel", "series"], default="parallel")
+    ap.add_argument("--layers", type=int, choices=[1, 2], default=2)
+    ap.add_argument("--smoke", action="store_true", help="1 链 150 样本，只验链路")
+    ap.add_argument("--init", choices=["prior", "oracle"], default="prior",
+                    help="prior=默认随机初值（正式用）；oracle=真值初值（只做诊断）")
+    ap.add_argument("--progress", action="store_true", help="打印 MCMC 进度条")
+    ap.add_argument("--json", default=None)
+    args = ap.parse_args(argv)
+
+    kw = dict(n_warmup=150, n_samples=150, n_chains=1) if args.smoke else \
+        dict(n_warmup=600, n_samples=1200, n_chains=4)
+
+    stages = ["a", "b"] if args.stage == "both" else [args.stage]
+    recs = []
+    for st in stages:
+        rec = run_stage(st, seed=args.seed, noise=args.noise, branch=args.branch,
+                        layers=args.layers, progress=args.progress,
+                        init_mode=args.init, **kw)
+        print_record(rec)
+        recs.append(rec)
+
+    ok = all(r["acceptance"]["pass"] for r in recs) if not args.smoke else True
+    print(f"\n{'='*74}")
+    if args.smoke:
+        print("冒烟结束：只证明链路通，结果不可引用（1 链 150 样本不收敛）")
+    else:
+        print("两组都通过" if ok else "有未通过项——按 §8 记录，失败不删不改 seed")
+
+    if args.json:
+        Path(args.json).write_text(
+            json.dumps({"time": time.strftime("%Y-%m-%d %H:%M:%S"),
+                        "smoke": bool(args.smoke), "records": recs},
+                       ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"记录写入 {args.json}")
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

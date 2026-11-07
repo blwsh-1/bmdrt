@@ -379,6 +379,25 @@ at_bound_frac_uniform, median_err, covered
 
 以上完成前，**M3 预实验未通过**。
 
+### 11.5 接口修正（第二轮审查，2026-11-07）
+
+审查指出两处接口细节，均已修，并补了机器守门：
+
+| 问题 | 修法 | 守门 |
+|---|---|---|
+| `float(sigma[0]) if sigma else None`：`sigma` 传 NumPy 数组时 `if sigma` 触发 truth-value ambiguous | 改为 `sigma is not None` | 用 np 数组传 `sigma` 跑一次即可复现旧 bug，现不再报错 |
+| `init_values` 直接进 `init_params`，但 NumPyro 要的是**无约束空间**值（正参数 `log`、`n1/n2` 取 logit 型伸缩），物理值传进去不报错、只是让 warmup 空转 | 新增 `physical_to_unconstrained(p_phys, zmax=, w_ref=, branch=, layers=)`；`fit_top` docstring 写明语义 | `python bm_top.py` 新增 **[10]**：四种拓扑的 物理→无约束→反变换 往返，rel err `9.1e-16` |
+
+顺带做了两处收紧：
+
+1. **先验单一来源**：新增 `_prior_table(zmax, w_ref, branch, layers)`，
+   `fit_top` 的采样与 `physical_to_unconstrained` 的换算读同一张表。
+   之前"代码里一套、文档里一套"正是 v3 `L_ad` 出错的根因。
+2. **[10] 的异常处理**：只有 `ImportError`（缺 numpyro）才跳过；
+   自己转换写错抛别的异常时判 `ok=False`。第一版写成"任何异常都跳过"，
+   结果 `base` 缺 `tau_L` 的 bug 被静默吞掉了——这条记在这里，别再写成宽 except。
+
+
 ---
 
 ## 12. 档 1 执行记录（2026-11-07）

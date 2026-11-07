@@ -238,7 +238,7 @@ def _selftest():
 
     base = dict(Rs=10.0, R1=55.0, R2=600.0, Q1=200.0, n1=0.75,
                 Q2=900.0, n2=0.85, R_ad=3000.0, tau_ad=1.6,
-                R_L=800.0, L_ad=1300.0)
+                R_L=800.0, tau_L=1.625, L_ad=1300.0)
 
     # 1) CPE 窗口参数化：|Z(ω_ref)| 必须等于 Q
     for Q, n in ((200.0, 0.75), (5.0, 0.95), (1e4, 0.55)):
@@ -346,6 +346,29 @@ def _selftest():
         print(f"    {br:<8} layers={ly} → {ks}" + ("" if good else f"  ≠ {exp}"))
         ok &= good
 
+    # 10) init_values 口径：物理 → 无约束 → 反变换必须可往返
+    #     传错量级不会报错（见 fit_top docstring），所以这条要机器守
+    try:
+        from numpyro.distributions.transforms import biject_to
+
+        e_max = 0.0
+        zmax_t, wref_t = 1000.0, 1.0
+        for branch in ("parallel", "series"):
+            for layers in (1, 2):
+                tab = _prior_table(zmax_t, wref_t, branch, layers)
+                init = physical_to_unconstrained(base, zmax=zmax_t, w_ref=wref_t,
+                                                 branch=branch, layers=layers)
+                for k, u in init.items():
+                    back = float(np.asarray(biject_to(tab[k].support)(u)))
+                    e_max = max(e_max, abs(back - base[k]) / max(abs(base[k]), 1e-30))
+        print(f"[10] init_values 无约束往返（4 种拓扑）：max rel err {e_max:.2e}")
+        ok &= e_max < 1e-12
+    except ImportError as ex:          # 缺 numpyro 只跳过，不算失败
+        print(f"[10] 无约束往返检查跳过（{type(ex).__name__}: {ex}）")
+    except Exception as ex:            # 自己的转换写错了 → 必须失败，不能静默跳过
+        print(f"[10] 无约束往返检查**失败**（{type(ex).__name__}: {ex}）")
+        ok = False
+
     print("=" * 72)
     print("全部通过" if ok else "有失败项")
     return ok
@@ -383,6 +406,68 @@ def _loglik_chained(s, f, Z, branch, layers, sigma):
     return ll
 
 
+def _prior_table(zmax, w_ref, branch: str, layers: int) -> dict:
+    """参数 → 先验分布（**单一来源**）。
+
+    `fit_top` 的采样与 `physical_to_unconstrained` 的换算都读这张表，
+    避免"文档里的先验"与"代码里的先验"各写一遍——v3 就吃过这个亏
+    （`param_spec()` 曾把派生量 `L_ad` 写成独立先验）。
+
+    顺序即 `sampled_keys` 的顺序，不含派生量。
+    """
+    import numpyro.distributions as dist
+
+    t = {
+        "Rs": dist.LogNormal(jnp.log(0.2 * zmax), 1.0),
+        "R1": dist.LogNormal(jnp.log(0.1 * zmax), 2.0),
+        "Q1": dist.LogNormal(jnp.log(zmax), 2.0),
+        "n1": dist.Uniform(0.5, 1.0),
+    }
+    if layers >= 2:
+        t["R2"] = dist.LogNormal(jnp.log(0.1 * zmax), 2.0)
+        t["Q2"] = dist.LogNormal(jnp.log(zmax), 2.0)
+        t["n2"] = dist.Uniform(0.5, 1.0)
+    if branch == "parallel":
+        t["R_ad"] = dist.LogNormal(jnp.log(0.1 * zmax), 2.0)
+        t["tau_ad"] = dist.LogNormal(jnp.log(1.0 / w_ref), 2.0)
+    else:
+        t["R_L"] = dist.LogNormal(jnp.log(0.1 * zmax), 2.0)
+        t["tau_L"] = dist.LogNormal(jnp.log(1.0 / w_ref), 2.0)
+    return t
+
+
+def physical_to_unconstrained(p_phys: dict, *, zmax: float, w_ref: float,
+                              branch: str = "parallel", layers: int = 2) -> dict:
+    """物理参数 → **无约束**空间，供 `fit_top(init_values=...)` 使用。
+
+    NumPyro 的 `init_params` 期望的是无约束（unconstrained）初值：正参数是
+    `log`，区间参数是 `logit` 型的伸缩变换。直接把手写的物理值（如
+    `R_ad=3000`）传进去**不会报错**，但等价于给了一个极度偏心的起点
+    （`exp(3000)`），warmup 会白白拉长，还可能直接把采样器卡死。
+
+    `zmax` 与 `w_ref` 必须与 `fit_top` 内部用的一致：
+    `zmax = max|Z|`、`w_ref = 2π√(f_min·f_max)`。
+
+    例：
+        >>> p = dict(Rs=10, R1=55, R2=600, Q1=200, n1=0.75,
+        ...          Q2=900, n2=0.85, R_ad=3000, tau_ad=1.6)
+        >>> init = physical_to_unconstrained(p, zmax=1000.0, w_ref=1.0)
+    """
+    from numpyro.distributions.transforms import biject_to
+
+    tab = _prior_table(float(zmax), float(w_ref), branch, layers)
+    out = {}
+    for k in sampled_keys(branch, layers):
+        if k not in p_phys:
+            continue
+        u = biject_to(tab[k].support).inv(np.asarray(float(p_phys[k])))
+        out[k] = np.asarray(u, dtype=float).reshape(())
+    missing = set(sampled_keys(branch, layers)) - set(out)
+    if missing:
+        raise ValueError(f"init_values 缺少参数：{sorted(missing)}")
+    return out
+
+
 def fit_top(f, Z, *, branch: str = "parallel", layers: int = 2,
             n_warmup: int = 600, n_samples: int = 1200, seed: int = 0,
             num_chains: int = 4, target_accept: float = 0.9,
@@ -396,8 +481,16 @@ def fit_top(f, Z, *, branch: str = "parallel", layers: int = 2,
       也不为未使用的分支/层数建先验（否则引入纯先验决定的无效维度）；
     · `series` 支路的 `L_ad = R_L·tau_L` 用 `numpyro.deterministic` 派生；
     · 噪声：`sigma=None` 时沿用 `bm_core` 的 `LogNormal(log 0.01·zmax, 1)` 与
-      `sigma_floor` 语义；显式传 `(s_re, s_im)` 时固定不采；
+      `sigma_floor` 语义；显式传 `(s_re, s_im)` 时固定不采（**绝对标准差**，
+      不是相对 `|Z|` 的逐点值，见 `BM_TOP_M3_PLAN.md` §4.1）；
     · **不做**拓扑自动选择、跨族比较——等 M3 结论。
+
+    `init_values`
+    -------------
+    直接进 NumPyro 的 `init_params`，因此必须是**无约束空间**的值（正参数取
+    `log`、`n1/n2` 取 logit 型伸缩）。物理参数请先过
+    `physical_to_unconstrained(...)`。语义写清楚是因为传错的代价是静默的：
+    数值不会报错，只会让 warmup 无意义地变长。
 
     返回 `dict`，`s` 与 `fit_one` 同名；`pointwise_elpd` 是逐频率点的 LOO。
     """
@@ -418,24 +511,9 @@ def fit_top(f, Z, *, branch: str = "parallel", layers: int = 2,
         w_ref = 2.0 * jnp.pi * jnp.sqrt(jnp.min(f_arr) * jnp.max(f_arr))
         omega = 2.0 * jnp.pi * f_arr
         p = {}
-        p["Rs"] = numpyro.sample("Rs", dist.LogNormal(jnp.log(0.2 * zmax), 1.0))
-        p["R1"] = numpyro.sample("R1", dist.LogNormal(jnp.log(0.1 * zmax), 2.0))
-        p["Q1"] = numpyro.sample("Q1", dist.LogNormal(jnp.log(zmax), 2.0))
-        p["n1"] = numpyro.sample("n1", dist.Uniform(0.5, 1.0))
-        if layers >= 2:
-            p["R2"] = numpyro.sample("R2", dist.LogNormal(jnp.log(0.1 * zmax), 2.0))
-            p["Q2"] = numpyro.sample("Q2", dist.LogNormal(jnp.log(zmax), 2.0))
-            p["n2"] = numpyro.sample("n2", dist.Uniform(0.5, 1.0))
-        if branch == "parallel":
-            p["R_ad"] = numpyro.sample("R_ad",
-                                       dist.LogNormal(jnp.log(0.1 * zmax), 2.0))
-            p["tau_ad"] = numpyro.sample("tau_ad",
-                                         dist.LogNormal(jnp.log(1.0 / w_ref), 2.0))
-        else:
-            p["R_L"] = numpyro.sample("R_L",
-                                      dist.LogNormal(jnp.log(0.1 * zmax), 2.0))
-            p["tau_L"] = numpyro.sample("tau_L",
-                                        dist.LogNormal(jnp.log(1.0 / w_ref), 2.0))
+        for k, d in _prior_table(zmax, w_ref, branch, layers).items():
+            p[k] = numpyro.sample(k, d)
+        if branch == "series":
             p["L_ad"] = numpyro.deterministic("L_ad", p["R_L"] * p["tau_L"])
 
         Zt = j_z_nested(omega, p, w_ref, branch=branch, layers=layers)
@@ -496,9 +574,9 @@ def fit_top(f, Z, *, branch: str = "parallel", layers: int = 2,
         "pareto_k": np.asarray(loo["pareto_k"], float),
         "idata": idata,
         "sigma_re": (float(np.median(s["s_re"])) if "s_re" in s
-                     else (float(sigma[0]) if sigma else None)),
+                     else (float(sigma[0]) if sigma is not None else None)),
         "sigma_im": (float(np.median(s["s_im"])) if "s_im" in s
-                     else (float(sigma[1]) if sigma else None)),
+                     else (float(sigma[1]) if sigma is not None else None)),
         "divergences": int(np.sum(div)) if div is not None else None,
         "rhat_max": max(rhat) if rhat else None,
         "ess_min": min(ess) if ess else None,
