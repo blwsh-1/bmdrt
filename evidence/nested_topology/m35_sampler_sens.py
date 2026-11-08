@@ -155,8 +155,9 @@ def readings(rows: list[dict]) -> dict:
             "median_r_min": min(meds), "median_r_max": max(meds),
             "sd_r_min": (min(sds) if sds else None),
             "sd_r_max": (max(sds) if sds else None),
-            "note": "se 用 ESSmin 作 r 的有效样本量下界（se 偏大），"
-                    "因此判 readings_unstable 的门槛偏严"}
+            "note": "ESSmin 是**边际**最小 ESS，不构成派生量 r（R1/R2 的非线性组合）"
+                    "的 ESS 下界；这里的 2·max(se) 只是描述性参考尺度，"
+                    "不是统计稳定性检验"}
 
 
 def determinism(recs_new: list[dict], recs_ref: list[dict] | None,
@@ -250,7 +251,8 @@ def report(rows: list[dict], vd: dict, rd: dict, det: dict | None,
     lines.append(f"失败各次共同失守的位置（只看失败的 {vd['n_failing']} 次）："
                  f"{vd['common_among_failing'] or '空'}")
     if rd.get("flag") != "insufficient":
-        lines.append(f"读数稳定性（描述性）：range(median r)={rd['span_median_r']:.4f} "
+        lines.append(f"读数跨度（**描述性参考，不是统计检验**）：range(median r)="
+                     f"{rd['span_median_r']:.4f} "
                      f"{'≤' if rd['flag'] == 'readings_stable' else '>'} "
                      f"2·max(se)={rd['limit']:.4f}（比值 {rd['ratio']:.2f}）"
                      f" → `{rd['flag']}`")

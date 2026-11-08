@@ -1,5 +1,5 @@
 {
-  "time": "2026-11-08 12:17:35",
+  "time": "2026-11-08 12:44:33",
   "source": "m35_sens_d4.json",
   "ref": "m35_r_w5000.json",
   "design": {
@@ -192,7 +192,7 @@
     "median_r_max": 0.08763726737048909,
     "sd_r_min": 0.042144536116969805,
     "sd_r_max": 0.04636343592061626,
-    "note": "se 用 ESSmin 作 r 的有效样本量下界（se 偏大），因此判 readings_unstable 的门槛偏严"
+    "note": "ESSmin 是**边际**最小 ESS，不构成派生量 r（R1/R2 的非线性组合）的 ESS 下界；这里的 2·max(se) 只是描述性参考尺度，不是统计稳定性检验"
   },
   "determinism": {
     "n_matched": 1,
