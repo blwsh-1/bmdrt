@@ -11,7 +11,10 @@ JSON 里只记了条件化诊断那 3 个样本的 sha256；其余 14 个（`§2
     python evidence/nested_topology/m35_samples_manifest.py            # 重写清单
     python evidence/nested_topology/m35_samples_manifest.py --check    # 与清单核对
 
-`--check` 的判定：文件名集合必须一致、逐个 sha256 一致、字节数一致；任一不符返回 1。
+`--check` 的判定：文件名集合必须一致、逐个 sha256 一致、字节数一致、结构元数据
+（`keys` / `shapes` / `n_draws`）一致，且清单自身的 `n_files` / `total_bytes` 与
+`files` 条目自洽；任一不符返回 1。只比 sha256 是不够的——清单若是被手工改过，
+头部统计和结构字段会先失真而 sha256 仍然"对得上"（§20.25）。
 不比较修改时间（git checkout 会改 mtime，那与"内容是否同一份"无关）。
 """
 
@@ -60,19 +63,34 @@ def check(manifest_path: Path = MANIFEST) -> int:
     if not manifest_path.exists():
         print(f"!! 缺清单 {manifest_path.name}，先不带 --check 跑一次")
         return 2
-    old = json.loads(manifest_path.read_text(encoding="utf-8"))["files"]
+    doc = json.loads(manifest_path.read_text(encoding="utf-8"))
+    old = doc["files"]
     new = build()["files"]
+    common = set(old) & set(new)
     missing = sorted(set(old) - set(new))
     extra = sorted(set(new) - set(old))
-    bad = sorted(k for k in set(old) & set(new) if old[k]["sha256"] != new[k]["sha256"])
-    size = sorted(k for k in set(old) & set(new)
-                  if old[k]["bytes"] != new[k]["bytes"])
-    ok = not (missing or extra or bad or size)
-    print(f"清单核对：清单 {len(old)} 个 / 磁盘 {len(new)} 个 → {'一致' if ok else '不一致'}")
+    bad = sorted(k for k in common if old[k]["sha256"] != new[k]["sha256"])
+    size = sorted(k for k in common if old[k]["bytes"] != new[k]["bytes"])
+    # 结构元数据：sha256 已经能保证内容同一，这里额外核对"清单里记的结构描述"
+    # 是否与文件实际一致——防的是清单被手工改动后仍显示通过
+    meta_keys = ("keys", "shapes", "n_draws")
+    meta = sorted(k for k in common
+                  if any(old[k].get(f) != new[k][f] for f in meta_keys))
+    # 清单头部自洽：n_files / total_bytes 必须与 files 条目对得上
+    head = []
+    if doc.get("n_files") != len(old):
+        head.append(f"n_files={doc.get('n_files')} ≠ 条目数 {len(old)}")
+    tot = sum(e["bytes"] for e in old.values())
+    if doc.get("total_bytes") != tot:
+        head.append(f"total_bytes={doc.get('total_bytes')} ≠ 条目求和 {tot}")
+    ok = not (missing or extra or bad or size or meta or head)
+    print(f"清单核对：清单 {len(old)} 个 / 磁盘 {len(new)} 个 → {'一致' if ok else '不一致'}"
+          f"（sha256 + 字节数 + keys/shapes/n_draws + 头部统计）")
     for tag, items in (("清单里有、磁盘没有", missing), ("磁盘多出", extra),
-                       ("sha256 不符", bad), ("字节数不符", size)):
+                       ("sha256 不符", bad), ("字节数不符", size),
+                       ("结构元数据不符", meta), ("清单头部不自洽", head)):
         if items:
-            print(f"  {tag}：{', '.join(items)}")
+            print(f"  {tag}：{', '.join(items) if isinstance(items, list) else items}")
     return 0 if ok else 1
 
 

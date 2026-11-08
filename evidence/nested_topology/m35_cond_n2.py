@@ -310,7 +310,13 @@ def max_rel_diff(a: dict, b: dict) -> float:
     · **两侧都必须全有限**：`nan` 会让 `np.max(d)` 变成 `nan`，而 `max(0.0, nan)`
       在 Python 里返回 `0.0`（`nan` 比较恒假），等于把"有 NaN"读成"完全一致"；
     · **比值也必须有限**：`inf/inf` 之类会得到 `nan`。
+
+    两条"空"边界同样返回 `inf`（§20.25）：**空字典**下循环不执行、`worst` 停在初值
+    `0.0`，会被读成"完全一致"；**零元素数组**在 `np.max(d)` 处直接抛异常，把"判不了"
+    变成崩溃。两者都无法证明"两份后验样本相同"，按本函数的约定一律 `inf`。
     """
+    if not a or not b:
+        return float("inf")
     if set(a) != set(b):
         return float("inf")
     worst = 0.0
@@ -318,6 +324,8 @@ def max_rel_diff(a: dict, b: dict) -> float:
         x = np.asarray(a[k], dtype=float)
         y = np.asarray(b[k], dtype=float)
         if x.shape != y.shape:
+            return float("inf")
+        if x.size == 0 or y.size == 0:
             return float("inf")
         if not np.all(np.isfinite(x)) or not np.all(np.isfinite(y)):
             return float("inf")
@@ -420,6 +428,15 @@ def selftest() -> bool:
     chk("5e b 含 Inf → inf",
         max_rel_diff({"R1": np.array([1.0, 2.0])},
                      {"R1": np.array([1.0, np.inf])}) == float("inf"))
+    # 5f-5g §20.25：空输入的两种边界——空字典原本返回 0.0（循环不执行），
+    # 零元素数组原本在 np.max 抛异常；都应该判成"无法证明相同"的 inf
+    chk("5f 空字典 → inf",
+        max_rel_diff({}, {}) == float("inf")
+        and max_rel_diff({}, {"R1": np.array([1.0])}) == float("inf")
+        and max_rel_diff({"R1": np.array([1.0])}, {}) == float("inf"))
+    chk("5g 零元素数组 → inf（不抛异常）",
+        max_rel_diff({"R1": np.array([])}, {"R1": np.array([])}) == float("inf")
+        and max_rel_diff({"R1": np.array([])}, {"R1": np.zeros(3)}) == float("inf"))
     # 6) 谱是可重建的（同 seed 两次一致），这是"不重新生成噪声"的前提
     t1 = build_data(0)[1:3]
     t2 = build_data(0)[1:3]
