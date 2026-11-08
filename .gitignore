@@ -79,6 +79,12 @@ evidence/nested_topology/*
 !evidence/ad_m6/
 evidence/ad_m6/*
 !evidence/ad_m6/sampling_check.py
+# M6 E1：清单与生成日志随库归档（元数据，不含谱值；原始 .z 仍在仓外）
+!evidence/m6/
+evidence/m6/*
+!evidence/m6/inventory.py
+!evidence/m6/data_inventory.csv
+!evidence/m6/inventory_log.txt
 !evidence/kk_review/
 evidence/kk_review/*
 !evidence/kk_review/verify_review.py
