@@ -1,10 +1,10 @@
-D:\eis训练数据\bmdrt\evidence\nested_topology\m35_cond_n2.py:94: UserWarning: There are not enough devices to run parallel chains: expected 4 but got 1. Chains will be drawn sequentially. If you are running MCMC in CPU, consider using `numpyro.set_host_device_count(4)` at the beginning of your program. You can double-check how many devices are available in your system using `jax.local_device_count()`.
+D:\eis训练数据\bmdrt\evidence\nested_topology\m35_cond_n2.py:116: UserWarning: There are not enough devices to run parallel chains: expected 4 but got 1. Chains will be drawn sequentially. If you are running MCMC in CPU, consider using `numpyro.set_host_device_count(4)` at the beginning of your program. You can double-check how many devices are available in your system using `jax.local_device_count()`.
   mcmc = MCMC(NUTS(model, target_accept_prob=cfg["target_accept"],
 谱：data_seed=0  N=61  zmax=3049.1  sha256[:16]=67639b29df327b6a
 条件：{'n2': 0.85}（约束空间）；其余参数照采样
 
-[1/2] 对照重跑（不加条件，必须与归档逐位复现）…
-      最大相对差 0.0e+00  → ✓
+[1/2] 对照重跑（不加条件，必须与归档逐位复现且过门禁）…
+      最大相对差 0.0e+00；对照门禁 R̂max 1.0081、ESSmin 454 → 通过
 [2/2] 条件采样 {'n2': 0.85} …
 
 条件化诊断（§20.21）：data_seed=0  fix={'n2': 0.85}  采样器 seed=0
@@ -16,13 +16,14 @@ D:\eis训练数据\bmdrt\evidence\nested_topology\m35_cond_n2.py:94: UserWarning
     对照重跑   ✓   0.0328  0.0289  0.0160  0.1016  0.0856  -0.0512    365.8    650.3   -0.7%
    条件 n2   ✓   0.0817  0.0138  0.0627  0.1076  0.0449  -0.0022    789.7    650.8   -0.6%
 
-逐位复现：对照重跑 vs 归档 d0 最大相对差 = 0.0e+00 → ✓
+逐位复现：对照重跑 vs 归档 d0 最大相对差 = 0.0e+00 （门槛 1e-09）→ ✓；对照门禁 ✓
 
 位置与不确定性
   gap：边缘 -0.0512 → 条件 -0.0022（变化 +0.0490）
   width90：边缘 0.0856 → 条件 0.0449（比值 0.52）
   sd_r：0.0289 → 0.0138（比值 0.48）
   r 的 90% 区间：边缘 [0.0160, 0.1016] → 条件 [0.0627, 0.1076]；真值分位 0.88 → 0.56
+  P(|r − r*| ≤ 0.02)：边缘 20.4% → 条件 85.9%（派生统计量，已随 JSON 归档）
 
 相关结构（审查要求：相关性是否从 n2 转到 Q2）
   r~Q2    边缘 +0.971 → 条件 +0.585（Δ -0.386）
@@ -52,4 +53,6 @@ D:\eis训练数据\bmdrt\evidence\nested_topology\m35_cond_n2.py:94: UserWarning
 判定：`recovered` —— 可说：n2 的边际不确定性对 r 的位置有重要贡献；不可说：n2 是唯一原因
       判据 {'A_gap_le_0.02': True, 'B_gap_halved': True, 'C_width_le_0.7x': True, 'D_center_unchanged': False}
 条件后验门禁：R̂max 1.0037、ESSmin 1449、div 0 → 通过
+链级（对照）：逐链 r 中位 [0.0336, 0.0344, 0.0289, 0.0353]  链间 sd 0.0029  极差 0.0065  div/链 [0, 0, 0, 0]
+链级（条件）：逐链 r 中位 [0.0825, 0.0821, 0.0815, 0.0813]  链间 sd 0.0006  极差 0.0013  div/链 [0, 0, 0, 0]
 记录写入 evidence/nested_topology/m35_cond_n2.json

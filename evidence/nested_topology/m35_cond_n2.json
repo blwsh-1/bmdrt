@@ -1,5 +1,5 @@
 {
-  "time": "2026-11-08 12:43:26",
+  "time": "2026-11-08 13:10:10",
   "diagnostic_only": true,
   "not_recovery_performance": true,
   "note": "条件后验 p(r,Q2,…|Z,n2=n2_true) 与边缘后验的差反映'已知 n2'的影响，不是 n2 单向致因的证明，也不能当未知 n2 下的恢复性能",
@@ -26,12 +26,50 @@
       },
       "pass": true
     },
-    "repro_max_rel": 0.0
+    "repro_max_rel": 0.0,
+    "repro_tol": 1e-09
   },
-  "archive_ref": "D:\\eis训练数据\\bmdrt\\evidence\\nested_topology\\m35_r_w5000.r.d0.s0.samples.npz",
+  "archive_ref": "evidence/nested_topology/m35_r_w5000.r.d0.s0.samples.npz",
   "samples": {
-    "ctrl": "evidence\\nested_topology\\m35_cond_n2.ctrl.samples.npz",
-    "cond": "evidence\\nested_topology\\m35_cond_n2.cond.samples.npz"
+    "ctrl": "evidence/nested_topology/m35_cond_n2.ctrl.samples.npz",
+    "cond": "evidence/nested_topology/m35_cond_n2.cond.samples.npz"
+  },
+  "samples_sha256": {
+    "ctrl": {
+      "sha256": "205b05d5bd05d7156268b5124d79548edb96871bebc3367f64f1c045427c80c1",
+      "bytes": 318236,
+      "keys": [
+        "Q1",
+        "Q2",
+        "R1",
+        "R2",
+        "R_ad",
+        "Rs",
+        "n1",
+        "n2",
+        "tau_ad"
+      ],
+      "n_draws": 4800,
+      "n_chains": 4,
+      "n_draws_per_chain": 1200
+    },
+    "cond": {
+      "sha256": "c484508cb8942634ed144ea7d8e1353dbd94c4e24d68119c6871d149466a9527",
+      "bytes": 277758,
+      "keys": [
+        "Q1",
+        "Q2",
+        "R1",
+        "R2",
+        "R_ad",
+        "Rs",
+        "n1",
+        "tau_ad"
+      ],
+      "n_draws": 4800,
+      "n_chains": 4,
+      "n_draws_per_chain": 1200
+    }
   },
   "marginal": {
     "r": {
@@ -44,7 +82,12 @@
       "truth": 0.08396946564885496,
       "gap": -0.05121203617867715,
       "truth_pct": 0.8841666666666667,
-      "covered": true
+      "covered": true,
+      "near_truth": {
+        "tol": 0.02,
+        "prob": 0.20354166666666668,
+        "n_draws": 4800
+      }
     },
     "params": {
       "Q2": {
@@ -184,7 +227,12 @@
       "truth": 0.08396946564885496,
       "gap": -0.05121203617867715,
       "truth_pct": 0.8841666666666667,
-      "covered": true
+      "covered": true,
+      "near_truth": {
+        "tol": 0.02,
+        "prob": 0.20354166666666668,
+        "n_draws": 4800
+      }
     },
     "params": {
       "Q2": {
@@ -324,7 +372,12 @@
       "truth": 0.08396946564885496,
       "gap": -0.0022327081711606828,
       "truth_pct": 0.565,
-      "covered": true
+      "covered": true,
+      "near_truth": {
+        "tol": 0.02,
+        "prob": 0.85875,
+        "n_draws": 4800
+      }
     },
     "params": {
       "Q2": {
@@ -447,6 +500,72 @@
       "divergences": 0
     }
   },
+  "chain_diag_control": {
+    "n_chains": 4,
+    "n_draws_per_chain": 1200,
+    "chain_median_r": [
+      0.033594619614412846,
+      0.03440427432000491,
+      0.028852467446138366,
+      0.035337777949100674
+    ],
+    "chain_mean_r": [
+      0.044664702694524966,
+      0.04678898642512436,
+      0.040991629241101585,
+      0.046320865668509334
+    ],
+    "chain_truth_pct": [
+      0.8916666666666667,
+      0.8583333333333333,
+      0.9033333333333333,
+      0.8833333333333333
+    ],
+    "between_chain_sd_of_median": 0.0028858186276345308,
+    "within_chain_sd_median": 0.029129910412875396,
+    "gap_spread_across_chains": 0.006485310502962308,
+    "flat_order": "chain-major：chain i 的 n_draws_per_chain 个 draw 连续存放",
+    "flatten_roundtrip_exact": true,
+    "div_by_chain": [
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "chain_diag_conditional": {
+    "n_chains": 4,
+    "n_draws_per_chain": 1200,
+    "chain_median_r": [
+      0.08252944575945262,
+      0.08205079224092603,
+      0.08151731894294498,
+      0.0812595339795357
+    ],
+    "chain_mean_r": [
+      0.08337268631008787,
+      0.08396710138114706,
+      0.08254161573754475,
+      0.08205051737955653
+    ],
+    "chain_truth_pct": [
+      0.545,
+      0.5541666666666667,
+      0.5775,
+      0.5833333333333334
+    ],
+    "between_chain_sd_of_median": 0.0005659300822172213,
+    "within_chain_sd_median": 0.013870030061662774,
+    "gap_spread_across_chains": 0.0012699117799169213,
+    "flat_order": "chain-major：chain i 的 n_draws_per_chain 个 draw 连续存放",
+    "flatten_roundtrip_exact": true,
+    "div_by_chain": [
+      0,
+      0,
+      0,
+      0
+    ]
+  },
   "gate_control": {
     "checks": {
       "rhat_lt_1.01": true,
@@ -478,7 +597,7 @@
     "branch": "parallel",
     "layers": 2,
     "sigma_mode": "perpoint",
-    "seconds_control": 141.5,
-    "seconds_conditional": 30.7
+    "seconds_control": 141.2,
+    "seconds_conditional": 31.0
   }
 }
