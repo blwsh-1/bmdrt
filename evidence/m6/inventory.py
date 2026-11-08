@@ -21,6 +21,13 @@
 3. **异常值只记录不剔除**。`n_nonfinite` / `n_dup_freq` / `n_nonmonotonic` /
    `n_re_leq0` 全部如实计数，纳不纳入由已冻结的 §2.2 规则决定，不由本脚本决定。
 
+字段命名约定（避免把 `Zim` 与 `-Zim` 搞混）
+-------------------------------------------
+Nyquist 图的纵轴是 `-Zim`，所以"曲线先降后升"指的是 **`-Zim` 的内部极小**，
+等价于 **`Zim` 的内部极大**。凡涉及这一条的字段一律带 `neg_im` 后缀
+（`lf_neg_im_interior_min`），日志里也写 `-Zim`；只统计符号的字段才叫 `im_*`
+（`im_at_lf_min`、`im_max_lf`、`n_im_pos_lf`），它们量的都是 `Zim` 本身。
+
 用法：
     python evidence/m6/inventory.py --selftest     # 先自检
     python evidence/m6/inventory.py                # 盘点，写 csv + log
@@ -51,7 +58,7 @@ FIELDS = [
     "dataset", "role", "stem", "path", "sha256", "bytes",
     "n_pts", "f_min_hz", "f_max_hz", "decades",
     "n_nonfinite", "n_dup_freq", "n_nonmonotonic", "n_re_leq0",     "n_im_pos", "n_pts_lf", "n_im_pos_lf", "im_max_lf", "im_at_lf_min",
-    "lf_interior_min",
+    "lf_neg_im_interior_min",
     "f_im_pos_min_hz", "f_im_pos_max_hz", "im_at_fmin",
     "j_mA_cm2", "sample_id", "sample_id_confidence",
     "group_id", "group_id_confidence", "exp_id",
@@ -130,7 +137,7 @@ def metrics(f, Z):
     m = dict(n_pts=0, f_min_hz="", f_max_hz="", decades="",
              n_nonfinite=0, n_dup_freq=0, n_nonmonotonic=0, n_re_leq0=0,
              n_im_pos=0, n_pts_lf=0, n_im_pos_lf=0, im_max_lf="", im_at_lf_min="",
-             lf_interior_min="",
+             lf_neg_im_interior_min="",
              f_im_pos_min_hz="", f_im_pos_max_hz="", im_at_fmin="")
     if f.size == 0:
         return m
@@ -173,11 +180,13 @@ def metrics(f, Z):
         m["n_im_pos_lf"] = int(np.count_nonzero(Zb.imag > 0))
         m["im_max_lf"] = "%.6g" % float(Zb.imag.max())
         m["im_at_lf_min"] = "%.6g" % float(Zb.imag[0])       # 最低频点（已升序）
-        # 低频段是否存在"内部极小"（先降后升）：峰位不在两端各 2 点以内
-        k = int(np.argmin(-Zb.imag))                          # Im 最大处
+        # 低频段 `-Zim` 是否存在**内部极小**（Nyquist 纵轴取 `-Zim`，即曲线先降后升）：
+        # `argmin(-Zb.imag)` = `Zb.imag` 极大处；峰位不在两端各 2 点以内才算内部。
+        # 注意与"Zim 的内部极小"不是同一件事，故字段名带 `neg_im`。
+        k = int(np.argmin(-Zb.imag))                          # -Zim 最小处 = Im 最大处
         k_left = k
         k_right = Zb.size - 1 - k
-        m["lf_interior_min"] = "yes" if (2 <= k_left and 2 <= k_right) else "no"
+        m["lf_neg_im_interior_min"] = "yes" if (2 <= k_left and 2 <= k_right) else "no"
     return m
 
 
@@ -379,25 +388,25 @@ def summarize(rows, log):
 
     # 低频段才是"有没有环"的相关指标；全频段 Im>0 主要反映高频感抗
     lf_clean = [r for r in scope if str(r["n_im_pos_lf"]) == "0"]
-    interior = [r for r in scope if r.get("lf_interior_min") == "yes"]
+    interior = [r for r in scope if r.get("lf_neg_im_interior_min") == "yes"]
     log("")
     log("原始符号事实（不判定有无环，也不调用 detect_ad）：")
     log("   全频段含 Im>0 的谱：%d/%d —— 主要由高频感抗贡献，不能用来判环"
         % (sum(1 for r in scope if str(r["n_im_pos"]) not in ("0", "")), len(scope)))
     log("   低频段 Im 全程 ≤0 的谱：%d/%d（§4.3.2b 条件 1 的候选）"
         % (len(lf_clean), len(scope)))
-    log("   低频段存在内部极小（先降后升，条件 2 的候选）：%d/%d"
-        % (len(interior), len(scope)))
+    log("   低频段 `-Zim` 存在内部极小（Nyquist 纵轴 -Zim 先降后升；等价 Im 有内部极大）"
+        "：%d/%d（§4.3.2b 条件 2 的候选）" % (len(interior), len(scope)))
     for ds in ("2e", "blank", "az31_csv"):
         g = [r for r in scope if r["dataset"] == ds]
         if not g:
             continue
-        log("     %-9s 低频无 Im>0 %3d/%3d（低频段点数 %s-%s），内部极小 %3d/%3d，"
+        log("     %-9s 低频无 Im>0 %3d/%3d（低频段点数 %s-%s），-Zim 内部极小 %3d/%3d，"
             "最低频 Im>0 %3d/%3d"
             % (ds,
                sum(1 for r in g if str(r["n_im_pos_lf"]) == "0"), len(g),
                min(r["n_pts_lf"] for r in g), max(r["n_pts_lf"] for r in g),
-               sum(1 for r in g if r.get("lf_interior_min") == "yes"), len(g),
+               sum(1 for r in g if r.get("lf_neg_im_interior_min") == "yes"), len(g),
                sum(1 for r in g if r["im_at_lf_min"] not in ("", None)
                    and float(r["im_at_lf_min"]) > 0), len(g)))
     log("")
@@ -462,13 +471,13 @@ def selftest():
     f11 = 10.0 ** np.arange(10, -1, -1)
     im11 = np.array([0.5] * 6 + [-0.3, -0.4, -0.1, -0.35, -0.5])
     m11 = metrics(f11, 1 + 1j * im11)
-    chk("低频段内部极小=yes", m11["lf_interior_min"] == "yes")
+    chk("低频段 -Zim 内部极小=yes", m11["lf_neg_im_interior_min"] == "yes")
     chk("低频段点数=5", m11["n_pts_lf"] == 5)
     chk("低频段无 Im>0", m11["n_im_pos_lf"] == 0)
     chk("im_at_lf_min 取最低频", m11["im_at_lf_min"] == "-0.5")
     chk("im_max_lf=-0.1", m11["im_max_lf"] == "-0.1")
     m12 = metrics(f11, 1 + 1j * np.array([0.5] * 6 + [-0.3, -0.4, -0.5, -0.35, -0.6]))
-    chk("峰在边缘不算内部极小", m12["lf_interior_min"] == "no")
+    chk("峰在边缘不算 -Zim 内部极小", m12["lf_neg_im_interior_min"] == "no")
 
     i = identity_2e("2EMC1-3_exp2_0100mA")
     chk("2E sample", i["sample_id"] == "2EMC1")
