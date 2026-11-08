@@ -365,6 +365,21 @@ PRIMARY_TIER_MEANING = {
     "indeterminate": "有链未收敛，主终点不可读",
 }
 
+# §6.2 / §20 冻结的正式采样配置。**CLI 默认值必须等于它**：此前默认是
+# warmup 600 / ta 0.9 / depth 10（`bm_top.fit_top` 的原型默认），与预注册差一档，
+# 正式跑不加 `--warmup` 就会静默跑成 600 且 JSON 如实记 600——事后没法从记录里
+# 看出"这不是预注册配置"。第九轮审查发现的正是这一条（只提了 warmup，
+# 其实 ta 与 depth 同样偏离）。
+FROZEN_SAMPLER = {
+    "n_chains": 4,
+    "n_samples": 1200,
+    "n_warmup": 2000,
+    "target_accept": 0.95,
+    "max_tree_depth": 12,
+}
+# 冒烟：1 链 150 样本，只证明链路通，结果不可引用
+SMOKE_SAMPLER = {"n_chains": 1, "n_samples": 150, "n_warmup": 150}
+
 
 def run_validity(rec: dict) -> dict:
     """**运行有效性**：链健康 + 逐点数组长度。**不含**精度、不含覆盖。
@@ -1014,11 +1029,16 @@ def main(argv=None) -> int:
                     help="只跑 §20.4 判定链的自检（纯函数，不跑 MCMC）")
     ap.add_argument("--init", choices=["prior", "oracle"], default="prior",
                     help="prior=默认随机初值（正式用）；oracle=真值初值（只做诊断）")
-    ap.add_argument("--warmup", type=int, default=None, help="覆盖 warmup 步数")
-    ap.add_argument("--samples", type=int, default=None, help="覆盖每链样本数")
-    ap.add_argument("--chains", type=int, default=None, help="覆盖链数")
-    ap.add_argument("--target-accept", type=float, default=0.9)
-    ap.add_argument("--max-tree-depth", type=int, default=10)
+    ap.add_argument("--warmup", type=int, default=None,
+                    help=f"覆盖 warmup 步数（默认 {FROZEN_SAMPLER['n_warmup']}）")
+    ap.add_argument("--samples", type=int, default=None,
+                    help=f"覆盖每链样本数（默认 {FROZEN_SAMPLER['n_samples']}）")
+    ap.add_argument("--chains", type=int, default=None,
+                    help=f"覆盖链数（默认 {FROZEN_SAMPLER['n_chains']}）")
+    ap.add_argument("--target-accept", type=float,
+                    default=FROZEN_SAMPLER["target_accept"])
+    ap.add_argument("--max-tree-depth", type=int,
+                    default=FROZEN_SAMPLER["max_tree_depth"])
     ap.add_argument("--save-samples", action="store_true", help="把后验样本存成 npz 备查")
     ap.add_argument("--progress", action="store_true", help="打印 MCMC 进度条")
     ap.add_argument("--json", default=None)
@@ -1028,8 +1048,8 @@ def main(argv=None) -> int:
         print("§20.4 判定链自检（合成输入，无 MCMC）")
         return 0 if selftest_verdict() else 1
 
-    kw = dict(n_warmup=150, n_samples=150, n_chains=1) if args.smoke else \
-        dict(n_warmup=600, n_samples=1200, n_chains=4)
+    src = SMOKE_SAMPLER if args.smoke else FROZEN_SAMPLER
+    kw = {k: src[k] for k in ("n_warmup", "n_samples", "n_chains")}
     if args.warmup:
         kw["n_warmup"] = args.warmup
     if args.samples:
