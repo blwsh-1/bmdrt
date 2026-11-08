@@ -1107,15 +1107,42 @@ if float(sigma_floor) > 0.0:
 在 `sd_log≈0.5` 的边界上更没有资格替代后验。
 
 **成功的定义是"数据约束了拆分比例 `r=R1/(R1+R2)`"，不是"`R1` 或 `R2` 的边际区间变窄"**。
-两者可以脱钩：边际 `R1` 区间收窄仍可能整段沿脊线滑动（§18.3）。因此除 `sd_r` 外还要求：
+两者可以脱钩：边际 `R1` 区间收窄仍可能整段沿脊线滑动（§18.3）。
 
-· `r` 的 90% 区间**覆盖真值 0.084** 且宽度 `<0.5`；
-· `r` 与 `R1+R2` 的乘积关系可回算：`R1/(R1+R2)` 的中位不出现系统性偏向 0 或 1
-  （即不出现"先验对称性主导"的 §18.4 机制）。
+### 20.4.1 判定分两层，口径在跑之前冻结（第九轮补）
+
+第八轮之前 `split_verdict()` 只看 `sd_median`，预注册的覆盖与宽度条件**算了但没用**——
+于是"窄而偏"（§18.4 的脊线机制）会被读成成功。现在拆成两层，五个层级互斥：
+
+| 层级 `tier` | 条件 | 说法 |
+|---|---|---|
+| `full_success` | `sd_median ≤ 0.05` **且** 逐 seed 全覆盖 **且** `width90_median < 0.5` | 完整成功 |
+| `primary_only` | `sd_median ≤ 0.05`，但辅助条件未满足 | 主终点达标，**不构成完整成功** |
+| `partial` | `0.05 < sd_median < 0.30` | 部分约束，如实记录、不改口径重跑 |
+| `negative` | `sd_median ≥ 0.30` | 判负 |
+| `indeterminate` | 任一 seed 未过收敛门禁 | 不可判（`value=null`） |
+
+**覆盖口径（跑之前定，不留到结果出来再选）**：`all_seeds` —— **每个 seed 的 90% 区间
+都必须覆盖真值**。不用"某个汇总区间"的理由：5 个 seed 是 5 份不同噪声实现，pooled
+后验不对应任何单一后验，取交集/并集都不是预先定义的统计量，容易被事后挑选。逐 seed
+全覆是唯一不需要额外定义的目标量，且与 `sd_r`"逐 seed 算再取中位"是同一构造。
+
+宽度条件在主终点达标时**几乎自动满足**（`宽 ≈ 3.3·sd_r`，`sd_r=0.05` → 宽 ≈ 0.16 ≪ 0.5）。
+保留它不是为了判定力，而是让预注册的每一项都真的被执行；输出里写明这一点，免得有人
+把它当成独立证据。
+
+覆盖条件的判定力也有限，且方向要说清：`sd_r` 大时宽区间"包得住任何值"，覆盖率没有
+信息量（§15 已记）；`sd_r` 小时区间窄，覆盖才真的说明"后验落在真值附近"。所以覆盖
+只放在层 2，且**不因为 5/5 就宣称 90% 覆盖率标定良好**——那是二项检验干不了的事。
+
+第三个预注册量（`r` 的中位不系统性偏向 0 或 1，§18.4 机制）**只作描述**，不进判定：
+它的阈值没法在不看结果的情况下定量写死，强行阈值化等于事后编口径。
+
+阈值与口径集中在 `m3_stage2.py` 常量区（`SPLIT_SD_TARGET` / `SPLIT_SD_FAIL` /
+`SPLIT_WIDTH_MAX` / `SPLIT_COVERAGE_RULE`），打印、JSON、自检共用同一份。
 
 **失败阈值**：多 seed `sd_r ≥ 0.30`（`r` 的 90% 区间宽 >0.5）→ M3.5 判负，
 "形状参数在逐点相对口径下也不可辨识"，结论照样成立。
-`0.05 < sd_r < 0.30` 记为"部分约束"：如实记录，不改口径重跑。
 
 **主终点在代码里的落点（第七轮补）**：审查指出预注册了主终点、但 `summarize()` /
 `aggregate_seeds()` 里根本没算 `r`，跑完 5 seed 也拿不到这个数。现在：
@@ -1123,9 +1150,10 @@ if float(sigma_floor) > 0.0:
 | 位置 | 内容 |
 |---|---|
 | `summarize()` → `split_r` | **逐 draw** 算 `r=R1/(R1+R2)`，存中位 / `sd` / p05 / p95 / `width90` / 真值 / 偏差 / 覆盖 |
-| `split_stats()` | 多 seed 汇总：`sd_median`（主终点）、均值、极值、`width90_median`、覆盖数 |
-| `split_verdict()` | 三档判据；**链未收敛时返回"不可判"**（不收敛会把后验 SD 压小，`sd_r≤0.05` 是假达标） |
-| `aggregate_seeds()` → `primary_endpoint` | 写进 JSON 的判定块：`valid` / `value`（**可判才给数，否则 `null`**）/ `observed_value`（原始读数）/ `verdict` / `reason_if_invalid` / 来源 |
+| `split_stats()` | 多 seed 汇总：`sd_median`（主终点）、均值、极值、`width90_median`、`covered` + `covered_all` + `coverage_rule` |
+| `split_verdict()` | **两层判定**，返回 `{tier, verdict, primary_met, checks}`；链未收敛 → `indeterminate` |
+| `primary_endpoint_block()` | 抽成纯函数，便于不跑 MCMC 自检；写 `criteria`（阈值原文）/ `tier` / `checks` / `conditions` / `valid` / `value` / `observed_value` / `reason_if_invalid` |
+| `--selftest-verdict` | 9 例合成输入（覆盖失败 / 宽度失败 / 两者都失败 / 都满足 / 两个边界 / 部分 / 判负 / 未收敛），不跑 MCMC |
 
 必须逐 draw 算再统计：先取 `R1`/`R2` 的中位再相除是另一个量（中位不保序于非线性变换，
 且会抹掉两者 `ρ≈−0.99` 的负相关）。
@@ -1306,6 +1334,24 @@ M3.5 用**第二种**（`--seeds 0,0,0,0,0 --data-seeds 0,1,2,3,4`）：主终�
 "数据能否约束 `r`"，噪声实现是这里该变的随机源。`_seed_variation()` 从记录里读两个
 集合，把"固定谱 / 独立噪声 / 两者都变"直接写进表和 JSON，不靠人记。
 
+### 20.12 第七轮完成记录（2026-11-08）
+
+| 项 | 结果 |
+|---|---|
+| `sigma_floor` 校验 | 顺序改为"合法性 → 互斥 → 形状"；`[12a]` 9 → **14 例**，四条负例全过 |
+| 主终点 `sd_r` | `summarize()` 逐 draw 算 `r`；`split_stats()`/`split_verdict()`/`primary_endpoint` 进 JSON |
+| 条件命名 | `condition_name(stage, noise)` 由实际 noise 生成；`--stage r` 非 2% 直接报错 |
+| LOO/ELPD | `sigma_from_data` 标志贯通 `fit_top → summarize → acceptance`；`pareto_k_ok` 进 `skipped_checks` |
+| 两个 seed | `--data-seeds`；记录里 `data_seed`/`sampler_seed` 分开；表头明示随机源 |
+| Jacobian 夹角 | 改在同一坐标系（`u_log ∝ D⁻¹v` vs 原始 `J` 的右奇异向量）：`cos=0.99986/0.999998` |
+| 秩的读法 | 全部加"局部满秩（单真值点/单频栅/单参数化）"限定 |
+| 自检 | 13 项全过（`[12a]` 14 例 / `[12b]` 1.77e-16 / `[12c]` 5.44e-16 / `[12d]` 逐位） |
+| 标量路径回归 | 在本轮终稿代码上复跑：`rhat_max`、`ess_min`、9 参数分位数 **全部 0.0e+00**，`exact` |
+| 冒烟 | `--stage r --smoke`、`--stage r --smoke --seeds 0,0 --data-seeds 0,1`（表头/主终点/不可判判定均正确） |
+| 生产代码 | `bm_core.py`/`bm_real.py`/`bm_ad.py`/`bmdrt.py` 零改动 |
+
+**待办**：M3.5 正式实验（5 个独立噪声实现 × 固定采样器 seed，4 链 × 1200 / warmup 2000）。
+
 ### 20.13 判定链路：退出码、收敛数、主终点必须分开（第八轮审查后）
 
 第八轮审查指出三处"用错判据"的风险，都属记录链路问题，不涉及统计定义：
@@ -1341,20 +1387,26 @@ M3.5 用**第二种**（`--seeds 0,0,0,0,0 --data-seeds 0,1,2,3,4`）：主终�
 | 验证 | `exit_gate` 四例单测（r 两种混搭、a/b 各一）符合预期；`--stage r` 短跑（非冒烟）最终块正确、退出码 1 来自运行有效性；`--stage r --smoke --seeds 0,0 --data-seeds 0,1` 时 `primary_endpoint.value=null`、`observed_value=0.0208` |
 | 未做 | 正式 5 seed 未跑；采样随机性敏感性基线（`--data-seeds` 全 0、`--seeds` 变化）留作主实验后的诊断，不是主终点成立的必要条件 |
 
-### 20.12 第七轮完成记录（2026-11-08）
+
+### 20.15 第九轮：两层判定与覆盖口径（2026-11-08）
+
+审查指出：预注册的覆盖与宽度条件算出来了却没用，`split_verdict()` 只读 `sd_median`，
+于是"窄而偏"会被打印成"达标"，代码比预注册松。这轮只改判定与文档，**不碰
+`bm_top.py`、模型结构、生产代码**。
 
 | 项 | 结果 |
 |---|---|
-| `sigma_floor` 校验 | 顺序改为"合法性 → 互斥 → 形状"；`[12a]` 9 → **14 例**，四条负例全过 |
-| 主终点 `sd_r` | `summarize()` 逐 draw 算 `r`；`split_stats()`/`split_verdict()`/`primary_endpoint` 进 JSON |
-| 条件命名 | `condition_name(stage, noise)` 由实际 noise 生成；`--stage r` 非 2% 直接报错 |
-| LOO/ELPD | `sigma_from_data` 标志贯通 `fit_top → summarize → acceptance`；`pareto_k_ok` 进 `skipped_checks` |
-| 两个 seed | `--data-seeds`；记录里 `data_seed`/`sampler_seed` 分开；表头明示随机源 |
-| Jacobian 夹角 | 改在同一坐标系（`u_log ∝ D⁻¹v` vs 原始 `J` 的右奇异向量）：`cos=0.99986/0.999998` |
-| 秩的读法 | 全部加"局部满秩（单真值点/单频栅/单参数化）"限定 |
-| 自检 | 13 项全过（`[12a]` 14 例 / `[12b]` 1.77e-16 / `[12c]` 5.44e-16 / `[12d]` 逐位） |
-| 标量路径回归 | 在本轮终稿代码上复跑：`rhat_max`、`ess_min`、9 参数分位数 **全部 0.0e+00**，`exact` |
-| 冒烟 | `--stage r --smoke`、`--stage r --smoke --seeds 0,0 --data-seeds 0,1`（表头/主终点/不可判判定均正确） |
-| 生产代码 | `bm_core.py`/`bm_real.py`/`bm_ad.py`/`bmdrt.py` 零改动 |
+| 阈值集中 | `SPLIT_SD_TARGET=0.05` / `SPLIT_SD_FAIL=0.30` / `SPLIT_WIDTH_MAX=0.5` / `SPLIT_COVERAGE_RULE="all_seeds"`，打印、JSON、自检共用 |
+| `split_verdict()` | 返回 dict（`tier` / `verdict` / `primary_met` / `checks`），五层：`full_success` / `primary_only` / `partial` / `negative` / `indeterminate` |
+| 覆盖口径 | 冻结为**逐 seed 全覆盖**；理由与"不用汇总区间"的论证写在 §20.4.1 |
+| `primary_endpoint_block()` | 从 `aggregate_seeds()` 抽出，纯函数、可离线自检；新增 `criteria` / `tier` / `checks` / `conditions` |
+| 打印 | 分「层1 主终点 / 层2 辅助」两行给出布尔值，再给判定句；并注明"宽中位≈3.3·sd_r，宽度条件几乎自动满足" |
+| `--selftest-verdict` | **9 例**合成输入全过（覆盖失败 / 宽度失败 / 两者都失败 / 都满足 / `sd=0.05` 边界 / `sd=0.30` 边界 / 部分 / 判负 / 未收敛） |
+| 一致性 | `split_stats()` 增 `coverage_rule` 与 `covered_all`，避免下游自己猜"几个算覆盖" |
+| 未进判定 | `r` 中位是否系统性偏向 0/1（§18.4 机制）只作描述：不跑结果写不出定量阈值，硬阈值化等于事后编口径 |
+
+**读法（正式跑之后照这个读）**：JSON 里 `primary_endpoint.tier` 是唯一结论字段；
+`value` 只在 `valid=true` 时有数；`primary_only` 表示"拆分被约束、但后验不在真值上"，
+**不能**写成 M3.5 成功。退出码 0/1 与它无关（§20.13）。
 
 **待办**：M3.5 正式实验（5 个独立噪声实现 × 固定采样器 seed，4 链 × 1200 / warmup 2000）。

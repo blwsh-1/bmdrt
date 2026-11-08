@@ -46,6 +46,14 @@ R 条件的两条硬约束（§20.10）
     旧 `acceptance` 的覆盖与 4% 是 M3 的**精度**门槛，不是 M3.5 的成败判据；
     `r` 条件仍照算并落盘（追溯用），但只由 `run_validity` 决定退出码。
 
+主终点的两层判定（§20.4.1 / §20.15）
+------------------------------------
+    层 1 `sd_median ≤ 0.05`（拆分被约束到什么程度）；
+    层 2 再加**逐 seed 覆盖**（`SPLIT_COVERAGE_RULE="all_seeds"`）与
+    `width90_median < 0.5`。只有两层都满足才是 `full_success`；
+    `primary_only` = 后验够窄但没落在真值上，**不是** M3.5 成功。
+    链未收敛一律 `indeterminate`（`value=null`，原始读数留在 `observed_value`）。
+
 用法
 ----
     # 单组正式跑（4 链 × 1200 样本）
@@ -58,6 +66,9 @@ R 条件的两条硬约束（§20.10）
 
     # 只跑 A、换采样器 seed、写 JSON
     python evidence/nested_topology/m3_stage2.py --stage a --seed 1 --json out.json
+
+    # 判定链自检（纯函数，不跑 MCMC；9 例合成输入）
+    python evidence/nested_topology/m3_stage2.py --selftest-verdict
 
     # 链路自检（1 链 150 样本，只证明能跑通，结果不可引用）
     python evidence/nested_topology/m3_stage2.py --smoke
@@ -333,6 +344,27 @@ def acceptance(rec: dict, n_freq: int,
 # 避免出现"两套收敛定义"（§20.13）。
 CONVERGENCE_CHECKS = ("rhat_lt_1.01", "ess_gt_200", "div_lt_0.1pct")
 
+# §20.4 预注册判据的**全部**阈值与口径，集中一处，跑之前就写定（§20.15）。
+# 分开两层是因为"主终点达标"与"完整成功"不是一件事：sd_r 小只说明拆分被约束，
+# 不说明区间落在真值上（§18.4 的脊线机制可以让后验又窄又偏）。
+SPLIT_SD_TARGET = 0.05      # 主终点：多 seed 的 sd_r 中位 ≤ 该值
+SPLIT_SD_FAIL = 0.30        # 失败阈值：≥ 该值判负
+SPLIT_WIDTH_MAX = 0.50      # 辅助条件：r 的 90% 区间宽（中位）< 该值
+# 覆盖口径：**每个 seed 的 90% 区间都必须覆盖真值**（不是"某个汇总区间"）。
+# 为什么不用汇总区间：5 个 seed 是 5 份不同噪声实现，pooled 后验不对应任何单一
+# 后验，取交集/并集都不是预先定义的统计量，容易被事后挑选。逐 seed 全覆是唯一
+# 不需要额外定义的目标量，且与 sd_r"逐 seed 算再取中位"是同一构造。
+SPLIT_COVERAGE_RULE = "all_seeds"
+
+# 判定层级 → 一句话含义（打印与 JSON 共用一份，免得两处措辞漂移）
+PRIMARY_TIER_MEANING = {
+    "full_success": "主终点达标 + 覆盖与宽度条件均满足",
+    "primary_only": "主终点达标，但辅助条件未满足 → 不作完整成功",
+    "partial": f"{SPLIT_SD_TARGET} < sd_r < {SPLIT_SD_FAIL}，拆分部分受限",
+    "negative": f"sd_r ≥ {SPLIT_SD_FAIL}，判负",
+    "indeterminate": "有链未收敛，主终点不可读",
+}
+
 
 def run_validity(rec: dict) -> dict:
     """**运行有效性**：链健康 + 逐点数组长度。**不含**精度、不含覆盖。
@@ -553,8 +585,10 @@ def split_stats(recs: list[dict]) -> dict | None:
 
     读的是 `summarize()` 里**逐 draw** 算出的 `split_r`（不是拿 R1/R2 的中位相除：
     中位不保序于非线性变换，而且会抹掉 R1 与 R2 的强负相关）。
-    判据只用 `sd_median`；`covered`/`n_sd_le_0.05` 是探索性描述，seed 数太少，
-    不能当覆盖率检验。
+
+    汇总方式与 §20.4 的判据一一对应：`sd_median`（主终点）、`covered` /
+    `covered_all`（覆盖，口径见 `SPLIT_COVERAGE_RULE`）、`width90_median`（宽度）。
+    `n_sd_le_0.05` / `n_sd_ge_0.30` 只是逐 seed 计数，**不作判据**。
     """
     import statistics as stats
 
@@ -562,6 +596,7 @@ def split_stats(recs: list[dict]) -> dict | None:
     if not rows:
         return None
     sds = [float(r["sd"]) for r in rows]
+    covered = int(sum(1 for r in rows if r.get("covered")))
     n_conv = sum(1 for r in recs if _mcmc_converged(r))
     return {
         "param": "r=R1/(R1+R2)",
@@ -573,22 +608,102 @@ def split_stats(recs: list[dict]) -> dict | None:
         "width90_median": float(stats.median([r["width90"] for r in rows])),
         "r_median_median": float(stats.median([r["median"] for r in rows])),
         "truth": (float(rows[0]["truth"]) if "truth" in rows[0] else None),
-        "covered": int(sum(1 for r in rows if r.get("covered"))),
-        "n_sd_le_0.05": int(sum(1 for x in sds if x <= 0.05)),
-        "n_sd_ge_0.30": int(sum(1 for x in sds if x >= 0.30)),
+        "covered": covered,
+        "coverage_rule": SPLIT_COVERAGE_RULE,
+        "covered_all": bool(covered == len(rows)),
+        "n_sd_le_0.05": int(sum(1 for x in sds if x <= SPLIT_SD_TARGET)),
+        "n_sd_ge_0.30": int(sum(1 for x in sds if x >= SPLIT_SD_FAIL)),
     }
 
 
-def split_verdict(sp: dict) -> str:
-    """§20.4 的三档判据，只按中位 sd_r；**链没收敛就不判**。"""
-    if sp.get("n_mcmc_converged", sp["n"]) < sp["n"]:
-        return (f"不可判（{sp['n'] - sp['n_mcmc_converged']}/{sp['n']} 个 seed 的链"
-                f"未收敛，sd_r 被压小，不能当终点读数）")
-    if sp["sd_median"] <= 0.05:
-        return "达标（sd_r≤0.05）"
-    if sp["sd_median"] >= 0.30:
-        return "判负（sd_r≥0.30，r 的 90% 区间宽>0.5）"
-    return "部分约束（0.05<sd_r<0.30）"
+def split_verdict(sp: dict) -> dict:
+    """§20.4 的**两层**判定（§20.15）。返回 dict，不返回单个字符串。
+
+    层 1（主终点）：`sd_median ≤ 0.05` —— 只问"拆分被约束到什么程度"。
+    层 2（完整成功）：层 1 + 预注册的两个辅助条件（逐 seed 覆盖、区间宽 <0.5）。
+
+    为什么两层："后验又窄又偏"是真实现象（§18.4：脊线位置由先验对称性决定）。
+    只看 sd_r 会把"窄而偏"读成成功；只看覆盖会在 sd_r=时宽区间里包得住任何值
+    （§15 已记：宽区间覆盖率无证据力）。所以覆盖条件**只在 sd_r 已经小的时候**
+    才有判定力，正好该放在层 2。
+
+    链没收敛 → `indeterminate`：链没走开会把后验 SD 压小，层 1 本身就不成立。
+    """
+    n, nconv = sp["n"], sp["n_mcmc_converged"]
+    sd = sp["sd_median"]
+    width = sp["width90_median"]
+    cov_all = bool(sp.get("covered_all", sp["covered"] == n))
+    checks = {
+        "sd_le_target": bool(sd <= SPLIT_SD_TARGET),
+        "coverage_all_seeds": cov_all,
+        "width90_lt_max": bool(width < SPLIT_WIDTH_MAX),
+    }
+
+    if nconv < n:
+        return {"tier": "indeterminate", "primary_met": None, "checks": checks,
+                "verdict": (f"不可判（{n - nconv}/{n} 个 seed 的链未收敛，"
+                            f"sd_r 被压小，不能当终点读数）")}
+    if sd >= SPLIT_SD_FAIL:
+        return {"tier": "negative", "primary_met": False, "checks": checks,
+                "verdict": (f"判负（sd_r={sd:.3f} ≥ {SPLIT_SD_FAIL}："
+                            f"拆分在逐点相对口径下仍不受约束）")}
+    if not checks["sd_le_target"]:
+        return {"tier": "partial", "primary_met": False, "checks": checks,
+                "verdict": (f"部分约束（{SPLIT_SD_TARGET} < sd_r={sd:.3f} < "
+                            f"{SPLIT_SD_FAIL}）：如实记录，不改口径重跑")}
+    if all(checks.values()):
+        return {"tier": "full_success", "primary_met": True, "checks": checks,
+                "verdict": (f"完整成功（sd_r={sd:.3f} ≤ {SPLIT_SD_TARGET}；"
+                            f"覆盖 {sp['covered']}/{n}；宽中位 {width:.3f} < "
+                            f"{SPLIT_WIDTH_MAX}）")}
+    bad = []
+    if not checks["coverage_all_seeds"]:
+        bad.append(f"覆盖 {sp['covered']}/{n}（口径 {SPLIT_COVERAGE_RULE}：须全数覆盖）")
+    if not checks["width90_lt_max"]:
+        bad.append(f"宽中位 {width:.3f} ≥ {SPLIT_WIDTH_MAX}")
+    return {"tier": "primary_only", "primary_met": True, "checks": checks,
+            "verdict": (f"主终点达标（sd_r={sd:.3f} ≤ {SPLIT_SD_TARGET}），"
+                        f"但**不构成完整成功**：" + "；".join(bad))}
+
+
+def primary_endpoint_block(sp: dict) -> dict:
+    """`primary_endpoint` 的 JSON 块。抽成函数是为了能在不跑 MCMC 时自检。
+
+    `value` 只在**可判**时给数：链没收敛时 sd_r 被压小，那个数字看着完全正常
+    （甚至"达标"），下游脚本只取 `value` 就会当成有效结果。原始读数不丢，
+    放在 `observed_value`。
+    """
+    vd = split_verdict(sp)
+    judgeable = vd["tier"] != "indeterminate"
+    return {
+        "name": "r=R1/(R1+R2) 的多 seed 后验 SD",
+        "criteria": {
+            "sd_target": SPLIT_SD_TARGET,
+            "sd_fail": SPLIT_SD_FAIL,
+            "width90_max": SPLIT_WIDTH_MAX,
+            "coverage_rule": SPLIT_COVERAGE_RULE,
+            "source": "§20.4 预注册；阈值集中在 m3_stage2.py 常量区",
+        },
+        "verdict": vd["verdict"],
+        "tier": vd["tier"],
+        "tier_meaning": PRIMARY_TIER_MEANING[vd["tier"]],
+        "primary_met": vd["primary_met"],
+        "checks": vd["checks"],
+        "conditions": {
+            "sd_median": sp["sd_median"],
+            "coverage": f"{sp['covered']}/{sp['n']}",
+            "covered_all": bool(sp.get("covered_all", False)),
+            "width90_median": sp["width90_median"],
+        },
+        "valid": bool(judgeable),
+        "value": (sp["sd_median"] if judgeable else None),
+        "observed_value": sp["sd_median"],
+        "reason_if_invalid": (None if judgeable else
+                              f"{sp['n'] - sp['n_mcmc_converged']}/{sp['n']} "
+                              f"个 seed 的链未过 R̂/ESS/div 门禁，"
+                              f"后验 SD 不可读；observed_value 仅供追溯"),
+        "source": "summarize() 的 split_r（逐 draw 计算，非线性化预测）",
+    }
 
 
 def print_seed_table(recs: list[dict]) -> dict:
@@ -668,7 +783,8 @@ def print_seed_table(recs: list[dict]) -> dict:
               f"（逐 seed {sp['sd_min']:.4f}…{sp['sd_max']:.4f}），"
               f"90% 区间宽中位 {sp['width90_median']:.4f}，"
               f"真值覆盖 {sp['covered']}/{sp['n']}")
-        print(f"      → {split_verdict(sp)}；单 seed 达 ≤0.05 的个数 "
+        vd = split_verdict(sp)
+        print(f"      → {vd['verdict']}；单 seed 达 ≤0.05 的个数 "
               f"{sp['n_sd_le_0.05']}/{sp['n']}（探索性，不作判据）；"
               f"链收敛 {sp['n_mcmc_converged']}/{sp['n']}")
     return {"n_seeds": n, "n_pass_acceptance": npass,
@@ -762,23 +878,7 @@ def aggregate_seeds(recs: list[dict], params: list[str] | None = None) -> dict:
     sp = split_stats(recs)
     if sp:
         out["split"] = sp
-        judgeable = sp["n_mcmc_converged"] == sp["n"]
-        out["primary_endpoint"] = {
-            "name": "r=R1/(R1+R2) 的多 seed 后验 SD",
-            "criterion": "sd_r ≤ 0.05（预注册 §20.4）；≥0.30 判负",
-            # `value` 只在**可判**时给数：链没收敛时 sd_r 被压小，那个数字看着
-            # 完全正常（甚至"达标"），下游脚本只取 value 就会当成有效结果。
-            # 原始读数不丢，放在 observed_value。
-            "valid": bool(judgeable),
-            "value": (sp["sd_median"] if judgeable else None),
-            "observed_value": sp["sd_median"],
-            "reason_if_invalid": (None if judgeable else
-                                  f"{sp['n'] - sp['n_mcmc_converged']}/{sp['n']} "
-                                  f"个 seed 的链未过 R̂/ESS/div 门禁，"
-                                  f"后验 SD 不可读；observed_value 仅供追溯"),
-            "verdict": split_verdict(sp),
-            "source": "summarize() 的 split_r（逐 draw 计算，非线性化预测）",
-        }
+        out["primary_endpoint"] = primary_endpoint_block(sp)
     return out
 
 
@@ -809,14 +909,22 @@ def print_robustness(agg: dict) -> None:
     sp = agg.get("split")
     if sp:
         pe = agg.get("primary_endpoint") or {}
+        vd = split_verdict(sp)
         mark = "" if pe.get("valid", True) else "（**无效读数**，仅追溯）"
         print(f"主终点 r=R1/(R1+R2)：sd_r 中位 {sp['sd_median']:.4f}{mark}"
               f"（均值 {sp['sd_mean']:.4f}，范围 {sp['sd_min']:.4f}…{sp['sd_max']:.4f}）；"
-              f"90% 区间宽中位 {sp['width90_median']:.4f}；真值覆盖 {sp['covered']}/{sp['n']}")
-        print(f"        → {split_verdict(sp)}"
+              f"90% 区间宽中位 {sp['width90_median']:.4f}；"
+              f"真值覆盖 {sp['covered']}/{sp['n']}")
+        print(f"      层1 主终点（sd_r≤{SPLIT_SD_TARGET}）：{vd['checks']['sd_le_target']}"
+              f"  层2 辅助（逐 seed 覆盖 {SPLIT_COVERAGE_RULE} / 宽<{SPLIT_WIDTH_MAX}）："
+              f"{vd['checks']['coverage_all_seeds']} / "
+              f"{vd['checks']['width90_lt_max']}")
+        print(f"      → {vd['verdict']}"
               + (f"；真值 r={sp['truth']:.4f}" if sp["truth"] is not None else ""))
         print("        注：sd_r 是后验 SD，不是线性化预测；判据只看中位，"
               "不看单个 seed 是否 ≤0.05。")
+        print("        注：sd_r 小时宽中位≈3.3·sd_r，宽度条件几乎自动满足——"
+              "留着是为了让预注册每项都被执行，不是独立判定力。")
         if not pe.get("valid", True):
             print(f"        JSON 里 primary_endpoint.value = null，"
                   f"原始读数在 observed_value（{sp['sd_median']:.4f}）")
@@ -824,6 +932,62 @@ def print_robustness(agg: dict) -> None:
     print("注意 ②：区间宽远超 100% 的参数，其'覆盖真值'没有信息量（宽区间包得住任何值）。")
     print("注意 ③：SD 与 4% 目标同量级时，单次拟合判达标/不达标接近抛硬币；")
     print("        结论只能按分布说，不能拿单个 seed 说'达标'或'不达标'。")
+
+
+def selftest_verdict() -> bool:
+    """§20.15 的轻量自检：**不跑 MCMC**，只喂合成 `sp` 给判定链。
+
+    覆盖三种必须区分的情形（审查要求）：主终点达标但覆盖失败、主终点达标但
+    宽度不满足、两者都满足；外加"有链未收敛 → 不可判且 `value=null`"。
+    判据是纯函数，所以这里能穷举边界而不花计算。
+    """
+    def mk(sd, width, cov, n=5, nconv=None):
+        return {"param": "r=R1/(R1+R2)", "n": n,
+                "n_mcmc_converged": (n if nconv is None else nconv),
+                "sd_median": sd, "sd_mean": sd, "sd_min": sd, "sd_max": sd,
+                "width90_median": width, "r_median_median": 0.084,
+                "truth": 0.084, "covered": cov, "coverage_rule": SPLIT_COVERAGE_RULE,
+                "covered_all": cov == n,
+                "n_sd_le_0.05": n, "n_sd_ge_0.30": 0}
+
+    cases = [
+        # (说明, sp, 期望 tier, 期望 primary_met, 期望 value 是否为 None, 期望失败项)
+        ("达标但覆盖 4/5", mk(0.030, 0.100, 4), "primary_only", True, False,
+         {"coverage_all_seeds"}),
+        ("达标但宽 0.62", mk(0.030, 0.620, 5), "primary_only", True, False,
+         {"width90_lt_max"}),
+        ("覆盖与宽度都满足", mk(0.030, 0.100, 5), "full_success", True, False, set()),
+        ("达标且有链未收敛", mk(0.030, 0.100, 5, nconv=4), "indeterminate", None,
+         True, set()),
+        ("覆盖与宽度都不满足", mk(0.030, 0.620, 3), "primary_only", True, False,
+         {"coverage_all_seeds", "width90_lt_max"}),
+        ("部分约束", mk(0.120, 0.400, 5), "partial", False, False,
+         {"sd_le_target"}),
+        ("判负", mk(0.400, 1.300, 5), "negative", False, False,
+         {"sd_le_target", "width90_lt_max"}),
+        ("边界 sd=0.05 恰等", mk(0.050, 0.165, 5), "full_success", True, False, set()),
+        ("边界 sd=0.30 恰等", mk(0.300, 0.990, 5), "negative", False, False,
+         {"sd_le_target", "width90_lt_max"}),
+    ]
+    ok = True
+    for note, sp, tier, pm, val_null, failed in cases:
+        vd = split_verdict(sp)
+        blk = primary_endpoint_block(sp)
+        got_failed = {k for k, v in vd["checks"].items() if not v}
+        good = (vd["tier"] == tier and vd["primary_met"] is pm
+                and (blk["value"] is None) == val_null
+                and blk["valid"] == (tier != "indeterminate")
+                and got_failed == failed)
+        ok &= good
+        val_txt = "null" if blk["value"] is None else f"{blk['value']:.3f}"
+        print(f"  [{'✓' if good else '✗'}] {note:<22} tier={vd['tier']:<13}"
+              f" primary_met={vd['primary_met']}  value={val_txt}"
+              f"  未满足={sorted(got_failed) or '—'}")
+        if not good:
+            print(f"      期望 tier={tier} primary_met={pm} value_null={val_null} "
+                  f"未满足={sorted(failed)}")
+    print(f"判定链路自检：{'全部符合预期' if ok else '**有不符合项**'}（{len(cases)} 例）")
+    return ok
 
 
 def main(argv=None) -> int:
@@ -846,6 +1010,8 @@ def main(argv=None) -> int:
     ap.add_argument("--branch", choices=["parallel", "series"], default="parallel")
     ap.add_argument("--layers", type=int, choices=[1, 2], default=2)
     ap.add_argument("--smoke", action="store_true", help="1 链 150 样本，只验链路")
+    ap.add_argument("--selftest-verdict", action="store_true",
+                    help="只跑 §20.4 判定链的自检（纯函数，不跑 MCMC）")
     ap.add_argument("--init", choices=["prior", "oracle"], default="prior",
                     help="prior=默认随机初值（正式用）；oracle=真值初值（只做诊断）")
     ap.add_argument("--warmup", type=int, default=None, help="覆盖 warmup 步数")
@@ -857,6 +1023,10 @@ def main(argv=None) -> int:
     ap.add_argument("--progress", action="store_true", help="打印 MCMC 进度条")
     ap.add_argument("--json", default=None)
     args = ap.parse_args(argv)
+
+    if args.selftest_verdict:
+        print("§20.4 判定链自检（合成输入，无 MCMC）")
+        return 0 if selftest_verdict() else 1
 
     kw = dict(n_warmup=150, n_samples=150, n_chains=1) if args.smoke else \
         dict(n_warmup=600, n_samples=1200, n_chains=4)
@@ -945,7 +1115,10 @@ def main(argv=None) -> int:
                 continue
             sp = split_stats([r for r in recs if r["stage"] == st])
             if sp:
-                print(f"M3.5 研究结论（R 条件，只看 r 的 sd_r）：{split_verdict(sp)}")
+                vd = split_verdict(sp)
+                print(f"M3.5 研究结论（R 条件）：{vd['verdict']}")
+                print(f"      判定层级 = {vd['tier']}（{PRIMARY_TIER_MEANING[vd['tier']]}）；"
+                      f"这一行与上面的退出码相互独立")
         print("通过" if ok else "有未通过项——按 §8 记录，失败不删不改 seed")
     if len(recs) > 1:
         print(f"{len(recs)} 次拟合总耗时 {time.time()-t_all:.0f}s")
