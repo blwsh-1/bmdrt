@@ -1,0 +1,13 @@
+# B3b 前置检查：seeded 状态（只读，未拟合）
+# seeded=true  → init_to_value 固定初值，B3b 可解释为「轨迹随机流敏感性」
+# seeded=false → NumPyro 默认初始化也吃这条随机流，初值可能随 seed 变
+# 判据口径：seeded = bm_real.init_values(pk, pres, K) is not None
+# K 范围 1..5；kk_opts={'c': 0.85, 'max_M': 50, 'res_tol': 0.05, 'auto_L': True, 'auto_tail': True, 'auto_cap': True}；deinduce=True
+
+spectrum          pts KK          incL deind n_peaks seeded(K=1..5) verdict
+Blank_main         50 ok          True False      1 TTTTT        all_seeded
+AZ31-4Li_100       50 warn       False False      1 TTTTT        all_seeded
+AZ31-12Li_0        50 ok          True False      1 TTTTT        all_seeded
+
+总判定：全部 all_seeded → B3b 可按「初值固定」解释
+注：本检查只回答「初值是否被钉住」，不回答「结果是否稳定」；后者是 B3b 正式实验的事，样本量远不止一次极短档。

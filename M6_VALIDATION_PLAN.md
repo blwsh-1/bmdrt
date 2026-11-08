@@ -643,6 +643,20 @@ bmdrt.py auto <谱> \
 | 存在 `seeded=false` | 只能称"当前初始化策略下的随机流敏感性"，**不得声称初值固定** |
 | `<b>禁止</b>` | 不改 `init_values` 去凑 `seeded=true`；那会同时改变两个因素 |
 
+**前置检查已执行（2026-11-08，只读，`evidence/m6/b3b_precheck.py`）**：
+
+| 谱 | 点数 | KK | `include_L` | 去电感 | DRT 峰数 | `seeded`（K=1..5） | 判定 |
+|---|---|---|---|---|---|---|---|
+| `Blank_..._1.2V.txt`（主谱） | 50 | ok | True | 未用 | 1 | TTTTT | `all_seeded` |
+| `AZ31-4Li_100` | 50 | warn | False | 未用 | 1 | TTTTT | `all_seeded` |
+| `AZ31-12Li_0` | 50 | ok | True | 未用 | 1 | TTTTT | `all_seeded` |
+
+→ 三条谱在 `--wide` 的整个 K 范围内都走 `init_to_value`，**B3b 可按"初值固定、
+只换轨迹随机流"解释**。两条限定：① 这是 `init_values()` 是否返回非 `None` 的静态判定，
+不含"NUTS 实际从该初值起步"的运行期验证；② DRT 只给 1 个峰，K>1 时初值由
+`adjust_peaks` 拆分/复制而来——初值确定，但信息量有限，这一点在 B3b 报告里要写明。
+无 KK `fail`，故 `seeded` 全部适用（若有 fail，该谱记 `not_applicable`）。
+
 **B3b 正式实验的预注册约定**（审查要求，跑之前定死）：
 
 1. 固定真实谱及其预处理结果、固定 K 范围 / warmup / samples / `target_accept` /
@@ -765,6 +779,7 @@ bmdrt.py auto <谱> \
 | 2026-11-08 | 帮助文本（第四轮） | `--seed` 说明由"**不换**初值与模型"改为条件化：初始化**策略**不变，但 `seeded=false` 时初值可能随 seed 改变（§6.1.2） | 跑前（E2 未跑） | 审查：`bm_core.fit()` 把同一条 `PRNGKey(seed)` 同时交给初始化与 NUTS；`init_values=None` 时 NumPyro 默认初始化也消耗这条流。实现无误，是表述把未证前提写成了事实 |
 | 2026-11-08 | §6.1.2（新增） | 新增"seed 不只换轨迹随机流：`init_values` 分岔"——`seeded=true/false` 两种解释边界；B3b 开跑前先记 3 条谱的 `seeded`，禁止改 `init_values` 凑 `true` | 跑前（E2 未跑） | 同上；B3b 的解释强度依赖这条前置状态，先记后跑，避免跑完再解释 |
 | 2026-11-08 | 预注册第 5 条（第四轮） | 原文"不写成初始化敏感性（**初值是确定的**，变的是随机流）" → 改为"当前初始化策略下的随机流敏感性"，`seeded=false` 需注明初值也随 seed 变 | 跑前（E2 未跑） | 绝对表述会在 `seeded=false` 的谱上直接失真；条件化后两种情形都可解释 |
+| 2026-11-08 | §6.1.2 前置检查（已执行） | 新增 `evidence/m6/b3b_precheck.py` 与结果表：三条目标谱在 K=1..5 全部 `seeded=true`（DRT 各 1 个峰），`all_seeded` | 跑前（B3b 未跑） | 审查要求"正式实验前先记 seeded"；静态判定不含运行期验证，且 DRT 仅 1 峰、K>1 初值由 `adjust_peaks` 拆分而来，已在文中注明信息量限制 |
 | 2026-11-08 | `test_seed.py`（第四轮） | `_max_draws_diff` 由"只比 1-D 数组"改为比**全部**共用样本数组（键集合/shape/NaN/inf 保护），case5 断言覆盖数 == `len(s)`，case6 回报最大差来源；新增 case8 运行时捕获 `B.fit` 实参 | 跑前（E2 未跑） | 审查 3.1/3.2：旧版覆盖 4 个一维数组，K=1 时 6 个 `(n_draws,1)` 参数被静默跳过，"逐位相同"言过其实；不同 seed 的最大差 2.365e-01 恰好落在旧版没比的 `w(200,1)` 上。文本契约也只能防字符串被删，不能证明运行时实参 |
 
 ---
@@ -792,6 +807,9 @@ $PY bmdrt.py auto out/_m6_samples/z_csv/AZ31-4Li_100.csv \
 #    先用 2 条谱做 §6 的前置自检，再放开全量
 $PY evidence/m6/run_117.py --selfcheck 2
 $PY evidence/m6/run_117.py --jobs 3 --out out/m6/e34
+
+# ③b B3b 前置检查（只读、秒级）：先记三条谱的 seeded 状态，再决定解释强度
+$PY evidence/m6/b3b_precheck.py
 
 # ④ B3b（seed 入口已提交；开跑前先记 3 条谱的 seeded，见 §6.1.2）
 # $PY bmdrt.py auto <谱> --wide --kk gate --seed 1 --out out/m6/b3b
