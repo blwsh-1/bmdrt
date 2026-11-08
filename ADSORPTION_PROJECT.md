@@ -353,7 +353,7 @@ select_adsorption(none_res, ad_res, gate)  →  choice ∈ {none, ad, uncertain,
 | **M3 合成标定** ✅ | `R∞ + 2×ZARC + RL` 多噪声实现标定 + 先验宽度/拐点位置消融 | 标定记录（见下）+ `test_bm_ad_sampler.py`（case3） | ±10% 还原：R_ad 最坏 7.3%、τ_ad 最坏 4.4%（SNR≈430） |
 | **M4 自动判定** ✅ | `detect_ad`（四条件 + §6.1.1 三闸）+ `select_adsorption`（先拦后比 + 两条阻断护栏 + 简并降级）+ `fit_one`/`init_values`/`run`/CLI/config 全链路透传 | 代码 + `test_bm_ad_select.py`（10/10）+ `test_bm_ad_e2e.py`（5/5） | 无吸附谱误触发 **0/10**（≤5%）；默认路径逐位不变 ✓ |
 | **M5 DRT 通道** ✅ | **定案并落地方案 A**（Plank 2025 有符号 DRT）：`drt.py` 加 `signed=`，放开 γ≥0 + Eq.28 欧姆修正 + 原始数据支持闸门 | `drt.py` + `test_drt_signed.py`（6/6） | DRT 峰数不再被环撑大；默认路径逐位一致（case4 基准锁定） |
-| **M6 真实数据 + 回归** | 找/造含吸附环的真实谱；117 条 2E + Blank 系列回归 | 证据 + 报告 | 三道回归全过 |
+| **M6 真实数据 + 回归** | 找/造含吸附环的真实谱；117 条 2E + Blank 系列回归 | 证据 + 报告（验证方案预注册见 `M6_VALIDATION_PLAN.md`） | 三道回归全过 |
 
 **M5 曾是本立项唯一可能失败的阶段，现已按方案 A 落地并通过 6/6 单测**
 （见下方「M5 落地记录 v1.2」）。剩下的未决项是 **M6 的真实数据验证**：

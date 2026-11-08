@@ -424,6 +424,7 @@ not_compared, rejected_by_kk}`（旧结果文件里的 `ok` 是 `converged` 的�
 | `evidence/nested_topology/g2_seeds_b.{json,log}` | 档 2 B 组（`R_ad=300`）2 个 seed：形状参数未收缩的负结果，`R1/(R1+R2)` 90% 区间覆盖 `[0.01,0.99]` |
 | `AD_M6_SAMPLING.md` | **吸附电感 M6 抽样验证记录**：18 条真实含环谱盘点、4+10 分层抽样设计、首个真实正例（正式档复核）、门控两处缺陷、`inv_from_lowfreq` 偏差实证、抽样置信上界与分阶段全量方案 |
 | `AD_GATE_SPEC.md` | **吸附门控边界状态规格**：`enter`/`strong` 严格分离、五状态定义、新增 `edge_peak`、`d_low` 与采样密度判据（`2/dens`）、"不增加假阳性"的不变性论证、M6 开发顺序与验收口径 |
+| `M6_VALIDATION_PLAN.md` | **M6 实测数据验证预注册方案（v0.1，待审查，未执行）**：合并吸附线 / nested 线的两个 M6 并分开验收；24 条真实谱盘点（AZ31 18 + Blank 6）、117 条 2E 的旧基线为何不能直接比（11-05 早于三处规则变更）；M6.1 基线 / M6.2 边界 / M6.3 假阳性三层判据（G1–G7）、**K 范围必须 `--wide` 而非 DRT 预判**、复用与必须重做的证据清单（E1–E7）、报告字段与五条禁止事项、判据变更规则 |
 | `evidence/ad_m6/sampling_check.py` | M6 抽样脚本：`inventory` 盘点 / `prepare` 转 csv+分层 / `summarize` 汇总结果 / `edges` 边界峰与 `d_low` 分析 |
 | `evidence/kk_review/verify_review.py` | **外部审查意见的逐条核实**（残差口径是绝对还是相对 / Lin-KK 是否自带串联电感、M 有没有被强行加大 / 三条护栏常数），只读复现，不改代码与结果 |
 | `docs/cases/blank_0.1KBr_pH10/` | **真实 EIS 谱模型选择诊断案例**（最新版本）：四层可辨识性规格、逐频点 LOO 与配对 dse、精确 HN 参考频率贡献、2×3 统一比较、合成谱用例与历史回放。文档 / 脚本 / CSV / JSON 齐备；NPZ 与 run.log 按约定不入库 |
