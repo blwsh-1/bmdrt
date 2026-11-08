@@ -31,10 +31,14 @@
     --kk gate|warn|off   --auto-mechanism / --auto-mechanism-full
     --no-move   --out DIR   --inbox DIR   --interval 30
 
-    --seed 默认 0（= bm_real.KW 的默认值，旧命令逐位不变）。它只换 NUTS 的
-    随机流，**不换**初值与模型：同 seed 重跑逐位相同，不同 seed 才可能改变
-    采样诊断与后验读数。实际生效的 seed 与采样配置会写进结果 json 的
-    `seed` / `sampling` 两个字段——看那里，不要相信命令行。
+    --seed 默认 0（= bm_real.KW 的默认值，旧命令逐位不变）。它换的是 NUTS 的
+    随机流：同 seed 重跑逐位相同，不同 seed 才可能改变采样诊断与后验读数。
+    **初始化策略不变，但初值不一定不变**——DRT 播种成功（结果里 seeded=true，
+    走 init_to_value）时初值是确定的，只有轨迹随机流变；未播种（seeded=false）
+    时 NumPyro 的默认初始化策略也消耗这条随机流，初值可能随 seed 改变。
+    模型与采样配置（warmup/samples/链数/ta/树深）不受 --seed 影响。
+    实际生效的 seed 与采样配置会写进结果 json 的 `seed` / `sampling` 两个
+    字段——看那里，不要相信命令行。
 
     --kk 默认 gate：拟合前先过 Lin-KK，判 fail 就写 fit_performed=false
     的结果 json 并拒绝定 K（不是运行失败）。数值阈值在 config.json 的 kk 段。

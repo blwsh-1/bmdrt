@@ -7,11 +7,14 @@
 结果 json），并且断言结果里记的是**实际生效值**。
 
 三条边界（写死，免得结果被当成别的东西）：
-1. 只换随机流：模型、初值策略、K 范围、warmup/samples/ta/树深全不变。
+1. 只换随机流：模型、**初始化策略**、K 范围、warmup/samples/ta/树深全不变。
+   注意"初始化策略不变"不等于"初值不变"：`init_values` 存在时走确定性
+   `init_to_value`，初值固定；为 None 时 NumPyro 的默认初始化也消耗这条随机流，
+   初值可能随 seed 变。case8 会把这条状态打出来。
 2. 同 seed 重跑必须**逐位相同**（这是"随机流被固定住"的判据，不是"结果正确"）。
 3. 不同 seed 只要求**样本确实不同**，不要求 K/分级不变——变了本身是信息。
 
-用法：python test_seed.py        （含 3 次极短 NUTS，约 10-30 s）
+用法：python test_seed.py        （含 8 次极短 NUTS，约 30-60 s）
 """
 
 from __future__ import annotations
@@ -45,18 +48,52 @@ def _synth(f, seed=3):
     return Z + NOISE * (rng.standard_normal(f.size) + 1j * rng.standard_normal(f.size))
 
 
-def _max_draws_diff(r1, r2):
-    """两组后验样本的最大逐点差（只比两边共有的 1-D 浮点数组）。"""
+def _max_draws_diff(r1, r2, stats=None):
+    """两组后验样本的最大逐点差（比较两边**全部**样本数组，不只是 1-D）。
+
+    早期版本只挑 `np.ndim(...) == 1` 的键，于是 K=1 时像 `v` 这种 (n_draws, 1)
+    的二维参数样本被静默跳过——"逐位相同"其实只覆盖了部分数组。这里收紧为：
+      * 键集合必须一致（同配置同 K 下缺键本身是异常，不静默跳过）；
+      * shape 必须一致；
+      * 完全相同（含 NaN 同位）→ 跳过；否则若含非有限值 → 返回 inf，
+        不能因为 `max(0.0, nan) == 0.0` 报出一个假的 0（M3.5 踩过这个坑）。
+
+    stats（dict，可选）：回填实际比较覆盖，供测试断言"没有漏掉任何数组"。
+    """
     a, b = r1["s"], r2["s"]
+    ka, kb = set(a), set(b)
+    if ka != kb:
+        raise AssertionError(
+            "样本键集合不一致：只在左 %s，只在右 %s"
+            % (sorted(ka - kb), sorted(kb - ka)))
+    assert ka, "两份结果都没有样本数组"
     m = 0.0
-    common = [k for k in a if k in b and np.ndim(a[k]) == 1 and np.ndim(b[k]) == 1]
-    assert common, "两份结果没有可比的 1-D 样本数组"
-    for k in common:
+    n_arr = n_elem = n_nd = 0
+    shapes = set()
+    worst, worst_shape = "", ()
+    for k in sorted(ka):
         x, y = np.asarray(a[k], float), np.asarray(b[k], float)
         if x.shape != y.shape:
             raise AssertionError(f"样本形状不一致：{k} {x.shape} vs {y.shape}")
-        if x.size:
-            m = max(m, float(np.max(np.abs(x - y))))
+        n_arr += 1
+        n_elem += int(x.size)
+        shapes.add(int(x.ndim))
+        if x.ndim > 1:
+            n_nd += 1
+        if x.size == 0:
+            continue
+        if np.array_equal(x, y, equal_nan=True):
+            continue
+        if not (np.isfinite(x).all() and np.isfinite(y).all()):
+            m = float("inf")      # 有非有限值又不完全同位：不能报有限差
+        else:
+            dv = float(np.max(np.abs(x - y)))
+            if dv >= m:
+                m, worst, worst_shape = dv, k, tuple(x.shape)
+    if stats is not None:
+        stats.update(n_arrays=n_arr, n_elem=n_elem, n_ndim_gt1=n_nd,
+                     ndims=sorted(shapes), keys=sorted(ka),
+                     worst_key=worst, worst_shape=worst_shape)
     return m
 
 
@@ -151,20 +188,31 @@ def case4_result_records_actual_seed():
 
 
 def case5_same_seed_bitwise_identical():
-    """同 seed 重跑逐位相同：证明"随机流被固定"，不是"结果正确"。"""
+    """同 seed 重跑逐位相同：证明"随机流被固定"，不是"结果正确"。
+
+    覆盖范围必须等于**全部**样本数组（审查 3.1）：旧实现只比 1-D，
+    K=1 时 (n_draws, 1) 的参数会被漏掉，所以这里显式断言没漏。
+    """
     a, b = _fit(0), _fit(0)
-    d = _max_draws_diff(a, b)
+    st = {}
+    d = _max_draws_diff(a, b, stats=st)
+    assert st["n_arrays"] == len(a["s"]), \
+        f"只比了 {st['n_arrays']}/{len(a['s'])} 个样本数组，有漏"
     assert d == 0.0, f"同 seed 两次采样不一致，max|Δ|={d:.3e}（不是逐位确定的）"
     assert a["grade"] == b["grade"] and a["ndiv"] == b["ndiv"]
-    return f"两次 max|Δ|=0，grade={a['grade']}，div={a['ndiv']}"
+    return (f"{st['n_arrays']} 个数组 / {st['n_elem']} 个样本值全部逐位相同"
+            f"（ndim={st['ndims']}，二维数组 {st['n_ndim_gt1']} 个）；"
+            f"grade={a['grade']}，div={a['ndiv']}")
 
 
 def case6_different_seed_changes_draws():
     """不同 seed 必须真的换随机流；K/分级变不变不设判据。"""
     a, c = _fit(0), _fit(1)
-    d = _max_draws_diff(a, c)
+    st = {}
+    d = _max_draws_diff(a, c, stats=st)
     assert d > 0.0, "不同 seed 的样本完全相同——seed 没进到采样，或随机流被上层的常量覆盖"
-    return (f"seed0 vs seed1 max|Δ|={d:.3e}；"
+    return (f"seed0 vs seed1 max|Δ|={d:.3e}（{st['worst_key']}{st['worst_shape']}，"
+            f"覆盖 {st['n_arrays']} 个数组）；"
             f"grade {a['grade']}→{c['grade']}，div {a['ndiv']}→{c['ndiv']}"
             f"（变化与否只记录，不作判据）")
 
@@ -194,10 +242,55 @@ def case7_kk_reject_says_no_sampling():
     return "fit_performed=False + sampling_performed=False + seed=null"
 
 
+def case8_runtime_args_reach_sampler():
+    """文本契约只证明字符串在文件里；这里捕获**运行时实参**（审查 3.2）。
+
+    `run() → _fit_ks() → fit_one() → B.fit()` 每跳都走全局名或关键字，
+    所以包一层 `B.fit` 就能看到真正交给采样的 seed 和 init_values。
+    顺带记录 init_values 是否为 None —— 这正是"换 seed 会不会连带换初值"
+    的分岔点（§6.1.2）：True 则 init_to_value 固定初值，False 则 NumPyro
+    默认初始化策略也吃这条随机流，初值可能随 seed 变。
+    """
+    import bm_core as B
+    import tempfile
+
+    csv = ROOT / "examples" / "example_caseE.csv"
+    assert csv.exists(), "缺示例谱 examples/example_caseE.csv"
+
+    fast = dict(KW_FAST)
+    fast["seed"] = 0            # run() 里 _fit_ks 用 kw.get("seed", KW["seed"])
+    seen = []
+    orig_fit, orig_out, orig_kw = B.fit, R.OUT, R.KW
+
+    def spy(*a, **kw):
+        seen.append((kw.get("seed"), kw.get("init_values") is not None))
+        return orig_fit(*a, **kw)
+
+    try:
+        B.fit = spy
+        R.KW = fast
+        with tempfile.TemporaryDirectory() as td:
+            R.OUT = Path(td)
+            R.run(csv, K_force=1, quick=False, kk_mode="off", seed=None)
+            r0, seen[:] = list(seen), []
+            R.run(csv, K_force=1, quick=False, kk_mode="off", seed=7)
+            r7 = list(seen)
+    finally:
+        B.fit, R.OUT, R.KW = orig_fit, orig_out, orig_kw
+
+    assert r0 and r7, "B.fit 一次都没被调用，测试本身失效"
+    assert all(s == 0 for s, _ in r0), f"默认路径到达采样器的 seed 不是 0：{r0}"
+    assert all(s == 7 for s, _ in r7), f"显式 seed 没到采样器：{r7}"
+    seeded = sorted({q for _, q in r0 + r7})
+    assert len(seeded) == 1, f"同一谱两次调用的播种状态不一致：{r0} / {r7}"
+    return ("默认→0、显式→7 均到达 B.fit；"
+            f"init_values={'有' if seeded[0] else '无（默认初始化也吃随机流）'}")
+
+
 CASES = [case1_resolve_seed_precedence, case2_cli_parsed_and_applied,
          case3_passthrough_source, case4_result_records_actual_seed,
          case5_same_seed_bitwise_identical, case6_different_seed_changes_draws,
-         case7_kk_reject_says_no_sampling]
+         case7_kk_reject_says_no_sampling, case8_runtime_args_reach_sampler]
 
 if __name__ == "__main__":
     bad = []
