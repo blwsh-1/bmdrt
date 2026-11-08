@@ -22,7 +22,8 @@
     "auto_mechanism_full": false,
     "adsorption": null,
     "auto_adsorption": false,
-    "sigma_floor": 0.0
+    "sigma_floor": 0.0,
+  "seed": null
   },
 
   "drt": {

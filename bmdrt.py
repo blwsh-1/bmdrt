@@ -26,10 +26,15 @@
     python bmdrt.py help                 # 这个帮助
 
 覆盖项（对 auto / watch 有效）：
-    --krange 1,4   --wide   --kmax 6   --quick   --ta 0.95
+    --krange 1,4   --wide   --kmax 6   --quick   --ta 0.95   --seed 1
     --L / --no-L   --zeta 1.0|free   --diffusion none|Ws|Wo|both
     --kk gate|warn|off   --auto-mechanism / --auto-mechanism-full
     --no-move   --out DIR   --inbox DIR   --interval 30
+
+    --seed 默认 0（= bm_real.KW 的默认值，旧命令逐位不变）。它只换 NUTS 的
+    随机流，**不换**初值与模型：同 seed 重跑逐位相同，不同 seed 才可能改变
+    采样诊断与后验读数。实际生效的 seed 与采样配置会写进结果 json 的
+    `seed` / `sampling` 两个字段——看那里，不要相信命令行。
 
     --kk 默认 gate：拟合前先过 Lin-KK，判 fail 就写 fit_performed=false
     的结果 json 并拒绝定 K（不是运行失败）。数值阈值在 config.json 的 kk 段。
@@ -103,7 +108,7 @@ DEFAULTS = {
               "rejected": "rejected"},
     "fit": {"krange": None, "wide": False, "kmax": 5, "quick": False,
             "ta": None, "include_L": None, "zeta": "1.0",
-            "sigma_floor": 0.0, "auto_mechanism": False,
+            "sigma_floor": 0.0, "seed": None, "auto_mechanism": False,
             "auto_mechanism_full": False,
             "adsorption": None, "auto_adsorption": False},
     "kk": {"mode": "gate", "c": 0.85, "max_M": 50, "res_tol": 0.05,
@@ -263,6 +268,8 @@ def process_one(path: Path, cfg: dict) -> dict:
                       kk_opts=kk_opts, diag=dcfg,
                       drt_opts=drtcfg,
                       sigma_floor=float(fit.get("sigma_floor", 0.0) or 0.0),
+                      seed=(None if fit.get("seed") is None
+                            else int(fit["seed"])),
                       auto_mechanism=bool(fit.get("auto_mechanism", False)),
                       auto_mechanism_full=bool(fit.get("auto_mechanism_full", False)),
                       adsorption=(None if str(fit.get("adsorption") or "none").lower()
@@ -508,7 +515,8 @@ def _move_to(p: Path, sub: str, cfg: dict) -> Path:
 def _apply_cli(cfg: dict, opt: dict):
     fit = cfg["fit"]
     for k in ("krange", "wide", "kmax", "quick", "ta", "zeta", "diffusion",
-              "auto_mechanism", "auto_mechanism_full", "auto_adsorption"):
+              "auto_mechanism", "auto_mechanism_full", "auto_adsorption",
+              "seed"):
         if opt.get(k) is not None:
             fit[k] = opt[k]
     # --adsorption：与 --diffusion 同处理，"none"/""/"null" 归一成 None。
@@ -553,6 +561,7 @@ def cmd_auto(paths: list[str], opt: dict) -> int:
     print(f"[bmdrt] 待处理 {len(files)} 个文件")
     print(f"  配置：K 范围 {'1..' + str(cfg['fit']['kmax']) if cfg['fit']['wide'] else (cfg['fit']['krange'] or '按 DRT 自动')}"
           f"　quick={cfg['fit']['quick']}　ta={cfg['fit']['ta'] or '默认 0.9'}"
+          f"　seed={('默认 0' if cfg['fit'].get('seed') is None else cfg['fit']['seed'])}"
           f"　L={cfg['fit']['include_L']}　ζ={cfg['fit']['zeta']}"
           f"　扩散={cfg['fit'].get('diffusion', 'none')}"
           f"　自动机制={cfg['fit'].get('auto_mechanism', False)}"
@@ -721,6 +730,7 @@ def parse_opts(argv: list[str]) -> tuple[list[str], dict]:
            "auto_mechanism": None, "auto_mechanism_full": None,
            "adsorption": None, "auto_adsorption": None,
            "sigma_floor": None, "no_deinduce": False,
+           "seed": None,
            "fit": False, "fast": False}
     paths, i = [], 0
     while i < len(argv):
@@ -762,9 +772,13 @@ def parse_opts(argv: list[str]) -> tuple[list[str], dict]:
         else:
             paths.append(a)
         i += 1
-    for k in ("kmax",):
+    for k in ("kmax", "seed"):
         if opt[k] is not None:
-            opt[k] = int(opt[k])
+            try:
+                opt[k] = int(opt[k])
+            except (TypeError, ValueError):
+                # --seed 必须是整数：静默接受再丢掉（本文件以前的通病）比报错危险。
+                sys.exit(f"[bmdrt] --{k} 需要整数，收到 {opt[k]!r}")
     for k in ("ta",):
         if opt[k] is not None:
             opt[k] = float(opt[k])

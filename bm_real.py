@@ -91,6 +91,8 @@ import matplotlib.ticker as mticker
 KW = dict(n_warmup=3000, n_samples=1000, num_chains=3, seed=0,
           progress=False, target_accept=0.9, max_tree_depth=13,
           extra_fields=("num_steps",))
+# 上面的 seed=0 是**默认值**，不是硬编码：`run(seed=)` / CLI `--seed` 可以覆盖，
+# 优先级见 `_resolve_seed()`。改 seed 只换随机流，不换模型、不换初值策略。
 K_MAX = 5
 OUT = Path("figures")
 
@@ -848,9 +850,32 @@ def init_values(pk, res, K, zeta_fixed=1.0, ad_init=None):
 # 单个 K 的拟合
 # --------------------------------------------------------------------------
 
-def fit_one(f, Z, K, include_L, zeta, init=None, seed=0, kw=None, diffusion=None,
+def _resolve_seed(seed, kw):
+    """决定这一次拟合实际用哪个 sampler seed。
+
+    优先级（**显式 > 隐式 > 模块默认**）：
+
+    1. `seed` 实参非 `None` → 用它（调用方明确要求）；
+    2. 否则 `kw["seed"]` 存在 → 用它（配置/上层传入）；
+    3. 否则 `KW["seed"]`（= 0，与改动前逐位一致）。
+
+    为什么要有这个函数：改动前 `fit_one` 写的是 `kw["seed"] = seed`（`seed` 默认 0），
+    于是「往 kw 里塞 seed」会被**静默覆盖**成 0——参数收到了却不生效，比报错更难查。
+    现在把解析规则抽出来单测，不让它藏在函数体中间。
+    """
+    if seed is not None:
+        return int(seed)
+    if kw is not None and kw.get("seed") is not None:
+        return int(kw["seed"])
+    return int(KW["seed"])
+
+
+def fit_one(f, Z, K, include_L, zeta, init=None, seed=None, kw=None, diffusion=None,
             diag=None, sigma_floor=0.0, adsorption=None):
     """跑一次 NUTS，返回全部指标（不打印、不画图）。
+
+    seed：sampler 随机流种子。`None`（默认）= 沿用 `kw["seed"]`，`kw` 里也没有
+    就用 `KW["seed"]`(=0)。显式传值则覆盖 `kw`——规则见 `_resolve_seed()`。
 
     diag：事后诊断阈值（corr_strong / corr_medium / diff_resolution_tol），
     由 config.json 的 diag 段传入；缺省时用模块内置默认值。
@@ -860,7 +885,8 @@ def fit_one(f, Z, K, include_L, zeta, init=None, seed=0, kw=None, diffusion=None
     """
     diag = diag or {}
     kw = dict(KW) if kw is None else dict(kw)
-    kw["seed"] = seed
+    seed_used = _resolve_seed(seed, kw)
+    kw["seed"] = seed_used
     t0 = time.time()
     s, mc = B.fit(f, Z, K=K, alpha=0.5, sigma=None, include_L=include_L,
                   zeta_fixed=(None if zeta == "free" else float(zeta)),
@@ -1057,6 +1083,14 @@ def fit_one(f, Z, K, include_L, zeta, init=None, seed=0, kw=None, diffusion=None
         tail_min=min(x["tail"] for x in rows),
         bulk_min=min(x["bulk"] for x in rows),
         seeded=init is not None,
+        # 实际生效的采样配置（不是命令行请求值）：B3a/B3b 的证据就靠这两个字段。
+        # seed 取 `seed_used`（真传给 mcmc.run 的那个），不取外层入参。
+        seed=int(seed_used),
+        sampling=dict(n_warmup=int(kw.get("n_warmup", 0)),
+                      n_samples=int(kw.get("n_samples", 0)),
+                      num_chains=int(kw.get("num_chains", 0)),
+                      target_accept=float(kw.get("target_accept", float("nan"))),
+                      max_tree_depth=int(kw.get("max_tree_depth", 0))),
     )
     lvl, bad_hard, bad_loose = grade(r)
     r["grade"], r["grade_bad"], r["grade_loose"] = lvl, bad_hard, bad_loose
@@ -2233,12 +2267,15 @@ def prescreen_stage(f, Z, deind=None):
     return pres, pk, pk_all, dt
 
 
-def _write_kk_reject(path, f, Z, kk, kk_mode):
+def _write_kk_reject(path, f, Z, kk, kk_mode, seed=None):
     """gate 模式且 K-K 判 fail：跳过整条拟合链，只落一份可机读的拒绝记录。
 
     必须写 `real_<stem>.json`——`bmdrt.py` 的批量流程靠它判「流程跑完」，
     不写会被记成「跑完但没结果」而误报 [FAIL]。`fit_performed=false`
     就是批量流程区分「正常拒绝」与「真的拟合成功」的契约字段。
+
+    `sampling_performed=false` + `seed=null` 是给 B3b 用的：KK 拒绝谱**没有采样**，
+    不能被当成「某个 seed 下跑过了」。把 seed 记成 0 会让它看起来像一次拟合。
     """
     OUT.mkdir(exist_ok=True)
     stem = Path(path).stem
@@ -2249,6 +2286,8 @@ def _write_kk_reject(path, f, Z, kk, kk_mode):
         k_selection_status="rejected_by_kk",
         reason=kk.get("reason", ""),
         K=None, sample_grade=None, components=[],
+        sampling_performed=False,
+        seed=(None if seed is None else int(seed)),
         warnings=["**KK 门禁拒绝**：数据不自洽，本次未拟合，不输出最优 K。"],
         k_selection=["**不输出最优 K 的结论**：拟合前 K-K 门禁判 fail。"],
     )
@@ -2264,6 +2303,10 @@ def save_out(stem, f, Z, res, pres, include_L, zeta, tips, K_sel_note):
         file=stem, n=int(f.size), f_min=float(f.min()), f_max=float(f.max()),
         K=int(res["K"]), include_L=bool(include_L),
         zeta=("free" if zeta == "free" else float(zeta)),
+        # seed + sampling：留给 B3b 的随机性诊断。写的是**实际生效值**，
+        # 不是命令行请求值（`--seed` 被吃掉时这两项会露馅）。
+        seed=int(res.get("seed", KW["seed"])),
+        sampling=res.get("sampling"),
         lam_drt=float(pres["lam"]), R_inf_drt=float(pres["R_inf"]),
         t_fit_s=float(res["t"]), divergences=int(res["ndiv"]),
         tree_cap=float(res["tds"]["frac_cap"]),
@@ -2358,7 +2401,8 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
         include_L=None, zeta="1.0", dry=False, quick=False, ta=None,
         diffusion=None, kk_mode="gate", kk_opts=None, diag=None,
         drt_opts=None, sigma_floor=0.0, auto_mechanism=False,
-        auto_mechanism_full=False, adsorption=None, auto_adsorption=False):
+        auto_mechanism_full=False, adsorption=None, auto_adsorption=False,
+        seed=None):
     """kk_mode: gate(fail 即拒绝定 K) | warn(只报告) | off(不跑门禁)。
     kk_opts 是传给 kk_check 的数值参数（c/max_M/res_tol/auto_L/...），
     不在代码里写死，由 config.json 统一管。
@@ -2368,6 +2412,8 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
     adsorption：None(默认，逐位不变) / "RL" 手动加吸附元件。
     auto_adsorption：True 时在 none 家族跑完后过 detect_ad 门控，三闸全过才
     补跑 (K, adsorption='RL') 并配对比较（M4，§6.3 一期屏蔽 both，R8）。
+    seed：sampler 随机流。`None`（默认）= 不动 `KW["seed"]`(=0)，旧命令逐位不变；
+    传整数则本次所有拟合（none 家族 + 补跑的 Ws / ad）都用这个 seed。
     """
     drt_opts = drt_opts or {}
     sigma_floor = float(sigma_floor or 0.0)
@@ -2409,7 +2455,7 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
               else f"  {kk['status']}: {kk['reason']}")
         if kk_mode == "gate" and kk.get("status") == "fail":
             print("\n  ** 数据不自洽，拒绝定 K；本次不做拟合 **")
-            js = _write_kk_reject(path, f, Z, kk, kk_mode)
+            js = _write_kk_reject(path, f, Z, kk, kk_mode, seed=seed)
             print(f"  结果：{js}")
             return None
 
@@ -2442,6 +2488,10 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
         return None
 
     kw = dict(KW)
+    # seed 必须在 quick / ta 之前落进 kw：`_fit_ks` 把 kw 整包传给 fit_one，
+    # 再由 `_resolve_seed()` 从这里取。`None` = 保持 KW 的 0（旧行为逐位不变）。
+    if seed is not None:
+        kw["seed"] = int(seed)
     if quick:
         kw.update(n_warmup=800, n_samples=400, num_chains=2)
         print("\n  ** --quick：只做粗筛。elpd 与诊断都不可当结论，选定 K 后要重跑 **")
@@ -2482,6 +2532,7 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
             print(f"\n  --- K={K} 拟合中（播种={'是' if init else '否'}"
                   f"{('，' + tag) if tag else ''}）---")
             r = fit_one(f, Z, K, include_L, zeta, init=init, kw=kw,
+                        seed=kw.get("seed", KW["seed"]),
                         diffusion=diffusion_use, diag=diag,
                         sigma_floor=sigma_floor, adsorption=adsorption_use)
             print(f"      {r['t']:.0f}s  R̂max={r['rhat_max']:.3f} "
