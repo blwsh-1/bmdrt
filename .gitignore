@@ -65,6 +65,13 @@ evidence/nested_topology/*
 !evidence/nested_topology/m35_cond_n2.py
 !evidence/nested_topology/m35_cond_n2.json
 !evidence/nested_topology/m35_cond_n2.log
+# M3.5 后验样本：§20.24 起随版本库归档（17 个 / 5.36 MB，一次性纳入；不用 LFS）
+!evidence/nested_topology/m35_r.r.d*.s0.samples.npz
+!evidence/nested_topology/m35_r_w5000.r.d*.s0.samples.npz
+!evidence/nested_topology/m35_sens_d4.r.d4.s*.samples.npz
+!evidence/nested_topology/m35_cond_n2.*.samples.npz
+!evidence/nested_topology/m35_samples_manifest.py
+!evidence/nested_topology/m35_samples_manifest.json
 !evidence/nested_topology/g1_seeds_a.json
 !evidence/nested_topology/g1_seeds_a.log
 !evidence/nested_topology/g2_seeds_b.json

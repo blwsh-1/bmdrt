@@ -299,15 +299,31 @@ def interpret(marg: dict, cond: dict, gate_ok: bool) -> dict:
 
 
 def max_rel_diff(a: dict, b: dict) -> float:
-    """两个样本字典的逐元素最大相对差（用于"必须逐位复现"的自检）。"""
+    """两个样本字典的逐元素最大相对差（"必须逐位复现"的硬保护判据）。
+
+    任何"不能证明相同"的情形都返回 `inf`——这个函数是 `check_control()` 的第一道闸，
+    宁可误报不一致，也不能把异常数据当成 0（§20.24 审查意见）：
+
+    · **键集合**必须相等：只查 `a` 的键会漏掉"`b` 多一个参数"（多出来的参数没人比对，
+      于是照样返回 0）；
+    · **形状**必须相等；
+    · **两侧都必须全有限**：`nan` 会让 `np.max(d)` 变成 `nan`，而 `max(0.0, nan)`
+      在 Python 里返回 `0.0`（`nan` 比较恒假），等于把"有 NaN"读成"完全一致"；
+    · **比值也必须有限**：`inf/inf` 之类会得到 `nan`。
+    """
+    if set(a) != set(b):
+        return float("inf")
     worst = 0.0
     for k in a:
-        if k not in b:
-            return float("inf")
-        x, y = np.asarray(a[k], float), np.asarray(b[k], float)
+        x = np.asarray(a[k], dtype=float)
+        y = np.asarray(b[k], dtype=float)
         if x.shape != y.shape:
             return float("inf")
+        if not np.all(np.isfinite(x)) or not np.all(np.isfinite(y)):
+            return float("inf")
         d = np.abs(x - y) / np.maximum(np.abs(y), 1e-30)
+        if not np.all(np.isfinite(d)):
+            return float("inf")
         worst = max(worst, float(np.max(d)))
     return worst
 
@@ -395,6 +411,15 @@ def selftest() -> bool:
     chk("5a 同数组 → 0", max_rel_diff(a, a) == 0.0)
     chk("5b 扰动 → >0", max_rel_diff(a, {"R1": np.array([1.0, 2.001]),
                                          "R2": np.array([3.0, 4.0])}) > 1e-5)
+    # 5c-5e §20.24：键集合 / NaN / Inf 都必须判成不一致（返回 inf）
+    chk("5c b 多一个键 → inf",
+        max_rel_diff(a, dict(a, R3=np.zeros(2))) == float("inf"))
+    chk("5d a 含 NaN → inf",
+        max_rel_diff({"R1": np.array([1.0, np.nan])},
+                     {"R1": np.array([1.0, np.nan])}) == float("inf"))
+    chk("5e b 含 Inf → inf",
+        max_rel_diff({"R1": np.array([1.0, 2.0])},
+                     {"R1": np.array([1.0, np.inf])}) == float("inf"))
     # 6) 谱是可重建的（同 seed 两次一致），这是"不重新生成噪声"的前提
     t1 = build_data(0)[1:3]
     t2 = build_data(0)[1:3]
