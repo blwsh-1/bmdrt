@@ -1,0 +1,220 @@
+{
+  "time": "2026-11-08 12:17:35",
+  "source": "m35_sens_d4.json",
+  "ref": "m35_r_w5000.json",
+  "design": {
+    "data_seeds": [
+      4,
+      4,
+      4,
+      4,
+      4
+    ],
+    "sampler_seeds": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ],
+    "n_chains": 4,
+    "n_samples": 1200,
+    "n_warmup": 5000,
+    "target_accept": 0.95,
+    "max_tree_depth": 12
+  },
+  "runs": [
+    {
+      "data_seed": 4,
+      "sampler_seed": 0,
+      "pass": false,
+      "failing_checks": [
+        "rhat_lt_1.01"
+      ],
+      "rhat_max": 1.02067734687939,
+      "rhat_worst_param": "n1",
+      "ess_min": 358.8006577060242,
+      "ess_worst_param": null,
+      "divergences": 0,
+      "r_median": 0.0866442952475741,
+      "sd_r": 0.04452915593255207,
+      "width90": 0.14521342411777968,
+      "covered": true,
+      "bias": 0.0026748295987191334,
+      "se_median_r": 0.0029462723322611923,
+      "bad_rhat": [
+        "n1",
+        "Q1",
+        "n2",
+        "Q2"
+      ],
+      "bad_ess": [],
+      "failure_signature": [
+        "Q1",
+        "Q2",
+        "n1",
+        "n2"
+      ]
+    },
+    {
+      "data_seed": 4,
+      "sampler_seed": 1,
+      "pass": true,
+      "failing_checks": [],
+      "rhat_max": 1.005464566843771,
+      "rhat_worst_param": "n1",
+      "ess_min": 425.2120398083282,
+      "ess_worst_param": null,
+      "divergences": 0,
+      "r_median": 0.08763726737048909,
+      "sd_r": 0.04355488189920474,
+      "width90": 0.14210370780572318,
+      "covered": true,
+      "bias": 0.0036678017216341258,
+      "se_median_r": 0.0026472143211087504,
+      "bad_rhat": [],
+      "bad_ess": [],
+      "failure_signature": []
+    },
+    {
+      "data_seed": 4,
+      "sampler_seed": 2,
+      "pass": true,
+      "failing_checks": [],
+      "rhat_max": 1.0052153378608455,
+      "rhat_worst_param": "R1",
+      "ess_min": 537.550604769849,
+      "ess_worst_param": null,
+      "divergences": 0,
+      "r_median": 0.08444361728201083,
+      "sd_r": 0.042144536116969805,
+      "width90": 0.13986689002806524,
+      "covered": true,
+      "bias": 0.00047415163315586706,
+      "se_median_r": 0.0022781726839003263,
+      "bad_rhat": [],
+      "bad_ess": [],
+      "failure_signature": []
+    },
+    {
+      "data_seed": 4,
+      "sampler_seed": 3,
+      "pass": true,
+      "failing_checks": [],
+      "rhat_max": 1.0033875375286587,
+      "rhat_worst_param": "Q2",
+      "ess_min": 446.9936802528859,
+      "ess_worst_param": null,
+      "divergences": 0,
+      "r_median": 0.08763366023577449,
+      "sd_r": 0.04636343592061626,
+      "width90": 0.1526658719052229,
+      "covered": true,
+      "bias": 0.0036641945869195225,
+      "se_median_r": 0.002748400137150478,
+      "bad_rhat": [],
+      "bad_ess": [],
+      "failure_signature": []
+    },
+    {
+      "data_seed": 4,
+      "sampler_seed": 4,
+      "pass": false,
+      "failing_checks": [
+        "rhat_lt_1.01"
+      ],
+      "rhat_max": 1.012912444890777,
+      "rhat_worst_param": "Q2",
+      "ess_min": 333.03709287739474,
+      "ess_worst_param": null,
+      "divergences": 0,
+      "r_median": 0.08669962783678022,
+      "sd_r": 0.04450426479033403,
+      "width90": 0.1475926939071539,
+      "covered": true,
+      "bias": 0.002730162187925253,
+      "se_median_r": 0.003056401239399507,
+      "bad_rhat": [
+        "Q2",
+        "n1",
+        "n2",
+        "R2",
+        "R1",
+        "Q1"
+      ],
+      "bad_ess": [],
+      "failure_signature": [
+        "Q1",
+        "Q2",
+        "R1",
+        "R2",
+        "n1",
+        "n2"
+      ]
+    }
+  ],
+  "verdict": {
+    "tier": "sampler_sensitive",
+    "k": 3,
+    "n": 5,
+    "verdict": "门禁随采样器 seed 翻面 → 该谱的门禁失败不能当作后验几何证据",
+    "common_among_failing": [
+      "Q1",
+      "Q2",
+      "n1",
+      "n2"
+    ],
+    "n_failing": 2,
+    "signatures_of_failing": [
+      [
+        "Q1",
+        "Q2",
+        "n1",
+        "n2"
+      ],
+      [
+        "Q1",
+        "Q2",
+        "R1",
+        "R2",
+        "n1",
+        "n2"
+      ]
+    ]
+  },
+  "readings": {
+    "flag": "readings_stable",
+    "n": 5,
+    "span_median_r": 0.0031936500884782587,
+    "limit": 0.006112802478799014,
+    "ratio": 0.5224526883626244,
+    "median_r_min": 0.08444361728201083,
+    "median_r_max": 0.08763726737048909,
+    "sd_r_min": 0.042144536116969805,
+    "sd_r_max": 0.04636343592061626,
+    "note": "se 用 ESSmin 作 r 的有效样本量下界（se 偏大），因此判 readings_unstable 的门槛偏严"
+  },
+  "determinism": {
+    "n_matched": 1,
+    "tol": 1e-09,
+    "max_rel_diff": 0.0,
+    "ok": true,
+    "mismatches": [],
+    "pairs": [
+      {
+        "data_seed": 4,
+        "sampler_seed": 0,
+        "ok": true,
+        "diffs": {
+          "rhat_max": 0.0,
+          "ess_min": 0.0,
+          "r_median": 0.0,
+          "sd_r": 0.0,
+          "width90": 0.0
+        }
+      }
+    ]
+  },
+  "not_primary_endpoint": true,
+  "note": "5 次共用同一份谱 → 不是 §20.4 的独立噪声实现，不产生 M3.5 层级"
+}

@@ -56,6 +56,12 @@ evidence/nested_topology/*
 !evidence/nested_topology/m35_r.log
 !evidence/nested_topology/m35_r_w5000.json
 !evidence/nested_topology/m35_r_w5000.log
+!evidence/nested_topology/m35_sampler_sens.py
+!evidence/nested_topology/m35_sens_d4.json
+!evidence/nested_topology/m35_sens_d4.log
+!evidence/nested_topology/m35_sens_d4_verdict.json
+!evidence/nested_topology/m35_r_bias_diag.py
+!evidence/nested_topology/m35_r_bias_diag.json
 !evidence/nested_topology/g1_seeds_a.json
 !evidence/nested_topology/g1_seeds_a.log
 !evidence/nested_topology/g2_seeds_b.json
