@@ -221,7 +221,7 @@ bmdrt.py auto <谱> --wide --kk gate
 | **B1 基线** | Blank 6 条 + `AZ31-4Li_100`、`AZ31-4Li_150`（共 8 条） | **默认档**（`KW` = 3000/1000/3；`bmdrt.py auto` 不加 `--quick` 即此档） | 两端锚点：最简（无环）与最难（理论上限 30.5%） |
 | **B2 扩展** | 其余 16 条 AZ31 | `--quick`（800/400/2，状态记为 `exploratory`） | **仅探查与筛选**：决定哪些谱值得进正式复核 |
 | **B3a 设置敏感性** | Blank 主谱、`AZ31-4Li_100`、`AZ31-12Li_0`（3 条） | B1 档 + `--ta 0.99`（CLI 可传） | 采样设置变化时 K / 组分状态是否翻面 |
-| **B3b 采样器随机流** | 同上 3 条 | 同 B1，换 sampler seed | **需先加 seed 入口**（§6.1）：`bmdrt.py` 无 `--seed`，`KW` 里 `seed=0` 写死 |
+| **B3b 采样器随机流** | 同上 3 条 | 同 B1，换 sampler seed | seed 入口已实现（§6.1.1）；开跑前先记 `seeded`，据此定解释强度（§6.1.2） |
 
 > **B2 的 16 条不得参与正式验收**：`--quick` 的状态是 `exploratory`，`select_k` 在
 > quick 档会把 status 直接改成 `exploratory`，elpd 排名与采样分级都不构成模型选择结论。
@@ -245,9 +245,12 @@ bmdrt.py auto <谱> --wide --kk gate
 >    但会被丢掉。静默无效比报错更危险，必须显式注册；
 > 5. 结果 JSON 目前不记 seed，无法事后复核。
 >
-> **术语**：B3b 测的是「当前初值策略（`init_values` 播种）+ 当前采样设置下的**随机流**
-> 敏感性」。因为初值本身也参与，不能把它笼统叫"初始化敏感性"，也不能叫"纯采样器噪声"。
-> 报告里统一写「seed 敏感性（初值策略固定、仅随机流变化）」。
+> **术语**：B3b 测的是「当前初始化策略下的**随机流**敏感性」。
+> 注意 `PRNGKey(seed)` 这一条流**同时**被初始化和 NUTS 用：`init_values` 存在时初值由
+> `init_to_value` 固定，只有轨迹随机流变；`init_values=None` 时 NumPyro 的默认初始化
+> 也消耗这条流，初值可能随 seed 改变（§6.1.2）。因此报告统一写
+> 「seed 敏感性（初始化策略固定；`seeded=true` 时初值固定，`seeded=false` 时初值也随
+> seed 变）」——不要笼统叫"初始化敏感性"，也不要写"初值是确定的"。
 
 **明确不做**（v0.1 的 G3 硬线已删除，见 §4.1）：不因为采样可用率或组分状态不理想而调先验、
 调门控、调 `sigma_floor`、改 `component_review` 阈值。要改就另立项目（§9）。
@@ -555,7 +558,7 @@ bmdrt.py auto <谱> \
 ### 6.1 B3b：seed 入口（单独立项，已独立提交）
 
 **决定**：原则上批准，但**必须独立提交**，不混进 M6 文档提交，也不顺手扩范围。
-**状态**：已实现并单独提交（实施记录见 §6.1.1，测试 `test_seed.py` 7/7）。
+**状态**：已实现并单独提交（实施记录见 §6.1.1，测试 `test_seed.py` 8/8）。
 
 理由：B3a 的 `--ta 0.99` 测的是**采样设置**敏感性，不是随机数敏感性。若 M6 要排除
 "单次采样偶然"，B3b 有价值；但它要动生产代码，必须可回滚、可单独审查。
@@ -586,8 +589,24 @@ bmdrt.py auto <谱> \
 | 2 | `_fit_ks()` | `fit_one(..., seed=kw.get("seed", KW["seed"]))` | 显式传，不依赖内部覆盖 |
 | 3 | `bmdrt.py` | `DEFAULTS.fit.seed=None`；`parse_opts` 收 `--seed`；`_apply_cli` 拷进 fit；`process_one` 透传；`cmd_auto` 打印 | `--seed abc` 直接退出（不再静默） |
 | 4 | JSON | `save_out` 写 `seed` + `sampling{n_warmup,n_samples,num_chains,target_accept,max_tree_depth}`；KK 拒绝记录写 `sampling_performed=false` + `seed=null` | 见下 |
-| 5 | `test_seed.py` case5 | 同 seed 两次，逐点最大绝对差 **0.0** | 2 链 ×100 draws |
-| 6 | `test_seed.py` case6 | seed0 vs seed1，逐点最大绝对差 **2.365e-01** | grade 1→0、div 0→0，**只记录不作判据** |
+| 5 | `test_seed.py` case5 | 同 seed 两次：**10 个样本数组 / 2000 个样本值全部逐位相同**，最大绝对差 **0.0** | 2 链 ×100 draws；覆盖 ndim=[1,2]，其中二维数组 6 个 |
+| 6 | `test_seed.py` case6 | seed0 vs seed1：最大绝对差 **2.365e-01**，来自 `w(200, 1)`（**二维**数组） | grade 1→0、div 0→0，**只记录不作判据** |
+| 7 | `test_seed.py` case8 | 运行时捕获 `B.fit` 实参：默认→0、显式 `--seed 7`→7 均到达采样器 | 补文本契约的不足（见下） |
+| 8 | `test_seed.py` case7 | KK 拒绝：`fit_performed=false` + `sampling_performed=false` + `seed=null` | 未采样不记成"某 seed 跑过" |
+
+**测试覆盖的两处加严（第四轮审查）**：
+
+1. **`_max_draws_diff` 原先只比 1-D 数组**。K=1 时 `w` 这类参数样本是 `(n_draws, 1)`
+   的二维数组，会被静默跳过——"逐位相同"其实只覆盖了部分数组。现改为比较**全部**
+   共有样本数组：键集合必须一致、shape 必须一致、完全相同（NaN 同位）才跳过，
+   含非有限值又不完全同位则返回 `inf`（避免 `max(0.0, nan) == 0.0` 的假零）。
+   case5 显式断言 `n_arrays == len(s)`，case6 回报最大差来自哪个键与 shape。
+   **这条修改改变了证据强度**：旧版覆盖 4 个一维数组，新版覆盖 10 个（含 6 个二维），
+   且不同 seed 的最大差恰好落在旧版**根本没比较**的二维数组 `w` 上。
+2. **文本契约不能代替实际调用**。`case3` 用源码字符串断言五处接线，只能防"字符串被删"，
+   不能证明运行时实参对。新增 `case8`：包装 `bm_core.fit`，捕获真正传给采样的
+   `seed` 与 `init_values`，跑两次 `run()`（默认 / `--seed 7`）验证 0 与 7 都到达。
+   该用例同时回报 `init_values` 是否存在——见下面的初始化分岔。
 
 端到端核对（`examples/example_caseE.csv`，`--krange 1,1 --quick --kk off`）：
 
@@ -599,15 +618,41 @@ bmdrt.py auto <谱> \
 → 同一谱、同一配置下换 seed，后验读数确实会动（这条极短档只作**接线证据**，
 不作"该谱对 seed 敏感"的结论——那是 B3b 正式实验要回答的，样本量远不止 100 draws）。
 
+#### 6.1.2 seed 不只换轨迹随机流：`init_values` 分岔
+
+`bm_core.fit()` 只做一件事：`mc.run(jax.random.PRNGKey(seed), ...)`。**这一条流同时被
+初始化和 NUTS 用**：
+
+| `init_values` | 初始化方式 | 换 seed 的实际影响 |
+|---|---|---|
+| 存在（DRT 播种成功，`seeded=true`） | 确定性 `init_to_value` | 初值固定，只有轨迹随机流变 |
+| `None`（`seeded=false`） | NumPyro 默认初始化策略 | **初值也可能随 seed 改变**，不纯是轨迹随机流 |
+
+`bm_real._fit_ks()` 里是 `init = init_values(pk, pres, K, ad_init=ad_init) if pk else None`，
+`pk` 来自 DRT 预判；`fit_one()` 用 `seeded=init is not None` 记录。所以：
+
+- **"初始化策略不变"始终成立**（永远是 `init_to_value` 或默认策略，不随 seed 切换）；
+- **"初值不变"只在 `seeded=true` 时成立**。`bmdrt.py` 帮助文本原来写的"不换初值"
+  是绝对表述，已改为条件化（第四轮审查提出）。
+
+**B3b 正式实验的前置检查（写死）**：开跑前先对选定谱记录 `seeded` 状态。
+
+| 前置检查结果 | 允许的解释 |
+|---|---|
+| 三条谱 `seeded=true` | 可称"初始值固定时的采样器随机流敏感性" |
+| 存在 `seeded=false` | 只能称"当前初始化策略下的随机流敏感性"，**不得声称初值固定** |
+| `<b>禁止</b>` | 不改 `init_values` 去凑 `seeded=true`；那会同时改变两个因素 |
+
 **B3b 正式实验的预注册约定**（审查要求，跑之前定死）：
 
 1. 固定真实谱及其预处理结果、固定 K 范围 / warmup / samples / `target_accept` /
-   `max_tree_depth`，**只改 sampler seed**；
+   `max_tree_depth`，**只改 sampler seed**；每条谱记录 `seeded`（初值是否被钉住）；
 2. 逐 seed 记录 R̂、bulk/tail ESS、divergences、树深触顶、`grade`、后验位置与宽度；
 3. **不把不同 seed 的样本合并成一个后验**（合并后 ESS 与 R̂ 都不再有意义）；
 4. **不用某一次 seed 通过就宣称该谱稳定**——B3b 是随机性敏感性诊断，不是通过率竞赛；
-5. 结论表述限定为"该谱在当前初值策略下的采样器随机流敏感性"，
-   不写成"初始化敏感性"（初值是确定的，变的是随机流）；
+5. 结论表述限定为"该谱在**当前初始化策略下**的采样器随机流敏感性"；
+   `seeded=false` 的谱要额外注明"初值也随 seed 变化"，不写成纯初始化敏感性，
+   也不写成"初值是确定的"；
 6. **不改 G6a**：G6a 是 B3a 的逐谱设置敏感性记录，B3b 的结果单列一表，不并进 G6a。
 
 ### 6.2 修订后的执行顺序（v0.2）
@@ -616,7 +661,7 @@ bmdrt.py auto <谱> \
 |---|---|---|---|
 | 1 | 修订 M6 方案（本文 v0.2） | 否 | **已冻结**（第三轮文字修订后） |
 | 2 | E1 数据指纹与纳入清单 | 否 | **已完成**（§12；先于冻结执行，不依赖判据） |
-| 3 | B3b seed 接口 + 回归测试 | **是，单独提交** | **已提交**（`test_seed.py` 7/7；旧路径逐位不变） |
+| 3 | B3b seed 接口 + 回归测试 | **是，单独提交** | **已提交**（`test_seed.py` 8/8；旧路径逐位不变）；正式 B3b 未开跑 |
 | 4 | E2：24 条真实谱基线 + B3a | 否 | 下一项；依赖 E1（已达），B2 仅筛选 |
 | 5 | E3+E4：117 条全量条件式吸附判定 | 否 | 用 §6 的独立证据脚本；先跑 2 条谱自检 |
 | 6 | E5：RL+扩散重叠合成边界 | 只加测试用例 | 与 E2 可并行 |
@@ -717,6 +762,10 @@ bmdrt.py auto <谱> \
 | 2026-11-08 | E1 字段（第三轮） | `lf_interior_min` → `lf_neg_im_interior_min`；实现注释与日志明写 Nyquist 纵轴为 `-Zim`，该字段检的是 `-Zim` 内部极小（等价 `Zim` 内部极大） | 跑后（E1 已跑），**命名修订** | 审查指出字段名/注释可被误读成"`Zim` 的内部极小"；实现本身无误（`argmin(-Z.imag)`）。更名后重跑 171 行逐格相同，计数不变，故不构成重算 |
 | 2026-11-08 | 冻结（第三轮） | 状态由"未冻结"改为**已冻结 v0.2**；实验记录缺失不阻塞冻结（只阻塞第二层 `pending`） | — | 两处核心统计定义已有合法处理方式（真值不定→报选择率；独立性不定→不算上界），第一层全量回归不受影响；不为凑数字补假设 |
 | 2026-11-08 | §6.1.1（新增） | 记录 B3b 实施：`run(seed=None)` / `_resolve_seed()` / CLI `--seed` / JSON `seed`+`sampling` / `test_seed.py` 7 项；**形参默认值由 §6.1 表里的 `0` 改为 `None`** | 跑前（E2 未跑） | `0` 作默认无法区分"没传"与"显式要 0"，而这正是原 `kw["seed"] = seed` 静默覆盖上层参数的成因；`None` 回落链保证默认行为仍是 0。此条只涉及接口语义，不改任何判据；G6a 不受影响 |
+| 2026-11-08 | 帮助文本（第四轮） | `--seed` 说明由"**不换**初值与模型"改为条件化：初始化**策略**不变，但 `seeded=false` 时初值可能随 seed 改变（§6.1.2） | 跑前（E2 未跑） | 审查：`bm_core.fit()` 把同一条 `PRNGKey(seed)` 同时交给初始化与 NUTS；`init_values=None` 时 NumPyro 默认初始化也消耗这条流。实现无误，是表述把未证前提写成了事实 |
+| 2026-11-08 | §6.1.2（新增） | 新增"seed 不只换轨迹随机流：`init_values` 分岔"——`seeded=true/false` 两种解释边界；B3b 开跑前先记 3 条谱的 `seeded`，禁止改 `init_values` 凑 `true` | 跑前（E2 未跑） | 同上；B3b 的解释强度依赖这条前置状态，先记后跑，避免跑完再解释 |
+| 2026-11-08 | 预注册第 5 条（第四轮） | 原文"不写成初始化敏感性（**初值是确定的**，变的是随机流）" → 改为"当前初始化策略下的随机流敏感性"，`seeded=false` 需注明初值也随 seed 变 | 跑前（E2 未跑） | 绝对表述会在 `seeded=false` 的谱上直接失真；条件化后两种情形都可解释 |
+| 2026-11-08 | `test_seed.py`（第四轮） | `_max_draws_diff` 由"只比 1-D 数组"改为比**全部**共用样本数组（键集合/shape/NaN/inf 保护），case5 断言覆盖数 == `len(s)`，case6 回报最大差来源；新增 case8 运行时捕获 `B.fit` 实参 | 跑前（E2 未跑） | 审查 3.1/3.2：旧版覆盖 4 个一维数组，K=1 时 6 个 `(n_draws,1)` 参数被静默跳过，"逐位相同"言过其实；不同 seed 的最大差 2.365e-01 恰好落在旧版没比的 `w(200,1)` 上。文本契约也只能防字符串被删，不能证明运行时实参 |
 
 ---
 
@@ -730,6 +779,7 @@ PY=D:/autoeis_env/Scripts/python.exe
 $PY bmdrt.py check                 # 18 项
 $PY test_ad_gate.py                # 11/11
 $PY test_drt_signed.py             # 6/6
+$PY test_seed.py                   # 8/8（seed 链路 + 同/异 seed 采样）
 
 # ① 先转 csv（.z 不能直接喂给 auto；重跑一次并冻结指纹）
 $PY evidence/ad_m6/sampling_check.py prepare
@@ -743,7 +793,7 @@ $PY bmdrt.py auto out/_m6_samples/z_csv/AZ31-4Li_100.csv \
 $PY evidence/m6/run_117.py --selfcheck 2
 $PY evidence/m6/run_117.py --jobs 3 --out out/m6/e34
 
-# ④ B3b（须先单独提交 seed 入口并获批）
+# ④ B3b（seed 入口已提交；开跑前先记 3 条谱的 seeded，见 §6.1.2）
 # $PY bmdrt.py auto <谱> --wide --kk gate --seed 1 --out out/m6/b3b
 ```
 
