@@ -102,6 +102,7 @@ evidence/ws_crit/*
 !evidence/ws_crit/*.json
 !evidence/ws_crit/*.json.stale
 !evidence/ws_crit/*.log
+!evidence/ws_crit/*.txt
 !evidence/ws_crit/patches/
 evidence/ws_crit/patches/*.py
 evidence/ws_crit/patches/*.pre_p1

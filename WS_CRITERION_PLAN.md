@@ -40,6 +40,8 @@
 | Bumberger & Fleig 2024, *PCCP* 26:15068 | Warburg 是传输线的特例：**一个载流子电阻可忽略 + 端阻抗为短路/开路**；两种边界给出 `Ws`（tanh）与 `Wo`（coth）；文献明确指出"**低频 Warburg 特征没被数据完整包含时，拟合误差超过 100%**" | 支持「端点必须落在窗内」；`Wshort` 单列的理由 |
 | Boukamp 2017, *Electrochim. Acta* 252:154 | 理想 FLW 的 DFRT 是**无限个 δ 函数**：`tanh(z)/z = Σ 2/(z²+π²(k−½)²)`、`coth(z)/z = 1/z² + Σ 2/(z²+n²π²)` | N2 已实测：**理论对，但做不成判据**（§9.3） |
 | Boškoski 2024, *J. Power Sources* 622:235359 | "极重要性 = DRT 峰面积 = 相对极化贡献"；RQ 极的积分有闭式 | 模型侧 `rpc_share` |
+| Montella 2020, *J. Electroanal. Chem.* 879:114785 | 严格证明「**无限级** Voigt（R∥C 串联）= 有限长扩散（**tanh**，即本项目 `Wshort`）的精确表示」，部分分式 `tanh(z)/z = 8Σ 1/[(2k−1)²π²+4z²]`（式 7）；`τ₁` 需 n≈6 才收敛、`τ₂` 在 n=6 仍有 ~5% 偏差（无噪声数据）。**`coth`（本项目 `Wo`）比 `tanh` 多一个 `1/z²` 串联电容项，纯 R∥C 结构上补不上** | WP2 §3.6 定量：K=2 的 R∥C 表示单位幅值 FLW 的最优误差 tanh **71%** / coth **84%**，K=6 才降到 2.3%/3.8%；也解释 `k2_Wo` 的 `R_W` 塌到 0.061 Ω —— 0.061×0.84≈0.05 Ω < σ=0.098，整条 FLW 藏进噪声 |
+| Zhang 2015, *J. Power Sources* | DRT 重建（正则化反演）方法 | **未用**：项目 DRT 走 `drt.py` + Boškoski 2024 极重要性口径；仅当改反演算法时参考 |
 | Zhang 2023, *J. Electrochem. Soc.* 170:086502（AutoEIS） | 贝叶斯模型选择 + 结构模板库 | 项目已用，本文只作对照口径 |
 | Lazanas & Prodromidis 2023, *ACS Meas. Sci. Au* 3:162 | EIS 教程（Randles、Warburg 三种边界、45° 的常见误读） | 背景，无新判据 |
 
