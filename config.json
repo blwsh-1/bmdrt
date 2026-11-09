@@ -54,6 +54,11 @@
     "diff_resolution_tol": 0.02
   },
 
+  "evidence": {
+    "_说明": "证据卡（bm_evidence.py）的开关。multi_model 默认 false：测试阶段不输出多模型并列表（结果太多反而难读）；做成软件、需要人工从多个模型里挑时改成 true。命令行 --multi-model / --no-multi-model 可临时覆盖。",
+    "multi_model": false
+  },
+
   "batch": {
     "_说明": "move_done=true 会把跑完的输入移到 archive/；skip_done=true 跳过已出结果的文件",
     "move_done": true,

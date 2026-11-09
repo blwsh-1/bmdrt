@@ -166,7 +166,7 @@ L3 的关键改动：**从「裁决器」变成「记账器」**。它输出的�
 
 即：**三个真实路径的判决、`elpd`、分量、残差全部逐位不变**，只有计时字段和 8 个新键。
 
-**这一层还没做到的**：`not` 现在是**每条结论一个**（选择器级），不是 §4.1 那种**每条证据一个**；证据卡（多模型并列、`next_evidence_needed`）仍需单独实现。拆分只是把地基弄平。
+**`not` 的两级分工（2026-11-09 定）**：生产 JSON 里的 `not` 仍是**每条结论一个**（选择器级，跟着 `grade` 走）；**每条证据一个 `not`** 由 §4.2 的证据卡生成器（`bm_evidence.py`）在输出时合成，**不写回**生产 JSON——否则每份结果要再翻一倍字段，且会诱导下游把逐条 `not` 当独立判据读。
 
 ---
 
@@ -186,30 +186,78 @@ L3 的关键改动：**从「裁决器」变成「记账器」**。它输出的�
 | 跨模型预测重叠 | 需多模型联合 | **缺** | 两两 `max|ΔZ|/σ`、包络内/外 | 「重叠 ⇒ 机制等价」 |
 | **资格档** | `grade ∈ {A,B,C}` | **缺** | 见 §2 | 综合评分、置信度总分 |
 
-### 4.2 接口形状（草案，未实现）
+### 4.2 接口形状（v1，已实现 2026-11-09）
+
+生成器：`bm_evidence.py`（只读；不重算、不排序、不打分、不单选）。
 
 ```json
 {
-  "claim": "本谱低频尾需要 ω^(-1/2) 项",
+  "claim_id": "diffusion",
+  "claim": "本谱低频尾需要 ω^(-1/2) 扩散项（Ws）",
   "grade": "B",
-  "grade_reason": "配对 LOO Δ=0.41±1.36 未过线 2.04；Ws 与 K=2 的 max|ΔZ| = 0.8σ",
+  "grade_reason": "由 guards: diff_amp_unidentifiable 判 B：数据无法判断（…）",
+  "grade_source": "field",
+  "not": "推不出「某机制不存在」：本窗+本噪声下只能给「不可区分」…",
   "evidence": [
-    {"item": "A_W", "value": 0.78, "ci90": [0.52, 1.09], "cv": 0.24,
-     "reads_as": "幅值被压缩但未定零", "not": "扩散不存在"},
-    {"item": "slope_im", "value": -0.110, "ci95": [-0.134, -0.086], "usable": false,
-     "reads_as": "不是主导型 −45° 支路", "not": "没有 Ws"},
-    {"item": "f_D", "value": 0.071, "in_window": false, "decades_below": 0.15,
-     "reads_as": "转折未进窗", "not": "无低频过程"}
+    {"item": "aw_amp", "state": "read",
+     "value": {"A_W": 0.78, "sd": 0.19, "cv": 0.24, "identifiable": false},
+     "source": "auto_mechanism.share（bm_ws.ws_share_low）",
+     "reads_as": "A_W 后验中位数、标准误与相对不确定度 cv",
+     "not": "「A_W > 0」不等于扩散存在；「A_W 小 / cv 大」也不等于不存在…",
+     "need": ["cv(A_W)=0.24 > 0.15：幅值没被定住，重跑不会变，需要更宽窗或更低噪声"]},
+    {"item": "lowf_slope", "state": "unusable",
+     "value": {"slope_im": -0.11, "r2": 0.9, "term": "to_cap"},
+     "source": "auto_mechanism.gate.ws_diag（bm_ws.slope_im）",
+     "reads_as": "最低频段 log(−Im)–log f 的斜率、线性度与 45° 段长",
+     "not": "斜率 ≠ −0.5 不能推出「没有 Ws」：弧尾共存时真 Ws 的斜率会被拖到 −0.41…−0.49",
+     "note": "斜率不可用（-Im 在低频端 ≤0 或线性度不足）",
+     "need": ["把 f_min 下移 1 decade，让 45° 段变长"]},
+    {"item": "freq_window", "state": "read",
+     "value": {"level": "indistinguishable", "f_D": 0.071, "f_min": 0.1, "below_fD": 0.1466},
+     "source": "diffusion_resolution（bm_diff）",
+     "reads_as": "扩散特征频率 f_D 是否落在本频窗内（差几个 decade）",
+     "not": "f_D 在窗外不能推出「没有该过程」；只能说「本窗无权评价」（C 档）",
+     "need": ["f_D 在窗下：当前窗口看不到转折，需要把 f_min 下移"]}
   ],
-  "next_evidence_needed": ["更宽频窗至 <0.03 Hz", "独立重复实验"]
+  "next_evidence_needed": ["cv(A_W)=0.24 > 0.15：…", "并列保留候选模型，不要单选…"],
+  "notes": []
 }
 ```
 
-三条设计约束：
+字段约定（生成器实际输出）：
 
-1. **每条证据自带 `not` 字段**——写死「这条不能推出什么」。这是防越界最有效的一招，比在报告里写免责声明可靠。
-2. **`grade` 是整张卡唯一的判定**，且只允许 A/B/C 三个值，**不允许分数**。不给分数就没有「0.72 分所以更可信」这种伪定量。
-3. **`next_evidence_needed` 是必填**——说不清「还缺什么」的结论，说明证据链没想清楚。
+| 字段 | 取值 | 说明 |
+|---|---|---|
+| `claim_id` | `diffusion` / `adsorption` / `component_<k>` / `k_selection` | 一张卡一个可检验命题 |
+| `state` | `read` / `unusable` / `missing` | 拿到可读值 / 有值但读不了（如 `im_usable=false`）/ 压根没采 |
+| `grade` | `A` / `B` / `C` / `null` | 唯一判定，**不是分数** |
+| `grade_source` | `field` / `recomputed` / `derived` | 选择器已写 / 按 `bm_grade` 同一张表补 / 按状态表派生 |
+| `not` | 字符串 | 卡级与**每条证据**各一句，逐条不同 |
+| `need` | 字符串列表 | 该条证据缺失/不可用时还差什么（卡级 `next_evidence_needed` 是并集） |
+
+四条设计约束：
+
+1. **每条证据自带 `not` 字段**——写死「这条不能推出什么」。这是防越界最有效的一招，比在报告里写免责声明可靠。`evidence_card_check.py` 会查「同一张卡里 `not` 的去重数 = 证据条数」，防止退回结论级。
+2. **`grade` 是整张卡唯一的判定**，且只允许 A/B/C，**不允许分数**。不给分数就没有「0.72 分所以更可信」这种伪定量。
+3. **`next_evidence_needed` 必填且非空**——逐条 `need` ∪ 档位最低要求（A 重跑 / B 并列 / C 独立实验），保证说不出「还缺什么」的卡不会出现。
+4. **只读**：入口 `copy.deepcopy`，`fingerprint()` 对拍；生成器不改 `status` / `choice` / `delta` / `grade`。
+
+### 4.3 多模型并列（开关，默认关）
+
+`config.json` 的 `evidence.multi_model` 默认为 `false`——测试阶段不输出成堆结果；做成软件或需要人工从多个模型里挑时改 `true`，命令行 `--multi-model` 可临时打开。
+
+打开后多一张 `multi_model` 表：每个 arm 一行（`Δ±dse`、资格档、`A_W`、塌陷/出窗标记），按输入顺序，**不排序、不打分、不单选、不做跨臂配对检验**（那需要 WP2 的逐点样本）。单臂没有 `auto_mechanism` 时 Δ 记 `null`，不补算。
+
+标记只描述单臂状态，不是判据：`幅值落到噪声（p_diff_small>0.5）`、`幅值未定住（cv>0.15）`、`f_D 在窗下`、`HN 已呈 Warburg 指纹`、`峰位出窗`。跨臂差异另给一行 `amp_spread`（范围 + 倍数），并写明「哪个 arm 塌到小值由人看，程序不判哪个对」。
+
+### 4.4 回归
+
+`evidence/ws_crit/evidence_card_check.py`：**2889/2889 通过**（30 个选择器级合成例 + 3 个真实结果）。
+
+覆盖：只读指纹逐位不变；每条证据 `not` 非空且互不重复；`next_evidence_needed` 非空；`grade ∈ {A,B,C,null}`；全文档无 `score` / `confidence` / `probability` / `weight` / `rank` / `best` / `selected` / `recommend`；`multi_model` 默认关闭、打开后保序；严格 JSON（`allow_nan=False`）。
+
+真实数据抽查：WP2 的 blank 四臂（k1_none / k1_Ws / k2_none / k2_Ws）跑 `--multi-model`，`A_W` 范围 **0.778 – 4.184（5.4×）**，`k2_Ws` 标 `幅值落到噪声（P=0.53）`、`k2_none` 标 `峰位出窗：component_2`——与 WP2 §3 的「谁塌陷」逐项一致，且表里没有任何「推荐哪个 arm」的字段。
+
 
 ---
 
@@ -229,10 +277,10 @@ L3 的关键改动：**从「裁决器」变成「记账器」**。它输出的�
 
 1. **M6 真实数据基线**——确认现有算法在真实数据上的行为（不改判据）。
 2. **Ws/Wo/K+1 比较与不可辨识性**——已完成（WP2），待 v2 复核后冻结。
-3. **统一证据卡输出接口**——按 §4 落地成只读生成器；**不建评分**。
+3. **统一证据卡输出接口**——**已完成（2026-11-09，`bm_evidence.py`）**：按 §4 只读消费 `grade` / `guard_classes` / `component_grade` / `auto_mechanism`，逐条证据带 `not`，卡级 `next_evidence_needed` 必填；**不建评分**。多模型并列放在 `evidence.multi_model` 开关后面（默认关）。
 4. **积累独立实验数据后**，再讨论是否自动化物理判定。
 
-第 3 步的前置条件——拆开 §3.2 的三处混用——**已完成**（§3.4：`grade` / `guard_classes` / `grade_reason` / `not` / `component_grade`，生产代码只加字段、判决逐位不变）。剩下的活是**证据卡生成器**（只读消费这些字段，输出 §4 的形状），以及多模型并列输出（L2 的 `Δ±dse` + 塌陷/出窗标记，程序不单选）。
+第 3 步的前置条件——拆开 §3.2 的三处混用——**已完成**（§3.4：`grade` / `guard_classes` / `grade_reason` / `not` / `component_grade`，生产代码只加字段、判决逐位不变）。证据卡生成器也已落地（§4.2，`bm_evidence.py` + `evidence_card_check.py` 2889/2889）。多模型并列按项目方要求**先做开关、默认关**（§4.3），等做成软件时再打开——测试阶段输出成堆 arm 反而难读。
 
 ---
 
