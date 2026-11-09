@@ -77,13 +77,22 @@ def main():
     n_bad = sum(1 for x in l2 if (x["verdict"] == "candidate") != x["enter"]
                 and x["gate"] != "inductive_tail")
 
-    # ---- 3. L3：share 只进 note，不改 choice ----
+    # ---- 3. L3：cv 闸门（share 只报表） ----
+    # 用一组"强证据"的假逐点 LOO（Δ=31、dse=0、门槛 2），确保 LOO 一定支持切换；
+    # 这样 choice 落在 guards 上，就能单独看 cv 闸门做了什么。
+    fake_none = {"pointwise_elpd": np.zeros(31)}
+    fake_ws = {"pointwise_elpd": np.ones(31) * 1.0,
+               "diffusion_resolution": {}, "elpd": 100.0}
     l3 = []
     for rel, label in [
+        ("out/_l3/fit/ws_a2_f0.01/ws_a2_f0.01/real_ws_a2_f0.01_samples.npz",
+         "真 Ws A_W=2，0.01 Hz 窗"),
+        ("out/_l3/fit/ws_a0.5_f0.1/ws_a0.5_f0.1/real_ws_a0.5_f0.1_samples.npz",
+         "真 Ws A_W=0.5，0.1 Hz 窗（弱）"),
+        ("out/_l3/fit/none_f0.01/none_f0.01/real_none_f0.01_samples.npz",
+         "无扩散数据，硬加 Ws"),
         ("out/_caseE_diff/k1_Ws/example_caseE/real_example_caseE_samples.npz",
          "caseE 真 Ws，0.01 Hz 窗"),
-        ("out/example_caseE_warburg/real_example_caseE_warburg_samples.npz",
-         "caseE 真 Ws，0.1 Hz 窗"),
         ("evidence/b2x/k1ws/example_caseF_wo/real_example_caseF_wo_samples.npz",
          "错元件：Wo 数据用 Ws 拟合"),
     ]:
@@ -93,15 +102,16 @@ def main():
             continue
         s = dict(np.load(p, allow_pickle=True))
         share = WS.ws_share_low(s)
-        # ws_res 只有可分辨性、没有可配对 LOO → 必然 comparison_incomplete，
-        # 用来验证 share 是否被写进 note、以及 choice 是否仍为 none。
-        sel = R.select_mechanism({}, {"diffusion_resolution": {}, "elpd": float("nan")},
-                                 {"status": "candidate"}, share=share)
+        sel = R.select_mechanism(fake_none, dict(fake_ws), {"status": "candidate"},
+                                 share=share)
         l3.append(dict(label=label, f_min=share["f_min"], A_W=share["A_W"],
+                       cv=share["cv_aw"], ident=share["identifiable"],
+                       snr=share["snr_med"],
                        share_med=share["share_med"],
-                       share_lo=share["share_lo"], share_hi=share["share_hi"],
                        choice=sel["choice"], status=sel["status"],
-                       note_has_share=any("简约诊断" in t for t in sel["note"])))
+                       guards=sel["guards"],
+                       note_cv=any("cv=" in t for t in sel["note"]),
+                       note_share=any("份额诊断" in t for t in sel["note"])))
 
     out = dict(gate_rows=rows, l2=dict(n=len(l2), n_enter=n_cand, n_mismatch=n_bad,
                                       rows=l2),
@@ -120,14 +130,14 @@ def main():
               f"{str(r['enter']):5s} {str(r['term']):12s} {str(r['family']):18s} "
               f"{str(r['verdict']):11s}")
     print(f"\nL2：{len(l2)} 条谱，enter={n_cand}，verdict 与 enter 不一致 {n_bad} 条")
-    print("\nL3：share 只进 note（choice 一律 none）")
+    print("\nL3：cv 闸门（假 LOO 给足 Δ，单看护栏）")
     for r in l3:
         if "error" in r:
             print(f"  {r['label']}: {r['error']}")
             continue
-        print(f"  {r['label']:32s} f_min={r['f_min']:<6.3g} A_W={r['A_W']:.2f} "
-              f"share={r['share_med']:.3f} [{r['share_lo']:.3f},{r['share_hi']:.3f}] "
-              f"choice={r['choice']} note={r['note_has_share']}")
+        print(f"  {r['label']:34s} A_W={r['A_W']:6.3f} cv={r['cv']:5.3f} "
+              f"snr={r['snr']:6.1f} share={r['share_med']:.3f} → "
+              f"{r['status']:15s} choice={r['choice']}")
     print(f"\n写入 {dst}")
     return 0 if n_bad == 0 else 1
 

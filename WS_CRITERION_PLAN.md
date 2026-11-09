@@ -270,11 +270,11 @@ Huang 2018 的第 4 条假设（纯扩散、中性物种）在电解质里本来
 | L1 事前形状 `bm_kk.diffusion_tail_candidate` | **`log(-Im)`** 幅度判据 + Nyquist 相位判据（2026-11-09 起；旧为 `log\|Z\|`） | 补丁 `patches/n1_l1_amplitude.patch` **已应用**（§9.1、§10.4）；**注意它有下游行为影响**：`kk_check` 用 `tail["f_cut"]` 决定要不要跑 `add_cap` 复验 —— `caseE`/`caseE_warburg` 的 `f_cut` 由 None 变为 0.4299/0.8577，`caseF_wo`/`caseG_wo_only` 反过来变为 None |
 | L1' 结构指纹 `bm_diff.looks_like_warburg` | 后验分量级（`φζ`、峰位、简并） | **已接入**（2026-11-09）：`bm_ws.ws_diagnostics` 入生产，`diffusion_gate` 输出 `ws_diag`；`to_inductive` 登记为感抗尾（只否证，不改门控结论） |
 | L2 触发 `bm_real._none_needs_ws` | `acf>0.8` 或 `rms/σ>1.5` | **已接入**（2026-11-09）：`gate.status=="candidate"` 与残差条件取**或**；`inductive_tail` 时短路（`skipped_inductive`，`--auto-mechanism-full` 除外） |
-| L3 决策 `select_mechanism` | 配对 LOO | **只挂诊断**（2026-11-09）：`share` 写进 `note`，**不参与 choice**。`ws_share_low` 随 `f_min` 漂移（同一真值 0.161 @0.01 Hz vs 0.057 @0.1 Hz），5% 闸门未标定，见 `L123_REPORT.md` §4 |
+| L3 决策 `select_mechanism` | 配对 LOO | **已接闸门**（2026-11-09，P7）：guard `ws_amp_unidentified` 用 `cv(A_W)=sd/median ≤ 0.15`，**不用份额**（份额会误杀真 Ws：0.048 @A_W=0.5）。`cv` 只挡「定不住」，不挡「选错」，见 `L3_CALIB.md` |
 | L4 前提 `diffusion_resolution` | `f_D` 是否入窗 | 与本文 `term` 同一件事，但 L4 需要先拟合；本文可先给 |
 
 **接入顺序**：L1 幅度判据（P1，已应用）→ L1'/L2（2026-11-09 接入，见 §10.6）→
-L3 闸门（**未接**：阈值未标定，只挂诊断）。
+L3 闸门（2026-11-09 接入，`cv(A_W) ≤ 0.15`，见 §10.7）。
 
 ---
 
@@ -312,6 +312,7 @@ $PY evidence/ws_crit/n1_fitcasee.py    # caseE 的双模型对拍（§3.2，只�
 | P4 | `ws_buried` 的可检测下限写进 `WS_DECISION_PROJECT` 的「够不够判」一节 | **已执行（2026-11-09）**：写入 `WS_DECISION_PROJECT.md` **§3.1**（`SNR_im=14.9` 为 50% 检测点、天花板 0.876、真实谱只能用代理指标做事后诊断）；纯文档，见 §10.5 |
 | P5 | 给 18 条真实谱一个有**正面**模型解释（`R∥L` 吸附支路） | 未启动；`ADSORPTION_PROJECT` 侧的前置是「用 `--auto-adsorption` 跑一条正式档」，E3/E4 缩减口径下未批准 |
 | P6 | L1'/L2/L3 接入生产：`bm_ws` 端点走向、`is_candidate` 触发、感抗尾短路、份额只报不判 | **已执行（2026-11-09）**：迁移对拍 0 差异；L2 在 31 条谱上不一致 0；`caseE` Δelpd 逐位不变（131.93）、`AZ31-4Li_100` 拟合次数 2→1；回归全绿；详见 `evidence/ws_crit/L123_REPORT.md` 与 §10.6 |
+| P7 | L3 闸门标定：份额换成可辨识性口径，接进 `select_mechanism` | **已执行（2026-11-09）**：32 条合成谱 × 4 窗，改用 `cv(A_W) ≤ 0.15`；`none` 0.540–0.729 全挡、真 Ws（snr≥5）0.011–0.083 全放行；`caseE` Δ=131.93 逐位不变；详见 `evidence/ws_crit/L3_CALIB.md` 与 §10.7 |
 
 **不做**（已证不可行）：Boukamp 梳齿作为判据（§9.3）；用 `R_top/R_total`
 区分 `Wshort` 与单一 ZARC（§9.3）；用 DRT 处理 `Wo`（串联电容不在表示能力内）。
@@ -425,7 +426,7 @@ $PY evidence/ws_crit/n1_fitcasee.py    # caseE 的双模型对拍（§3.2，只�
 - 用法：`SNR_im < 15` 的谱应当预期 `undecidable`，而不是判"没有扩散"。
   这正是 §5.3（"没看见 ≠ 没有"）的定量版本。
 
-## 10. P1–P6 执行（2026-11-09，E2 跑完后自动接手）
+## 10. P1–P7 执行（2026-11-09，E2 跑完后自动接手）
 
 ### 10.1 P2：幅度带宽**不按**端点走向分设 —— 结论是"不改"
 
@@ -607,3 +608,40 @@ L3 不接闸门的理由（实测份额）：
 
 **默认路径逐位不变**：`--auto-mechanism` 默认关，`diffusion_gate` 只在该分支被调用；
 `select_k` / `select_mechanism` 的决策规则未改。
+
+### 10.7 P7：L3 闸门标定与接入（2026-11-09）
+
+**结论**：闸门量从「份额」换成「后验相对不确定度」`cv(A_W) = sd(A_W)/median(A_W)`，
+阈值 `0.15`，作为 `select_mechanism` 的 guard `ws_amp_unidentified`。
+
+标定：32 条合成谱（`R∞=10`、`ZARC(30, 300 Hz, .85)`、1% 相对噪声）× 4 个窗口下沿
+`{0.01, 0.03, 0.1, 0.3} Hz`，`--diffusion Ws --krange 1,1 --quick`。
+
+| 类 | `cv` 0.01→0.3 Hz | 判断 |
+|---|---|---|
+| `none`（无扩散硬加） | **0.540 → 0.729** | 必须拒 |
+| 真 Ws `A_W=4` | 0.011 → 0.069 | 切 |
+| 真 Ws `A_W=0.5` | 0.080 → 0.449 | 弱信号拒（保守） |
+| `hn`（K+1 宽弧） | 0.021 → 0.147 | 与真 Ws 同区间（已知不可分） |
+| `wo`（窗内错元件） | 0.137 → 0.012 | **cv 不能判**，归 LOO |
+
+- `cv ≈ 0.40 / SNR_ws`（32/32，0.39–0.41）→ 两者同源；选 `cv` 因为它是后验量、
+  不依赖噪声模型口径。
+- 份额被否证：真 `Ws`、`A_W=0.5`、0.01 Hz 窗的份额只有 **0.048**，5% 阈值直接误杀。
+- 阈值 0.15 对应 `A_W` 相对不确定度 15%（`SNR_ws≈2.7`）；`none` 最近值 0.540，
+  有 3.6× 空档。
+
+验证：
+
+| 项 | 结果 |
+|---|---|
+| 假 LOO（Δ=31≥2） | 真 Ws A=2 → switched；弱 Ws cv=0.290 → guard；`none` cv=0.540 → guard；`caseF_wo` cv=0.674 → guard |
+| `caseE` 端到端 | switched，Δ=131.93 ≥ 25.83，与接入前**逐位相同** |
+| `ws_a2_f0.01` | switched，Δ=160.54 |
+| `ws_a0.5_f0.3` | guard_degraded（`A_W=0.562±0.25`，真值 0.5） |
+| `none_f0.01` | guard_degraded（两道护栏同时触发） |
+| 回归 | `nofit` 18/18、`fast` 18/0/7、`check` 18/18、单测 4/4+10/10+6/6 |
+
+**边界面（写死）**：`cv` 挡不住「元件选错」（真 Wo 用 Ws 拟合 `cv=0.010–0.038`）；
+真 Ws 在信息不足时也会被拒，输出 `uncertain` 而非「无扩散」；阈值不随窗口调整
+——`cv` 的窗口依赖是正确行为。详见 `evidence/ws_crit/L3_CALIB.md`。

@@ -54,6 +54,15 @@ K_EDGE = 5
 #:   18 条真实 AZ31 谱            −0.42…−0.58
 #: 0.05 与 0.18 之间有一条空档，0.10 落在中间——不是拍脑袋选的中点。
 _IND_TOL = 0.10
+#: `A_W` 后验相对不确定度（`sd/median`）的可辨识上限，L3 闸门用。
+#: 标定见 `evidence/ws_crit/L3_CALIB.md`（32 条合成谱 × 4 个窗口）：
+#:   `none`（无扩散硬加 Ws）  0.540–0.729   ← 必须拒
+#:   真 Ws（snr≥5）           0.011–0.083
+#:   真 Ws（snr≈2.4）         0.156–0.166   ← 幅值已偏 7–16%，不切
+#:   `hn`（K+1 宽弧）         0.021–0.147   ← 与真 Ws 同分布（已知不可分）
+#: 0.15 对应 `SNR_ws ≈ 2.7`（实测 `cv ≈ 0.40/snr`，32/32 命中），
+#: 即"`A_W` 的相对不确定度不超过 15%"——能说清幅值才允许切。
+CV_MAX = 0.15
 
 
 # --------------------------------------------------------------------------
@@ -506,17 +515,41 @@ def ws_share_low(samples: dict, f_min: float | None = None) -> dict:
     给 16.1%，窗口 0.1–1e3 Hz 只给 5.7%。所以它必须连 `f_min` 一起报，
     不能脱离窗口引用。
 
+    `share` **不做闸门**，闸门用 `cv_aw`
+    ------------------------------------
+    2026-11-09 标定（`evidence/ws_crit/L3_CALIB.md`，32 条合成谱 × 4 个窗口）
+    推翻了"份额 ≥5% 才值得加 Ws"这个想法：
+
+      · 真 `Ws`、`A_W=0.5`、窗 0.01 Hz 的份额只有 **0.048** —— 5% 阈值直接误杀；
+      · 份额随 `f_min` 系统漂移（`A_W=2`：0.160 → 0.057），不是窗口不变量；
+      · 它衡量的是"这点扩散相对背景有多大"，**不是**"这点扩散能不能被定住"。
+
+    能跨窗口比较的是**后验相对不确定度** `cv_aw = sd(A_W)/median(A_W)`
+    （`CV_MAX`）。实测它与 `SNR_ws = Re Z_Ws(f_min)/σ_im` 严格反比
+    （`cv ≈ 0.40/snr`，32/32），但 `cv` 不需要假设噪声模型、也不依赖
+    `σ_rel·|Z|` 口径，所以闸门取 `cv`。
+
+    注意 `cv` **不能判"元件选错"**：真 `Wo`（转折在窗内）用 `Ws` 拟合，
+    `cv` 低到 0.010–0.038（参数被"很确定地"定在错误的值上）。错元件由
+    LOO 的 `Δ` 与 `diffusion_resolution.resolvable` 管，不归这里。
+
     参数
     ----
     f_min : 缺省取样本里的 `f.min()`
 
     返回
     ----
-    A_W / f_min / re_ws / rp_hn / share_med / share_lo / share_hi / n
+    A_W / A_W_sd / cv_aw / identifiable
+    f_min / re_ws / rp_hn / share_med / share_lo / share_hi
+    snr_med / snr_lo / sig_im / n / note
     """
-    out = dict(A_W=float("nan"), f_min=float("nan"), re_ws=float("nan"),
+    out = dict(A_W=float("nan"), A_W_sd=float("nan"), cv_aw=float("nan"),
+               identifiable=None,
+               f_min=float("nan"), re_ws=float("nan"),
                rp_hn=float("nan"), share_med=float("nan"),
-               share_lo=float("nan"), share_hi=float("nan"), n=0, note="")
+               share_lo=float("nan"), share_hi=float("nan"),
+               snr_med=float("nan"), snr_lo=float("nan"),
+               sig_im=float("nan"), n=0, note="")
     if "Aw" not in samples:
         out["note"] = "样本里没有 Aw（未拟合 Ws）"
         return out
@@ -540,7 +573,23 @@ def ws_share_low(samples: dict, f_min: float | None = None) -> dict:
     re_ws = A / np.sqrt(4 * np.pi * f_min)
     tot = re_ws + w.sum(axis=1)
     share = np.where(tot > 0, re_ws / np.maximum(tot, 1e-300), np.nan)
-    out.update(A_W=float(np.median(A)), f_min=float(f_min),
+
+    med = float(np.median(A))
+    sd = float(np.std(A))                     # ddof=0：后验分布本身，不是抽样估计
+    cv = sd / med if med > 0 else float("nan")
+
+    # SNR 只在噪声尺度可得时算（生产样本一定有；手工构造的可能没有）
+    sig = np.asarray(samples.get("s_im", []), float).ravel()
+    sig_m = float(np.median(sig)) if sig.size else float("nan")
+    if np.isfinite(sig_m) and sig_m > 0:
+        snr = re_ws / sig_m
+        out["snr_med"] = float(np.nanmedian(snr))
+        out["snr_lo"] = float(np.nanpercentile(snr, 5))
+    out["sig_im"] = sig_m
+
+    out.update(A_W=med, A_W_sd=sd, cv_aw=cv,
+               identifiable=(bool(cv <= CV_MAX) if np.isfinite(cv) else None),
+               f_min=float(f_min),
                re_ws=float(np.median(re_ws)), rp_hn=float(np.median(w.sum(axis=1))),
                n=int(share.size),
                share_med=float(np.nanmedian(share)),

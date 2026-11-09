@@ -1398,11 +1398,18 @@ def select_mechanism(none_res, ws_res, gate, exploratory=False, share=None):
     Ws 与 Wo 的可分辨性，不是「加不加 W」。默认只选 Ws 时用它一票否决，
     会把大量本来能加扩散的谱打成 uncertain；要判 Wo 时才需要这条。
 
-    `share`（`bm_ws.ws_share_low` 的结果）**只作诊断、不参与决策**：
-    `Ws` 的 `Rw` 是窗口归一化幅值，与 `R_p` 比没有物理意义，改用
-    `Re Z_Ws(f_min)` 占份额；但该量随窗口下限漂移（同一条 `A_W=2` 的谱
-    在 0.01 Hz 窗是 0.161、0.1 Hz 窗只有 0.057），5% 阈值没有标定，
-    窄窗会误杀真 `Ws`。所以这里只把数报表，闸门等标定完成后再加。
+    `share`（`bm_ws.ws_share_low` 的结果）里有两个量，分工不同：
+
+      · `cv_aw = sd(A_W)/median(A_W)` **参与决策**（guard
+        `ws_amp_unidentified`）：超过 `bm_ws.CV_MAX` 说明扩散幅值没被数据
+        定住，加 Ws 也说不清 `A_W`，不切换；
+      · `share_med`（`Re Z_Ws(f_min)` 占份额）**只报表**：它随窗口下限
+        漂移（同一条 `A_W=2` 的谱 0.01 Hz 窗 0.161、0.1 Hz 窗 0.057），
+        而且真 Ws（`A_W=0.5`、0.01 Hz 窗）只有 0.048 —— 5% 阈值会误杀。
+
+    标定见 `evidence/ws_crit/L3_CALIB.md`。`cv` 只挡"定不住"，不挡
+    "元件选错"：真 Wo 用 Ws 拟合时 `cv` 只有 0.010–0.038，那种情况归
+    `Δ` 与 `diffusion_resolution.resolvable`。
     """
     out = dict(choice="none", status="not_tested", reason="", gate=gate,
                delta=None, dse=None, threshold=None, guards={}, note=[],
@@ -1420,17 +1427,30 @@ def select_mechanism(none_res, ws_res, gate, exploratory=False, share=None):
         # 简并：none 的 HN 已经在替扩散。即使 Δ 显著也不自动切，
         # 因为这是「Ws 与宽 HN 抢同一段自由度」的结构问题，应人工对照。
         "hn_degenerate": gate.get("status") == "degenerate",
+        # L3 简约闸（2026-11-09 标定）：A_W 后验相对不确定度超线 → 幅值没被
+        # 数据定住。与 diff_amp_unidentifiable 覆盖不同侧面：那条比的是
+        # 「相对 |Z|max 的大小」，这条比的是「后验收得多紧」。
+        "ws_amp_unidentified": bool(share and share.get("identifiable") is False),
     }
     out["guards"] = guards
     dres = ws_res.get("diffusion_resolution") or {}
     out["ws_resolvable"] = dres.get("resolvable")
+    if share and np.isfinite(share.get("cv_aw", float("nan"))):
+        out["note"].append(
+            f"A_W = {share['A_W']:.3g} ± {share['A_W_sd']:.2g}"
+            f"（cv={share['cv_aw']:.3f}，判据线 {WS.CV_MAX:.2f} → "
+            f"{'可辨识' if share['identifiable'] else '不可辨识'}；"
+            f"等效 SNR≈{share['snr_med']:.1f}）"
+            if np.isfinite(share.get("snr_med", float("nan")))
+            else f"A_W = {share['A_W']:.3g} ± {share['A_W_sd']:.2g}"
+                 f"（cv={share['cv_aw']:.3f}，判据线 {WS.CV_MAX:.2f}）")
     if share and np.isfinite(share.get("share_med", float("nan"))):
         out["note"].append(
-            f"简约诊断（不参与决策）：Ws 在 f_min={share['f_min']:.3g} Hz 的 "
-            f"Re 份额中位 {share['share_med']:.3f}（90% CI "
+            f"份额诊断（只报表，不作闸门）：Ws 在 f_min={share['f_min']:.3g} Hz "
+            f"的 Re 份额中位 {share['share_med']:.3f}（90% CI "
             f"[{share['share_lo']:.3f}, {share['share_hi']:.3f}]）。"
-            f"该量随窗口下限漂移（同一条 A_W=2 的谱：0.01 Hz 窗 0.161、"
-            f"0.1 Hz 窗 0.057），阈值未标定 → 只报不判")
+            f"该量随窗口下限漂移，且真 Ws 在弱幅值窄窗可低至 0.048 → "
+            f"5% 阈值会误杀，故不参与决策")
     if dres and dres.get("resolvable") is False:
         out["note"].append("Ws/Wo 在当前频窗不可分辨：可以加 Ws，但不能据此"
                            "宣称有限长扩散（Wo）；要判 Wo 需更宽频窗")
@@ -1455,6 +1475,11 @@ def select_mechanism(none_res, ws_res, gate, exploratory=False, share=None):
         if guards.get("diff_amp_unidentifiable"):
             why.append("Ws 幅值大量 <1e-3·|Z|max（谱图无 45° 拖尾 / 扩散被抑制），"
                        "强行加 W 只会让 Aw 不可辨识、参数失去物理意义")
+        if guards.get("ws_amp_unidentified"):
+            cv = float(share.get("cv_aw")) if share else float("nan")
+            why.append(f"A_W 后验相对不确定度 cv={cv:.2f} > "
+                       f"bm_ws.CV_MAX={WS.CV_MAX:.2f}（≈SNR {0.40 / max(cv, 1e-9):.1f}）："
+                       f"扩散幅值没被当前窗口/噪声定住，加了也说不清 A_W")
         if guards.get("ws_grade0") or guards.get("ws_bad_k") \
                 or guards.get("ws_loo_unavailable"):
             why.append("Ws 采样/LOO 不健康")

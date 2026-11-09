@@ -256,37 +256,109 @@
  },
  "l3": [
   {
+   "label": "真 Ws A_W=2，0.01 Hz 窗",
+   "f_min": 0.01,
+   "A_W": 2.0327745367591756,
+   "cv": 0.02151717087473374,
+   "ident": true,
+   "snr": 18.445082539664725,
+   "share_med": 0.15961985783186755,
+   "choice": "Ws",
+   "status": "switched",
+   "guards": {
+    "ws_grade0": false,
+    "ws_bad_k": false,
+    "ws_loo_unavailable": false,
+    "diff_amp_unidentifiable": false,
+    "hn_degenerate": false,
+    "ws_amp_unidentified": false
+   },
+   "note_cv": true,
+   "note_share": true
+  },
+  {
+   "label": "真 Ws A_W=0.5，0.1 Hz 窗（弱）",
+   "f_min": 0.1,
+   "A_W": 0.5375063384714194,
+   "cv": 0.29017912985569877,
+   "ident": false,
+   "snr": 1.3647576300116313,
+   "share_med": 0.01572393129084253,
+   "choice": "none",
+   "status": "guard_degraded",
+   "guards": {
+    "ws_grade0": false,
+    "ws_bad_k": false,
+    "ws_loo_unavailable": false,
+    "diff_amp_unidentifiable": false,
+    "hn_degenerate": false,
+    "ws_amp_unidentified": true
+   },
+   "note_cv": true,
+   "note_share": true
+  },
+  {
+   "label": "无扩散数据，硬加 Ws",
+   "f_min": 0.01,
+   "A_W": 0.05710557142176047,
+   "cv": 0.5401634291845469,
+   "ident": false,
+   "snr": 0.5261006478174861,
+   "share_med": 0.005265874170758328,
+   "choice": "none",
+   "status": "guard_degraded",
+   "guards": {
+    "ws_grade0": false,
+    "ws_bad_k": false,
+    "ws_loo_unavailable": false,
+    "diff_amp_unidentifiable": false,
+    "hn_degenerate": false,
+    "ws_amp_unidentified": true
+   },
+   "note_cv": true,
+   "note_share": true
+  },
+  {
    "label": "caseE 真 Ws，0.01 Hz 窗",
    "f_min": 0.01,
    "A_W": 2.0351275546957344,
+   "cv": 0.016399257661958534,
+   "ident": true,
+   "snr": 30.815032419136706,
    "share_med": 0.16076162826849974,
-   "share_lo": 0.15691909418245828,
-   "share_hi": 0.16466897112818976,
-   "choice": "none",
-   "status": "comparison_incomplete",
-   "note_has_share": true
-  },
-  {
-   "label": "caseE 真 Ws，0.1 Hz 窗",
-   "f_min": 0.1,
-   "A_W": 2.043353646931985,
-   "share_med": 0.057239022557806815,
-   "share_lo": 0.05262685755581762,
-   "share_hi": 0.061337663320001685,
-   "choice": "none",
-   "status": "comparison_incomplete",
-   "note_has_share": true
+   "choice": "Ws",
+   "status": "switched",
+   "guards": {
+    "ws_grade0": false,
+    "ws_bad_k": false,
+    "ws_loo_unavailable": false,
+    "diff_amp_unidentifiable": false,
+    "hn_degenerate": false,
+    "ws_amp_unidentified": false
+   },
+   "note_cv": true,
+   "note_share": true
   },
   {
    "label": "错元件：Wo 数据用 Ws 拟合",
    "f_min": 0.1,
    "A_W": 13.652964963855386,
+   "cv": 0.6739178893544163,
+   "ident": false,
+   "snr": 1.6411545998358767,
    "share_med": 0.011149221302218876,
-   "share_lo": 0.0035387892760012202,
-   "share_hi": 0.08513681620364456,
    "choice": "none",
-   "status": "comparison_incomplete",
-   "note_has_share": true
+   "status": "guard_degraded",
+   "guards": {
+    "ws_grade0": false,
+    "ws_bad_k": false,
+    "ws_loo_unavailable": false,
+    "diff_amp_unidentifiable": false,
+    "hn_degenerate": false,
+    "ws_amp_unidentified": true
+   },
+   "note_cv": true,
+   "note_share": true
   }
  ]
 }
