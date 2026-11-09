@@ -87,6 +87,25 @@ evidence/m6/*
 !evidence/m6/inventory_log.txt
 !evidence/m6/b3b_precheck.py
 !evidence/m6/b3b_precheck.txt
+# B3b 正式实验：运行期指纹 hook / 单组入口 / 15 组驱动 / 单独报告（脚本与报告入库，结果不入库）
+!evidence/m6/b3b_fingerprint.py
+!evidence/m6/b3b_case.py
+!evidence/m6/b3b_run.py
+!evidence/m6/B3B_REPORT.md
+# E2 真实谱基线：调度/汇总脚本入库，结果目录不入库
+!evidence/m6/run_e2.py
+# W 判据探索（2026-11-09）：脚本 / 报告 / 结果入库；中间副本与备份不入库
+!evidence/ws_crit/
+evidence/ws_crit/*
+!evidence/ws_crit/*.py
+!evidence/ws_crit/*.md
+!evidence/ws_crit/*.json
+!evidence/ws_crit/*.json.stale
+!evidence/ws_crit/*.log
+!evidence/ws_crit/patches/
+evidence/ws_crit/patches/*.py
+evidence/ws_crit/patches/*.pre_p1
+!evidence/ws_crit/patches/*.patch
 !evidence/kk_review/
 evidence/kk_review/*
 !evidence/kk_review/verify_review.py
