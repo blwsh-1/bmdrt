@@ -1,0 +1,285 @@
+{
+ "examples": [
+  {
+   "file": "example_caseE.csv",
+   "truth_registered": null,
+   "truth_derived": "拟合 A_W=2.03；与 caseE_warburg 同拓扑，窗口 0.01–1e5",
+   "old_amp": false,
+   "old_candidate": false,
+   "old_f_cut": null,
+   "new_amp": true,
+   "new_candidate": true,
+   "new_f_cut": 0.42986623,
+   "slope_z": -0.029302141545033418,
+   "slope_im": -0.49236674395527624,
+   "phase_ok": true
+  },
+  {
+   "file": "example_caseE_warburg.csv",
+   "truth_registered": "Ws(A_W=2)",
+   "truth_derived": null,
+   "old_amp": false,
+   "old_candidate": false,
+   "old_f_cut": null,
+   "new_amp": true,
+   "new_candidate": true,
+   "new_f_cut": 0.857696,
+   "slope_z": -0.015766033317053382,
+   "slope_im": -0.447624445337463,
+   "phase_ok": true
+  },
+  {
+   "file": "example_caseF_wo.csv",
+   "truth_registered": "Wo(R_W=30, τ_D=0.3s)",
+   "truth_derived": null,
+   "old_amp": true,
+   "old_candidate": false,
+   "old_f_cut": 0.857696,
+   "new_amp": false,
+   "new_candidate": false,
+   "new_f_cut": null,
+   "slope_z": -0.5397742426811811,
+   "slope_im": -0.9747170438159376,
+   "phase_ok": false
+  },
+  {
+   "file": "example_caseF.csv",
+   "truth_registered": null,
+   "truth_derived": "拟合无 ω^-1/2 项（低频 -Im→0）",
+   "old_amp": false,
+   "old_candidate": false,
+   "old_f_cut": null,
+   "new_amp": false,
+   "new_candidate": false,
+   "new_f_cut": null,
+   "slope_z": 0.0004067437618069128,
+   "slope_im": null,
+   "phase_ok": false
+  },
+  {
+   "file": "example_caseG_wo_only.csv",
+   "truth_registered": "纯 Wo(R_W=30, τ_D=0.3s)",
+   "truth_derived": null,
+   "old_amp": true,
+   "old_candidate": false,
+   "old_f_cut": 0.857696,
+   "new_amp": false,
+   "new_candidate": false,
+   "new_f_cut": null,
+   "slope_z": -0.8106423178126542,
+   "slope_im": -0.9645818173281693,
+   "phase_ok": false
+  }
+ ],
+ "real": [
+  {
+   "name": "AZ31-12Li_0",
+   "old": false,
+   "new": false,
+   "old_amp": false,
+   "new_amp": false,
+   "slope_z": 0.15983655788326132,
+   "slope_im": null
+  },
+  {
+   "name": "AZ31-12Li_10",
+   "old": false,
+   "new": false,
+   "old_amp": false,
+   "new_amp": false,
+   "slope_z": 0.13242068985685723,
+   "slope_im": null
+  },
+  {
+   "name": "AZ31-12Li_100",
+   "old": false,
+   "new": false,
+   "old_amp": false,
+   "new_amp": false,
+   "slope_z": 0.18745349417317117,
+   "slope_im": null
+  },
+  {
+   "name": "AZ31-12Li_150",
+   "old": false,
+   "new": false,
+   "old_amp": false,
+   "new_amp": false,
+   "slope_z": 0.3079593004980456,
+   "slope_im": null
+  },
+  {
+   "name": "AZ31-12Li_5",
+   "old": false,
+   "new": false,
+   "old_amp": false,
+   "new_amp": false,
+   "slope_z": 0.05416014929445946,
+   "slope_im": null
+  },
+  {
+   "name": "AZ31-12Li_50",
+   "old": false,
+   "new": false,
+   "old_amp": false,
+   "new_amp": false,
+   "slope_z": 0.2677134600566029,
+   "slope_im": null
+  },
+  {
+   "name": "AZ31-4Li_0",
+   "old": false,
+   "new": false,
+   "old_amp": false,
+   "new_amp": false,
+   "slope_z": -0.08102623822805002,
+   "slope_im": null
+  },
+  {
+   "name": "AZ31-4Li_10",
+   "old": false,
+   "new": false,
+   "old_amp": false,
+   "new_amp": false,
+   "slope_z": 0.255178633254217,
+   "slope_im": null
+  },
+  {
+   "name": "AZ31-4Li_100",
+   "old": false,
+   "new": false,
+   "old_amp": false,
+   "new_amp": false,
+   "slope_z": 0.5268054426679558,
+   "slope_im": null
+  },
+  {
+   "name": "AZ31-4Li_150",
+   "old": false,
+   "new": false,
+   "old_amp": false,
+   "new_amp": false,
+   "slope_z": 0.1837521937162053,
+   "slope_im": null
+  },
+  {
+   "name": "AZ31-4Li_5",
+   "old": false,
+   "new": false,
+   "old_amp": false,
+   "new_amp": false,
+   "slope_z": 0.007766591468476628,
+   "slope_im": null
+  },
+  {
+   "name": "AZ31-4Li_50",
+   "old": false,
+   "new": false,
+   "old_amp": false,
+   "new_amp": false,
+   "slope_z": 0.03618896366935007,
+   "slope_im": null
+  },
+  {
+   "name": "AZ31-8Li_0",
+   "old": false,
+   "new": false,
+   "old_amp": false,
+   "new_amp": false,
+   "slope_z": 0.04514613838841414,
+   "slope_im": null
+  },
+  {
+   "name": "AZ31-8Li_10",
+   "old": false,
+   "new": false,
+   "old_amp": false,
+   "new_amp": false,
+   "slope_z": 0.0408366086718955,
+   "slope_im": null
+  },
+  {
+   "name": "AZ31-8Li_100",
+   "old": false,
+   "new": false,
+   "old_amp": false,
+   "new_amp": false,
+   "slope_z": 0.11256761887094464,
+   "slope_im": null
+  },
+  {
+   "name": "AZ31-8Li_150",
+   "old": false,
+   "new": false,
+   "old_amp": false,
+   "new_amp": false,
+   "slope_z": 0.18698820711985512,
+   "slope_im": null
+  },
+  {
+   "name": "AZ31-8Li_5",
+   "old": false,
+   "new": false,
+   "old_amp": false,
+   "new_amp": false,
+   "slope_z": 0.13827394939198676,
+   "slope_im": null
+  },
+  {
+   "name": "AZ31-8Li_50",
+   "old": false,
+   "new": false,
+   "old_amp": false,
+   "new_amp": false,
+   "slope_z": 0.13246165263381834,
+   "slope_im": null
+  }
+ ],
+ "synthetic": [
+  {
+   "cls": "ws_vis",
+   "old": 12,
+   "new": 18
+  },
+  {
+   "cls": "ws_buried",
+   "old": 0,
+   "new": 10
+  },
+  {
+   "cls": "wo_in",
+   "old": 0,
+   "new": 0
+  },
+  {
+   "cls": "wo_below",
+   "old": 12,
+   "new": 19
+  },
+  {
+   "cls": "wshort_in",
+   "old": 0,
+   "new": 0
+  },
+  {
+   "cls": "none_2zarc",
+   "old": 0,
+   "new": 0
+  },
+  {
+   "cls": "rq05_low",
+   "old": 7,
+   "new": 18
+  },
+  {
+   "cls": "rq05_in",
+   "old": 0,
+   "new": 0
+  },
+  {
+   "cls": "sorp_rl",
+   "old": 0,
+   "new": 0
+  }
+ ]
+}

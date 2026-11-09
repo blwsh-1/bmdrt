@@ -1,0 +1,242 @@
+{
+ "bench": {
+  "ws_vis": {
+   "V0": 0.9,
+   "V1": 0.9,
+   "V2": 0.9
+  },
+  "ws_buried": {
+   "V0": 0.5,
+   "V1": 0.5,
+   "V2": 0.5
+  },
+  "wo_in": {
+   "V0": 0.0,
+   "V1": 0.0,
+   "V2": 0.0
+  },
+  "wo_below": {
+   "V0": 0.95,
+   "V1": 0.95,
+   "V2": 0.95
+  },
+  "wshort_in": {
+   "V0": 0.0,
+   "V1": 0.0,
+   "V2": 0.0
+  },
+  "none_2zarc": {
+   "V0": 0.0,
+   "V1": 0.0,
+   "V2": 0.0
+  },
+  "rq05_low": {
+   "V0": 0.9,
+   "V1": 0.9,
+   "V2": 0.9
+  },
+  "rq05_in": {
+   "V0": 0.0,
+   "V1": 0.0,
+   "V2": 0.0
+  },
+  "sorp_rl": {
+   "V0": 0.0,
+   "V1": 0.0,
+   "V2": 0.0
+  }
+ },
+ "meta": {
+  "fmin": 0.1,
+  "fmax": 1000.0,
+  "n_per": 20,
+  "npts": 31
+ },
+ "real": [
+  {
+   "stem": "AZ31-12Li_0",
+   "slope_im": null,
+   "ny": -0.04552026613798585,
+   "term": "to_inductive",
+   "im_ratio": -0.4735131363071337,
+   "V0": false,
+   "V1": false,
+   "V2": false
+  },
+  {
+   "stem": "AZ31-12Li_10",
+   "slope_im": null,
+   "ny": 0.16706043951035404,
+   "term": "to_inductive",
+   "im_ratio": -0.5241393547435204,
+   "V0": false,
+   "V1": false,
+   "V2": false
+  },
+  {
+   "stem": "AZ31-12Li_100",
+   "slope_im": null,
+   "ny": 0.04726723357589187,
+   "term": "to_inductive",
+   "im_ratio": -0.547733572773205,
+   "V0": false,
+   "V1": false,
+   "V2": false
+  },
+  {
+   "stem": "AZ31-12Li_150",
+   "slope_im": null,
+   "ny": 0.0743016703063431,
+   "term": "to_inductive",
+   "im_ratio": -0.5420556401639122,
+   "V0": false,
+   "V1": false,
+   "V2": false
+  },
+  {
+   "stem": "AZ31-12Li_5",
+   "slope_im": null,
+   "ny": 0.3153945572171139,
+   "term": "to_inductive",
+   "im_ratio": -0.5744209975223571,
+   "V0": false,
+   "V1": false,
+   "V2": false
+  },
+  {
+   "stem": "AZ31-12Li_50",
+   "slope_im": null,
+   "ny": 0.18510460474766174,
+   "term": "to_inductive",
+   "im_ratio": -0.4584755978363078,
+   "V0": false,
+   "V1": false,
+   "V2": false
+  },
+  {
+   "stem": "AZ31-4Li_0",
+   "slope_im": null,
+   "ny": -0.3099395522053933,
+   "term": "to_inductive",
+   "im_ratio": -0.7940750261890513,
+   "V0": false,
+   "V1": false,
+   "V2": false
+  },
+  {
+   "stem": "AZ31-4Li_10",
+   "slope_im": null,
+   "ny": -0.18749938059771418,
+   "term": "to_inductive",
+   "im_ratio": -0.36215099621467145,
+   "V0": false,
+   "V1": false,
+   "V2": false
+  },
+  {
+   "stem": "AZ31-4Li_100",
+   "slope_im": null,
+   "ny": 0.06455750888994764,
+   "term": "to_inductive",
+   "im_ratio": -0.3021133521335249,
+   "V0": false,
+   "V1": false,
+   "V2": false
+  },
+  {
+   "stem": "AZ31-4Li_150",
+   "slope_im": null,
+   "ny": 0.4815978452057215,
+   "term": "to_inductive",
+   "im_ratio": -0.7074515170376077,
+   "V0": false,
+   "V1": false,
+   "V2": false
+  },
+  {
+   "stem": "AZ31-4Li_5",
+   "slope_im": null,
+   "ny": -0.4943392863887574,
+   "term": "to_inductive",
+   "im_ratio": -0.5133464450273224,
+   "V0": false,
+   "V1": false,
+   "V2": false
+  },
+  {
+   "stem": "AZ31-4Li_50",
+   "slope_im": null,
+   "ny": 0.5970460998508479,
+   "term": "to_inductive",
+   "im_ratio": -0.5707499860517992,
+   "V0": false,
+   "V1": false,
+   "V2": false
+  },
+  {
+   "stem": "AZ31-8Li_0",
+   "slope_im": null,
+   "ny": 0.30771441080252476,
+   "term": "to_inductive",
+   "im_ratio": -0.4413778120730236,
+   "V0": false,
+   "V1": false,
+   "V2": false
+  },
+  {
+   "stem": "AZ31-8Li_10",
+   "slope_im": null,
+   "ny": 0.630434905574303,
+   "term": "to_inductive",
+   "im_ratio": -0.6902690395852313,
+   "V0": false,
+   "V1": false,
+   "V2": false
+  },
+  {
+   "stem": "AZ31-8Li_100",
+   "slope_im": null,
+   "ny": 0.98235690981054,
+   "term": "to_inductive",
+   "im_ratio": -0.6417823940081043,
+   "V0": false,
+   "V1": false,
+   "V2": false
+  },
+  {
+   "stem": "AZ31-8Li_150",
+   "slope_im": null,
+   "ny": 0.6243185172500951,
+   "term": "to_inductive",
+   "im_ratio": -0.6521815750007524,
+   "V0": false,
+   "V1": false,
+   "V2": false
+  },
+  {
+   "stem": "AZ31-8Li_5",
+   "slope_im": null,
+   "ny": 0.039700676871414285,
+   "term": "to_inductive",
+   "im_ratio": -0.34416907844222305,
+   "V0": false,
+   "V1": false,
+   "V2": false
+  },
+  {
+   "stem": "AZ31-8Li_50",
+   "slope_im": null,
+   "ny": 0.5379848266826248,
+   "term": "to_inductive",
+   "im_ratio": -0.5055144167596578,
+   "V0": false,
+   "V1": false,
+   "V2": false
+  }
+ ],
+ "specificity_over_negatives": {
+  "V0": 0.0,
+  "V1": 0.0,
+  "V2": 0.0
+ }
+}

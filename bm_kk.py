@@ -382,49 +382,76 @@ def diffusion_tail_candidate(f, Z, frac: float = 0.25, min_keep: int = 16,
 
     两条判据必须同时成立才给出"候选"：
 
-      A. 幅度判据：最低 `frac` 段的 `log|Z| ~ log f` 斜率 ∈ [slope_lo, slope_hi]；
+      A. 幅度判据：最低 `frac` 段的 `log(−Im) ~ log f` 斜率 ∈ [slope_lo, slope_hi]；
+         **不用 `log|Z|`**——`R_inf` 只加在实部上，会把 `|Z|` 的斜率压平
+         （实测 `example_caseE`：`|Z|` −0.03、`−Im` −0.49）。
       B. 相位判据：同段 Nyquist 斜率 `d(−Im)/d(Re)` ∈ 1 ± `ny_tol`。
 
     **两条都只是必要条件，不是充分条件。** 这一点必须写清楚，因为：
-      · **任何一条圆弧的下降段都会经过 45°**。实测 `example_caseE.csv`
-        （无扩散元件）最低 10% 段 Nyquist 斜率 +1.02、逐点稳定度 1.00，
-        跨度占 `|Z|` 的 10% —— 只看相位判据会判成扩散尾。
-        它之所以被挡掉，靠的是幅度判据（`|Z|` 斜率 −0.03）。
+      · **任何一条圆弧的下降段都会经过 45°**。`example_caseE` 最低 10% 段
+        Nyquist 斜率 +1.02、逐点稳定度 1.00，跨度占 `|Z|` 的 10% ——
+        只看相位判据，任何未闭合弧都会被判成扩散尾。
       · 审查意见提到的「单个 `R‖CPE(n=0.5)` 也有 φ=45°」同理：45° 不是
         扩散阻抗独有的签名。本次实测窄窗口（`f` 跨 4 个数量级、
         `τ=0.16 s`、`φ=0.5`）里最低 25% 落在弧的已弛豫段（斜率 −0.78），
         没有复现假阳性；但这只是"没测到"，不是"不会发生"。
+        `evidence/ws_crit/bench.py` 的三类阴性对照（2×ZARC、窗内
+        `R‖CPE(0.5)`、`R‖L` 吸附环）共 120 次，假阳 0 次。
+
+    > **2026-11-09 注（`WS_DECISION_PROJECT.md` WP4）**：本函数此前的注释把
+    > `example_caseE.csv` 写成「无扩散元件」并当成「被幅度判据成功挡掉的
+    > 假阳性」举例，**方向与真值相反**——该谱真值是
+    > `R∞=10 + ZARC(30Ω,300Hz,.85) + Ws(A_W=2)`（复算见
+    > `evidence/ws_crit/n1_fitcasee.py`）。旧 `|Z|` 口径把它判成"无候选"
+    > 是**漏报**，不是挡对了；换成 `−Im` 口径后 `−Im` 斜率 −0.49 →
+    > `is_candidate=True`。原文的"挡掉"叙述已删，教训（45° 不唯一）保留。
 
     所以函数名叫 `candidate`：它能**否证**（斜率对不上就不是扩散尾），
     不能**确认**。真正确认要靠"在连续频段上停在 45°"以及窗口外扩散的
     物理约束（见 `bm_diff.warburg_band_slope` 的多点判据）。
 
-    A 会漏掉被 `R_inf` 淹没的短尾：`caseE_warburg`（真值 `R∞=10+ZARC+Ws`，
-    `A_W=2`）在 0.1 Hz 的 Warburg 只有 2.5 Ω，而实部 40 Ω，
-    `|Z|` 斜率 −0.02 → A 不成立 → 返回"无候选"。这是**保守的漏报**，
-    不会造成误判为扩散尾。
+    旧 `log|Z|` 口径会漏掉被 `R_inf` 淹没的短尾：`caseE_warburg`（真值
+    `R∞=10+ZARC+Ws`，`A_W=2`）在 0.1 Hz 的 Warburg 只有 2.5 Ω、实部 40 Ω，
+    `|Z|` 斜率 −0.02 → 判不成（**保守漏报**）。换成 `log(−Im)` 后同一段是
+    −0.45 → 判成候选。`−Im` 口径的残余盲区是**噪声**而不是 `R_inf`：
+    `SNR_im ≲ 15` 时检出率约 50%（`WS_CRITERION_PLAN.md` §9.4）。
+
+    低频 `−Im ≤ 0`（第四象限感抗、或尾已贴实轴）时取对数无意义，函数**提前
+    返回**：只填 `slope_z` 与相位字段，`slope_im=None`、`amp_ok` /
+    `is_candidate` 恒 False，`why` 记「幅度判据不可用」。18 条真实 AZ31
+    全部走这条（低频是感抗，见 `WS_CRITERION_PLAN.md` §5.5）——
+    这是**"判不了"**，不是"判成没有扩散"。
 
     返回 dict：
         f_cut         候选截断点（Hz）；A 不成立时为 None。**仅诊断，不截断**
-        slope_z       幅度判据的斜率
+        slope_z       最低段的 `log|Z| ~ log f` 斜率。**只报数不判定**：
+                      `kk_check` 用它填 `tail_slope`，口径与旧实现一致
+        slope_im      最低段的 `log(−Im) ~ log f` 斜率，**这才是幅度判据**；
+                      低频 `−Im ≤ 0` 时为 None
         slope_ny      相位判据的斜率（None = `Re` 跨度不足，斜率无定义）
         ny_span       该段 `Re` 跨度 / `|Z|`，判断 slope_ny 可信度
         ny_stability  逐点斜率落在 45°±0.35 的比例
-        amp_ok        幅度判据（对 `R_inf` 敏感：会被压平）
+        amp_ok        幅度判据（用 `slope_im`）。**对 `R_inf` 免疫**，
+                      但对低频噪声 / 短尾敏感
         phase_ok      相位判据（对 `R_inf` 免疫：平移不改斜率）
         is_candidate  两条同时成立（**必要不充分**）
         why           人类可读说明
 
     两条判据各有一个方向的盲区，**不要**拿单条去下结论：
-      · 幅度成立、相位不成立 → 不是扩散尾（`caseF_wo`：|Z| −0.54 但 Ny +21）；
-      · 相位成立、幅度被 `R_inf` 压平 → **本地判不了**。
-        实测 `10 + 2(jω)^(−1/2)` 的 Ny 斜率 +1.00、`|Z|` 斜率只有 −0.11，
-        而 `caseE`（无扩散元件）在同一窗口是 Ny +1.02、`|Z|` −0.03 ——
-        两者在最低 25% 段**形态相同**，区别只在"45° 能持续多宽"。
+      · 幅度成立、相位不成立 → 不是扩散尾。`caseF_wo` / `caseG_wo_only`
+        在旧 `|Z|` 口径下幅度成立（−0.54 / −0.81）而 Ny 远超 45°；新
+        `−Im` 口径下两个都落在区间外（−0.97 / −0.96）。**两种口径都给
+        "非候选"**，只是理由不同——`Wo` 本来就不该进 Ws 家族
+        （`WS_CRITERION_PLAN.md` §10.1）。
+      · 相位成立、幅度不可用（`−Im ≤ 0`）→ **本地判不了**，不是"没有扩散"。
+        真实 AZ31 谱全是这种尾（低频感抗），只能记 `inductive_tail`。
+        "被 `R_inf` 压平"这一类已由 `−Im` 口径解决；剩下的盲区是**噪声**
+        （`SNR_im` 门槛），不是形态。
         持续性属于频段判据，交给 `bm_diff.warburg_band_slope`。
     """
     f, Z = np.asarray(f, float), np.asarray(Z, complex)
-    out = dict(f_cut=None, slope_z=None, slope_ny=None, ny_span=None,
+    out = dict(f_cut=None, slope_z=None, slope_im=None,
+               slope_ny=None, ny_span=None,
                ny_stability=None, amp_ok=False, phase_ok=False,
                is_candidate=False, why=[])
     n = f.size
@@ -434,13 +461,32 @@ def diffusion_tail_candidate(f, Z, frac: float = 0.25, min_keep: int = 16,
         return out
 
     idx = np.argsort(f)[:n_low]
-    lf, lz = np.log10(np.maximum(f[idx], EPS)), np.log10(np.maximum(np.abs(Z[idx]), EPS))
+    lf = np.log10(np.maximum(f[idx], EPS))
     try:
-        slope = float(np.polyfit(lf, lz, 1)[0])
+        # slope_z 保持 |Z| 口径：`kk_check` 用它填 `tail_slope`，即使幅度判据
+        # 不成立也要照着报（旧实现就是这么做的，别让它变成 None）。
+        slope_z = float(np.polyfit(lf, np.log10(np.maximum(np.abs(Z[idx]), EPS)), 1)[0])
+    except Exception:                          # noqa: BLE001
+        return out
+    # --- N1：幅度判据改用 -Im。R_inf 只加在实部上，log|Z| 会被它压平。
+    # 实测 caseE / caseE_warburg：|Z| 斜率 -0.03/-0.02（判不成），
+    # -Im 斜率 -0.49/-0.45。
+    im_low = -Z[idx].imag
+    if im_low.min() <= 0:
+        ny, span, stab = nyquist_slope_low(f, Z, frac)
+        out.update(slope_z=slope_z, slope_ny=ny, ny_span=span,
+                   ny_stability=stab,
+                   phase_ok=bool(ny is not None and abs(ny - 1.0) <= ny_tol))
+        out["why"].append("幅度判据不可用：低频段 -Im ≤ 0（感抗或贴实轴），"
+                          "取对数无意义")
+        return out
+    try:
+        slope = float(np.polyfit(lf, np.log10(im_low), 1)[0])
     except Exception:                          # noqa: BLE001
         return out
     ny, span, stab = nyquist_slope_low(f, Z, frac)
-    out.update(slope_z=slope, slope_ny=ny, ny_span=span, ny_stability=stab)
+    out.update(slope_z=slope_z, slope_im=slope, slope_ny=ny,
+               ny_span=span, ny_stability=stab)
 
     amp_ok = bool(slope_lo <= slope <= slope_hi)
     pha_ok = bool(ny is not None and abs(ny - 1.0) <= ny_tol)

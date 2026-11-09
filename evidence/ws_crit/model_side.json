@@ -1,0 +1,223 @@
+[
+ {
+  "group": "b2x k1 none (Wo 数据)",
+  "path": "evidence/b2x/k1/example_caseF_wo/real_example_caseF_wo_samples.npz",
+  "rpc": {
+   "key": null,
+   "share_med": NaN,
+   "share_lo": NaN,
+   "share_hi": NaN,
+   "p_below_5pct": NaN,
+   "p_below_10pct": NaN,
+   "n": 0,
+   "per_comp": [],
+   "note": "样本里没有扩散项幅值（Rw/Rwo），本条不适用"
+  },
+  "ws_low": {
+   "A_W": NaN,
+   "f_min": NaN,
+   "re_ws": NaN,
+   "rp_hn": NaN,
+   "share_med": NaN,
+   "share_lo": NaN,
+   "share_hi": NaN,
+   "n": 0,
+   "note": "样本里没有 Aw（未拟合 Ws）"
+  }
+ },
+ {
+  "group": "b2x k3 none (Wo 数据)",
+  "path": "evidence/b2x/k3/example_caseF_wo/real_example_caseF_wo_samples.npz",
+  "rpc": {
+   "key": null,
+   "share_med": NaN,
+   "share_lo": NaN,
+   "share_hi": NaN,
+   "p_below_5pct": NaN,
+   "p_below_10pct": NaN,
+   "n": 0,
+   "per_comp": [],
+   "note": "样本里没有扩散项幅值（Rw/Rwo），本条不适用"
+  },
+  "ws_low": {
+   "A_W": NaN,
+   "f_min": NaN,
+   "re_ws": NaN,
+   "rp_hn": NaN,
+   "share_med": NaN,
+   "share_lo": NaN,
+   "share_hi": NaN,
+   "n": 0,
+   "note": "样本里没有 Aw（未拟合 Ws）"
+  }
+ },
+ {
+  "group": "b2x k1 +Ws  (错元件)",
+  "path": "evidence/b2x/k1ws/example_caseF_wo/real_example_caseF_wo_samples.npz",
+  "rpc": {
+   "key": "Rw",
+   "share_med": 0.0015919771751499898,
+   "share_lo": 0.0005019855762261618,
+   "share_hi": 0.012989665043554479,
+   "p_below_5pct": 1.0,
+   "p_below_10pct": 1.0,
+   "n": 3000,
+   "per_comp": [
+    0.99840802282485
+   ],
+   "note": ""
+  },
+  "ws_low": {
+   "A_W": 13.652964963855386,
+   "f_min": 0.1,
+   "re_ws": 12.17929202450162,
+   "rp_hn": 1477.6110908147978,
+   "share_med": 0.011149221302218876,
+   "share_lo": 0.0035387892760012202,
+   "share_hi": 0.08513681620364456,
+   "n": 3000,
+   "note": ""
+  }
+ },
+ {
+  "group": "b2x k1 +Wo  (对元件)",
+  "path": "evidence/b2x/k1wo/example_caseF_wo/real_example_caseF_wo_samples.npz",
+  "rpc": {
+   "key": "Rwo",
+   "share_med": 0.4811677028224917,
+   "share_lo": 0.438259118456587,
+   "share_hi": 0.5156608200407975,
+   "p_below_5pct": 0.0,
+   "p_below_10pct": 0.0,
+   "n": 3000,
+   "per_comp": [
+    0.5188322971775083
+   ],
+   "note": ""
+  },
+  "ws_low": {
+   "A_W": NaN,
+   "f_min": NaN,
+   "re_ws": NaN,
+   "rp_hn": NaN,
+   "share_med": NaN,
+   "share_lo": NaN,
+   "share_hi": NaN,
+   "n": 0,
+   "note": "样本里没有 Aw（未拟合 Ws）"
+  }
+ },
+ {
+  "group": "caseE k1 +Ws (真含 Ws)",
+  "path": "out/_caseE_diff/k1_Ws/example_caseE/real_example_caseE_samples.npz",
+  "rpc": {
+   "key": "Rw",
+   "share_med": 0.004794296815917193,
+   "share_lo": 0.004659007692404168,
+   "share_hi": 0.004933105841481298,
+   "p_below_5pct": 1.0,
+   "p_below_10pct": 1.0,
+   "n": 3000,
+   "per_comp": [
+    0.9952057031840829
+   ],
+   "note": ""
+  },
+  "ws_low": {
+   "A_W": 2.0351275546957344,
+   "f_min": 0.01,
+   "re_ws": 5.74098883775175,
+   "rp_hn": 29.973192905173967,
+   "share_med": 0.16076162826849974,
+   "share_lo": 0.15691909418245828,
+   "share_hi": 0.16466897112818976,
+   "n": 3000,
+   "note": ""
+  }
+ },
+ {
+  "group": "caseE k1 +Wo",
+  "path": "out/_caseE_diff/k1_Wo/example_caseE/real_example_caseE_samples.npz",
+  "rpc": {
+   "key": "Rwo",
+   "share_med": 0.4445895172092825,
+   "share_lo": 0.39316782000570916,
+   "share_hi": 0.5475922441253328,
+   "p_below_5pct": 0.0,
+   "p_below_10pct": 0.0,
+   "n": 3000,
+   "per_comp": [
+    0.5554104827907175
+   ],
+   "note": ""
+  },
+  "ws_low": {
+   "A_W": NaN,
+   "f_min": NaN,
+   "re_ws": NaN,
+   "rp_hn": NaN,
+   "share_med": NaN,
+   "share_lo": NaN,
+   "share_hi": NaN,
+   "n": 0,
+   "note": "样本里没有 Aw（未拟合 Ws）"
+  }
+ },
+ {
+  "group": "caseE k2 +Ws",
+  "path": "out/_caseE_diff/k2_Ws/example_caseE/real_example_caseE_samples.npz",
+  "rpc": {
+   "key": "Rw",
+   "share_med": 0.0047039907403688295,
+   "share_lo": 0.00445806086278089,
+   "share_hi": 0.0048696468623271065,
+   "p_below_5pct": 1.0,
+   "p_below_10pct": 1.0,
+   "n": 3000,
+   "per_comp": [
+    0.9714724127305333,
+    0.0239036574671969
+   ],
+   "note": ""
+  },
+  "ws_low": {
+   "A_W": 2.0125292287534347,
+   "f_min": 0.01,
+   "re_ws": 5.677240137240438,
+   "rp_hn": 30.113033594875365,
+   "share_med": 0.15820050285097104,
+   "share_lo": 0.15114829735558732,
+   "share_hi": 0.16288704985219443,
+   "n": 3000,
+   "note": ""
+  }
+ },
+ {
+  "group": "caseE_warburg k1 +Ws",
+  "path": "out/example_caseE_warburg/real_example_caseE_warburg_samples.npz",
+  "rpc": {
+   "key": "Rw",
+   "share_med": 0.008513194351733514,
+   "share_lo": 0.007794762426778795,
+   "share_hi": 0.009156675437558383,
+   "p_below_5pct": 1.0,
+   "p_below_10pct": 1.0,
+   "n": 800,
+   "per_comp": [
+    0.9914868056482665
+   ],
+   "note": ""
+  },
+  "ws_low": {
+   "A_W": 2.043353646931985,
+   "f_min": 0.1,
+   "re_ws": 1.822798259660035,
+   "rp_hn": 30.047572614692697,
+   "share_med": 0.057239022557806815,
+   "share_lo": 0.05262685755581762,
+   "share_hi": 0.061337663320001685,
+   "n": 800,
+   "note": ""
+  }
+ }
+]

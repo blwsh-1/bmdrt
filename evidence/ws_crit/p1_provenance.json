@@ -1,0 +1,128 @@
+{
+ "sha_before": "b47f69d85595b40a79ddd5172775039e5dab324e2eeb6cff6a4c55155d64ab4b",
+ "sha_after": "230114002295c711857ce7d15eabc121043a693bb496a32374557daf1610905f",
+ "n_spectra": 31,
+ "n_changed": 10,
+ "changes": [
+  {
+   "tag": "e2:Blank_0.1KBr_pH10_EIS_PtCu_1.2V",
+   "field": "slope_im",
+   "before": null,
+   "after": -0.11025721854845034
+  },
+  {
+   "tag": "e2:Blank_0.1KBr_pH10_EIS_PtCu_1.2V_1",
+   "field": "slope_im",
+   "before": null,
+   "after": -0.11025721854845034
+  },
+  {
+   "tag": "e2:Blank_0.1KBr_pH10_EIS_PtCu_1.2V_2",
+   "field": "slope_im",
+   "before": null,
+   "after": -0.11025721854845034
+  },
+  {
+   "tag": "e2:Blank_0.1KBr_pH10_EIS_PtCu_1.2V_3",
+   "field": "slope_im",
+   "before": null,
+   "after": -0.11025721854845034
+  },
+  {
+   "tag": "e2:Blank_0.1KBr_pH10_EIS_PtCu_1.2V_4",
+   "field": "slope_im",
+   "before": null,
+   "after": -0.11025721854845034
+  },
+  {
+   "tag": "e2:Blank_0.1KBr_pH10_EIS_PtCu_1.2V_5",
+   "field": "slope_im",
+   "before": null,
+   "after": -0.11025721854845034
+  },
+  {
+   "tag": "ex:example_caseE",
+   "field": "amp_ok",
+   "before": 0.0,
+   "after": 1.0
+  },
+  {
+   "tag": "ex:example_caseE",
+   "field": "is_candidate",
+   "before": 0.0,
+   "after": 1.0
+  },
+  {
+   "tag": "ex:example_caseE",
+   "field": "f_cut",
+   "before": null,
+   "after": 0.42986623
+  },
+  {
+   "tag": "ex:example_caseE",
+   "field": "slope_im",
+   "before": null,
+   "after": -0.49236674395527624
+  },
+  {
+   "tag": "ex:example_caseE_warburg",
+   "field": "amp_ok",
+   "before": 0.0,
+   "after": 1.0
+  },
+  {
+   "tag": "ex:example_caseE_warburg",
+   "field": "is_candidate",
+   "before": 0.0,
+   "after": 1.0
+  },
+  {
+   "tag": "ex:example_caseE_warburg",
+   "field": "f_cut",
+   "before": null,
+   "after": 0.857696
+  },
+  {
+   "tag": "ex:example_caseE_warburg",
+   "field": "slope_im",
+   "before": null,
+   "after": -0.447624445337463
+  },
+  {
+   "tag": "ex:example_caseF_wo",
+   "field": "amp_ok",
+   "before": 1.0,
+   "after": 0.0
+  },
+  {
+   "tag": "ex:example_caseF_wo",
+   "field": "f_cut",
+   "before": 0.857696,
+   "after": null
+  },
+  {
+   "tag": "ex:example_caseF_wo",
+   "field": "slope_im",
+   "before": null,
+   "after": -0.9747170438159376
+  },
+  {
+   "tag": "ex:example_caseG_wo_only",
+   "field": "amp_ok",
+   "before": 1.0,
+   "after": 0.0
+  },
+  {
+   "tag": "ex:example_caseG_wo_only",
+   "field": "f_cut",
+   "before": 0.857696,
+   "after": null
+  },
+  {
+   "tag": "ex:example_caseG_wo_only",
+   "field": "slope_im",
+   "before": null,
+   "after": -0.9645818173281693
+  }
+ ]
+}
