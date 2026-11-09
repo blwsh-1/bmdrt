@@ -42,9 +42,9 @@
 |---|---|---|---|
 | L0 元件 | `bm_core.make_model` | `Rw ~ LogNormal(log(0.1·\|Z\|max), 2.0)`；`p_diff_small = P(Rw < 1e-3·\|Z\|max \| Z)` | 宽先验；后者是「幅值可忽略」的概率，**不是**「没有扩散」的概率 |
 | L1 事前形状 | `bm_kk.diffusion_tail_candidate` | 最低 25% 频段：**`log(−Im)~log f`** 斜率 ∈ [−0.85, −0.20]（2026-11-09 起；旧为 `log\|Z\|`，被 `R_inf` 压平会漏报）**且** Nyquist `d(−Im)/d(Re)` ∈ 1±0.35；低频 `−Im ≤ 0` 时幅度判据不可用，只报相位 | `is_candidate`，**必要不充分**，只能否证不能确认 |
-| L1' 结构指纹 | `bm_diff.looks_like_warburg` / `warburg_band_slope` | φζ≈0.5、`P(峰位出窗 ≥1 dec)≥0.5`、贴 τ 边界、R–τ 简并；多分量拼 45° 段 | `n_warburg_like`；`degenerate` 时**不自动切 Ws** |
-| L2 触发 | `bm_real._none_needs_ws`（`--auto-mechanism` 默认关） | `acf>0.8` 或最低频 `rms/σ>1.5` | 固定 none 选出的 K，**补跑一次 Ws**；45° 候选只记录、不作门槛 |
-| L3 决策 | `bm_real.select_mechanism` | 配对逐点 LOO `Δ=Σ(逐点差)`、`dse=√(n·Var)`；切换线 `Δ ≥ max(2, 1.5·dse)` | 输出 `none / Ws / uncertain`；护栏：grade 0、`bad_k>0.10`、LOO 不可用、`p_diff_small>0.5`、`hn_degenerate` |
+| L1' 结构指纹 | 后验：`bm_diff.looks_like_warburg` / `warburg_band_slope`；**数据侧（2026-11-09 接入）：`bm_ws.ws_diagnostics`** | 后验 φζ≈0.5、`P(峰位出窗 ≥1 dec)≥0.5`、贴 τ 边界、R–τ 简并；数据侧端点走向四档（`still_45`/`to_cap`/`to_plateau`/`to_inductive`）+ `log(-Im)` 幂律 | `n_warburg_like`；`degenerate` 时**不自动切 Ws**；数据侧只输出 `gate.ws_diag`，`to_inductive` 直接登记为感抗尾 |
+| L2 触发 | `bm_real._none_needs_ws`（`--auto-mechanism` 默认关） | `acf>0.8` 或最低频 `rms/σ>1.5`；**或** `bm_kk` 低频尾 `is_candidate`（2026-11-09 接入） | 固定 none 选出的 K，**补跑一次 Ws**；`gate.status=="inductive_tail"` 时短路（`skipped_inductive`，`--auto-mechanism-full` 除外） |
+| L3 决策 | `bm_real.select_mechanism` | 配对逐点 LOO `Δ=Σ(逐点差)`、`dse=√(n·Var)`；切换线 `Δ ≥ max(2, 1.5·dse)` | 输出 `none / Ws / uncertain`；护栏：grade 0、`bad_k>0.10`、LOO 不可用、`p_diff_small>0.5`、`hn_degenerate`；`share`（`bm_ws.ws_share_low`）**只写 note、不参与 choice**（阈值未标定，见 `L123_REPORT.md` §4） |
 | L4 前提 | `bm_diff.diffusion_resolution` | `f_D=1/(2πτ_D)` 是否入窗 + 带内核形状差 >2% | `indistinguishable` 时 **elpd 差不能当物理证据**；Ws 模型无 `tauD`，单跑 Ws 为 `level=unknown` |
 
 手动路径：`--diffusion Ws|Wo|both` 显式加入，不叠加自动层。默认 `diffusion=none`。
@@ -126,6 +126,7 @@ K1+Ws 拟合 `A_W=2.035 [1.98, 2.091]` → 那条右端翘尾**确实是** Ws，
 | WP3 | 幅度判据假阴性登记（`diffusion_tail_candidate`；caseE 复算已具备，是否进 E6 待决） | **已登记**（2026-11-09）：caseE 的漏报由 P1 消除——`amp_ok`/`is_candidate` False→True，见 `WS_CRITERION_PLAN.md` §10.4；是否进 E6 仍待决 |
 | WP4 | `bm_kk.py:389` 注释方向修正（不触碰判据逻辑） | **已完成**（2026-11-09）：docstring 按真值重写，删「caseE 无扩散元件/被挡掉」，补 `−Im ≤ 0` 早退分支与 `slope_im` 字段；31 条谱六字段 0 处差异，`nofit` 18/18 |
 | WP5 | 可检测下限登记（P4）：把 `SNR_im ≈ 15`、天花板 0.876 写进 §3.1 | **已完成**（2026-11-09）：纯文档；1280 条曲面数据见 `evidence/ws_crit/limit_surface.json` （`limits.p50=14.89`、`ceiling=0.876`） |
+| WP6 | L1'/L2/L3 接入：`bm_ws` 入生产、门控用 `is_candidate` 触发、感抗尾短路、份额只报不判 | **已完成**（2026-11-09）：迁移对拍 31 谱 × 9 字段 + 8 组 npz **0 差异**；L2 在 31 条谱上不一致 0；实跑 `caseE` 逐位不变（Δ=131.93）、`AZ31-4Li_100` 拟合次数 2→1；回归全绿；报告 `evidence/ws_crit/L123_REPORT.md` |
 
 ### WP1 预注册口径（与 M6 §6.1.2 一致，本次不新增判据）
 
@@ -221,3 +222,4 @@ $PY evidence/m6/b3b_run.py --out out/m6/b3b     # 15 组正式实验
 | 2026-11-08 | **WP1 完成并冻结**：15/15 组结果定稿，结论名称改为「当前混合初始化与采样流程下的 seed 敏感性」 | 旧名称易被误读为只研究 NUTS 轨迹随机性；分述 K 选择一致与采样等级一次降级；登记不修改 M3.5 `sampler_sensitive`；不追加 seed、不重跑、不调整判据 |
 | 2026-11-09 | **L1 幅度判据换 `log(−Im)`（P1 补丁已应用，未提交）**；WP3 登记、WP4 完成 | `log\|Z\|` 被 `R_inf` 压平 → caseE / caseE_warburg 漏报（`A_W=2` 真值却判"无候选"）。补丁经 `nofit` 18/18、`fast` 18/0、影子对拍 0/24 验证；**18 条真实 AZ31 六字段零变化**（低频 `−Im ≤ 0` 走早退分支），不影响 E2 与 M6 结论 |
 | 2026-11-09 | **WP5 / P4 完成**：新增 §3.1 定量检测下限（`SNR_im≈14.9` 为 50%、天花板 0.876、真实谱只能用代理指标做事后诊断） | 把 §3 Q4「只能否证」补成可用的定量边界；纯文档，不改代码、不改判据、不动 `G8b` |
+| 2026-11-09 | **WP6 完成（L1'/L2/L3 接入）**：新建 `bm_ws.py`（生产判据模块），`diffusion_gate` 增 `ws_diag` 与 `inductive_tail`，触发条件加 `is_candidate`，感抗尾短路省一次拟合；L3 份额只挂诊断 | 「45° 候选只记录、不作门槛」不再是事实；L3 的 5% 闸门在窄窗会误杀真 Ws（0.057 vs 0.05），故只报不判；默认路径逐位不变 |

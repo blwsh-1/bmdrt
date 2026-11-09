@@ -1,0 +1,292 @@
+{
+ "gate_rows": [
+  {
+   "tag": "e2:AZ31-4Li_100｜真实 AZ31：感抗尾",
+   "is_candidate": false,
+   "n_warburg_like": 0,
+   "status": "inductive_tail",
+   "enter": false,
+   "term": "to_inductive",
+   "family": "inductive_tail",
+   "verdict": "reject",
+   "band_dec": 0.14285855111339063,
+   "slope_im": NaN
+  },
+  {
+   "tag": "ex:example_caseE｜真含 Ws（宽窗）",
+   "is_candidate": true,
+   "n_warburg_like": 0,
+   "status": "candidate",
+   "enter": true,
+   "term": "still_45",
+   "family": "Ws_or_wide_CPE",
+   "verdict": "candidate",
+   "band_dec": 1.633333328576604,
+   "slope_im": -0.49236674395527624
+  },
+  {
+   "tag": "ex:example_caseE_warburg｜真含 Ws（窄窗）",
+   "is_candidate": true,
+   "n_warburg_like": 0,
+   "status": "candidate",
+   "enter": true,
+   "term": "still_45",
+   "family": "Ws_or_wide_CPE",
+   "verdict": "candidate",
+   "band_dec": 0.5333334765697578,
+   "slope_im": -0.447624445337463
+  },
+  {
+   "tag": "ex:example_caseF_wo｜真 Wo：L1 不给候选",
+   "is_candidate": false,
+   "n_warburg_like": 0,
+   "status": "no_candidate",
+   "enter": false,
+   "term": "to_cap",
+   "family": "Wo_like",
+   "verdict": "candidate",
+   "band_dec": 0.26666686457205835,
+   "slope_im": -0.9747170438159376
+  },
+  {
+   "tag": "ex:example_caseE｜HN 简并优先于候选",
+   "is_candidate": true,
+   "n_warburg_like": 1,
+   "status": "degenerate",
+   "enter": false,
+   "term": "still_45",
+   "family": "Ws_or_wide_CPE",
+   "verdict": "candidate",
+   "band_dec": 1.633333328576604,
+   "slope_im": -0.49236674395527624
+  }
+ ],
+ "l2": {
+  "n": 31,
+  "n_enter": 3,
+  "n_mismatch": 0,
+  "rows": [
+   {
+    "tag": "e2:Blank_0.1KBr_pH10_EIS_PtCu_1.2V",
+    "verdict": "undecidable",
+    "gate": "no_candidate",
+    "enter": false
+   },
+   {
+    "tag": "e2:Blank_0.1KBr_pH10_EIS_PtCu_1.2V_1",
+    "verdict": "undecidable",
+    "gate": "no_candidate",
+    "enter": false
+   },
+   {
+    "tag": "e2:Blank_0.1KBr_pH10_EIS_PtCu_1.2V_2",
+    "verdict": "undecidable",
+    "gate": "no_candidate",
+    "enter": false
+   },
+   {
+    "tag": "e2:Blank_0.1KBr_pH10_EIS_PtCu_1.2V_3",
+    "verdict": "undecidable",
+    "gate": "no_candidate",
+    "enter": false
+   },
+   {
+    "tag": "e2:Blank_0.1KBr_pH10_EIS_PtCu_1.2V_4",
+    "verdict": "undecidable",
+    "gate": "no_candidate",
+    "enter": false
+   },
+   {
+    "tag": "e2:Blank_0.1KBr_pH10_EIS_PtCu_1.2V_5",
+    "verdict": "undecidable",
+    "gate": "no_candidate",
+    "enter": false
+   },
+   {
+    "tag": "e2:AZ31-4Li_100",
+    "verdict": "reject",
+    "gate": "inductive_tail",
+    "enter": false
+   },
+   {
+    "tag": "e2:AZ31-4Li_150",
+    "verdict": "reject",
+    "gate": "inductive_tail",
+    "enter": false
+   },
+   {
+    "tag": "e2:AZ31-4Li_0",
+    "verdict": "reject",
+    "gate": "inductive_tail",
+    "enter": false
+   },
+   {
+    "tag": "e2:AZ31-4Li_5",
+    "verdict": "reject",
+    "gate": "inductive_tail",
+    "enter": false
+   },
+   {
+    "tag": "e2:AZ31-4Li_10",
+    "verdict": "reject",
+    "gate": "inductive_tail",
+    "enter": false
+   },
+   {
+    "tag": "e2:AZ31-4Li_50",
+    "verdict": "reject",
+    "gate": "inductive_tail",
+    "enter": false
+   },
+   {
+    "tag": "e2:AZ31-8Li_0",
+    "verdict": "reject",
+    "gate": "inductive_tail",
+    "enter": false
+   },
+   {
+    "tag": "e2:AZ31-8Li_5",
+    "verdict": "reject",
+    "gate": "inductive_tail",
+    "enter": false
+   },
+   {
+    "tag": "e2:AZ31-8Li_10",
+    "verdict": "reject",
+    "gate": "inductive_tail",
+    "enter": false
+   },
+   {
+    "tag": "e2:AZ31-8Li_50",
+    "verdict": "reject",
+    "gate": "inductive_tail",
+    "enter": false
+   },
+   {
+    "tag": "e2:AZ31-8Li_100",
+    "verdict": "reject",
+    "gate": "inductive_tail",
+    "enter": false
+   },
+   {
+    "tag": "e2:AZ31-8Li_150",
+    "verdict": "reject",
+    "gate": "inductive_tail",
+    "enter": false
+   },
+   {
+    "tag": "e2:AZ31-12Li_0",
+    "verdict": "reject",
+    "gate": "inductive_tail",
+    "enter": false
+   },
+   {
+    "tag": "e2:AZ31-12Li_5",
+    "verdict": "reject",
+    "gate": "inductive_tail",
+    "enter": false
+   },
+   {
+    "tag": "e2:AZ31-12Li_10",
+    "verdict": "reject",
+    "gate": "inductive_tail",
+    "enter": false
+   },
+   {
+    "tag": "e2:AZ31-12Li_50",
+    "verdict": "reject",
+    "gate": "inductive_tail",
+    "enter": false
+   },
+   {
+    "tag": "e2:AZ31-12Li_100",
+    "verdict": "reject",
+    "gate": "inductive_tail",
+    "enter": false
+   },
+   {
+    "tag": "e2:AZ31-12Li_150",
+    "verdict": "reject",
+    "gate": "inductive_tail",
+    "enter": false
+   },
+   {
+    "tag": "ex:example_caseE",
+    "verdict": "candidate",
+    "gate": "candidate",
+    "enter": true
+   },
+   {
+    "tag": "ex:example_caseE_warburg",
+    "verdict": "candidate",
+    "gate": "candidate",
+    "enter": true
+   },
+   {
+    "tag": "ex:example_caseF",
+    "verdict": "reject",
+    "gate": "no_candidate",
+    "enter": false
+   },
+   {
+    "tag": "ex:example_caseF_wo",
+    "verdict": "candidate",
+    "gate": "candidate",
+    "enter": true
+   },
+   {
+    "tag": "ex:example_caseG_wo_only",
+    "verdict": "undecidable",
+    "gate": "no_candidate",
+    "enter": false
+   },
+   {
+    "tag": "ex:example_mag_phase",
+    "verdict": "reject",
+    "gate": "no_candidate",
+    "enter": false
+   },
+   {
+    "tag": "ex:example_zre_zim",
+    "verdict": "reject",
+    "gate": "no_candidate",
+    "enter": false
+   }
+  ]
+ },
+ "l3": [
+  {
+   "label": "caseE 真 Ws，0.01 Hz 窗",
+   "f_min": 0.01,
+   "A_W": 2.0351275546957344,
+   "share_med": 0.16076162826849974,
+   "share_lo": 0.15691909418245828,
+   "share_hi": 0.16466897112818976,
+   "choice": "none",
+   "status": "comparison_incomplete",
+   "note_has_share": true
+  },
+  {
+   "label": "caseE 真 Ws，0.1 Hz 窗",
+   "f_min": 0.1,
+   "A_W": 2.043353646931985,
+   "share_med": 0.057239022557806815,
+   "share_lo": 0.05262685755581762,
+   "share_hi": 0.061337663320001685,
+   "choice": "none",
+   "status": "comparison_incomplete",
+   "note_has_share": true
+  },
+  {
+   "label": "错元件：Wo 数据用 Ws 拟合",
+   "f_min": 0.1,
+   "A_W": 13.652964963855386,
+   "share_med": 0.011149221302218876,
+   "share_lo": 0.0035387892760012202,
+   "share_hi": 0.08513681620364456,
+   "choice": "none",
+   "status": "comparison_incomplete",
+   "note_has_share": true
+  }
+ ]
+}

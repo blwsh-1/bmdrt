@@ -268,13 +268,13 @@ Huang 2018 的第 4 条假设（纯扩散、中性物种）在电解质里本来
 | 层 | 现状 | 本文给什么 |
 |---|---|---|
 | L1 事前形状 `bm_kk.diffusion_tail_candidate` | **`log(-Im)`** 幅度判据 + Nyquist 相位判据（2026-11-09 起；旧为 `log\|Z\|`） | 补丁 `patches/n1_l1_amplitude.patch` **已应用**（§9.1、§10.4）；**注意它有下游行为影响**：`kk_check` 用 `tail["f_cut"]` 决定要不要跑 `add_cap` 复验 —— `caseE`/`caseE_warburg` 的 `f_cut` 由 None 变为 0.4299/0.8577，`caseF_wo`/`caseG_wo_only` 反过来变为 None |
-| L1' 结构指纹 `bm_diff.looks_like_warburg` | 后验分量级（`φζ`、峰位、简并） | 补一个**数据侧**的端点走向，可在拟合前先分流；`to_inductive` 补上缺档 |
-| L2 触发 `bm_real._none_needs_ws` | `acf>0.8` 或 `rms/σ>1.5` | 可加 `verdict==candidate` 作触发条件之一（待批） |
-| L3 决策 `select_mechanism` | 配对 LOO | 加 `rpc_share`（Wo）/`ws_share_low`（Ws）作简约闸门：份额 <5% 时不因 LOO 微小优势切模型 |
+| L1' 结构指纹 `bm_diff.looks_like_warburg` | 后验分量级（`φζ`、峰位、简并） | **已接入**（2026-11-09）：`bm_ws.ws_diagnostics` 入生产，`diffusion_gate` 输出 `ws_diag`；`to_inductive` 登记为感抗尾（只否证，不改门控结论） |
+| L2 触发 `bm_real._none_needs_ws` | `acf>0.8` 或 `rms/σ>1.5` | **已接入**（2026-11-09）：`gate.status=="candidate"` 与残差条件取**或**；`inductive_tail` 时短路（`skipped_inductive`，`--auto-mechanism-full` 除外） |
+| L3 决策 `select_mechanism` | 配对 LOO | **只挂诊断**（2026-11-09）：`share` 写进 `note`，**不参与 choice**。`ws_share_low` 随 `f_min` 漂移（同一真值 0.161 @0.01 Hz vs 0.057 @0.1 Hz），5% 闸门未标定，见 `L123_REPORT.md` §4 |
 | L4 前提 `diffusion_resolution` | `f_D` 是否入窗 | 与本文 `term` 同一件事，但 L4 需要先拟合；本文可先给 |
 
-**接入顺序**：先只接 L1 的幅度判据替换（补丁已备好、`git apply --check` 通过），
-其余待批准。
+**接入顺序**：L1 幅度判据（P1，已应用）→ L1'/L2（2026-11-09 接入，见 §10.6）→
+L3 闸门（**未接**：阈值未标定，只挂诊断）。
 
 ---
 
@@ -311,6 +311,7 @@ $PY evidence/ws_crit/n1_fitcasee.py    # caseE 的双模型对拍（§3.2，只�
 | P3 | 把 `to_inductive` 接到吸附支路做预筛 | **已否**：18 条真实谱上零收益（会挡掉 0/18），合成侧只影响不被采用的分支（§10.2） |
 | P4 | `ws_buried` 的可检测下限写进 `WS_DECISION_PROJECT` 的「够不够判」一节 | **已执行（2026-11-09）**：写入 `WS_DECISION_PROJECT.md` **§3.1**（`SNR_im=14.9` 为 50% 检测点、天花板 0.876、真实谱只能用代理指标做事后诊断）；纯文档，见 §10.5 |
 | P5 | 给 18 条真实谱一个有**正面**模型解释（`R∥L` 吸附支路） | 未启动；`ADSORPTION_PROJECT` 侧的前置是「用 `--auto-adsorption` 跑一条正式档」，E3/E4 缩减口径下未批准 |
+| P6 | L1'/L2/L3 接入生产：`bm_ws` 端点走向、`is_candidate` 触发、感抗尾短路、份额只报不判 | **已执行（2026-11-09）**：迁移对拍 0 差异；L2 在 31 条谱上不一致 0；`caseE` Δelpd 逐位不变（131.93）、`AZ31-4Li_100` 拟合次数 2→1；回归全绿；详见 `evidence/ws_crit/L123_REPORT.md` 与 §10.6 |
 
 **不做**（已证不可行）：Boukamp 梳齿作为判据（§9.3）；用 `R_top/R_total`
 区分 `Wshort` 与单一 ZARC（§9.3）；用 DRT 处理 `Wo`（串联电容不在表示能力内）。
@@ -424,7 +425,7 @@ $PY evidence/ws_crit/n1_fitcasee.py    # caseE 的双模型对拍（§3.2，只�
 - 用法：`SNR_im < 15` 的谱应当预期 `undecidable`，而不是判"没有扩散"。
   这正是 §5.3（"没看见 ≠ 没有"）的定量版本。
 
-## 10. P1–P3 执行（2026-11-09，E2 跑完后自动接手）
+## 10. P1–P6 执行（2026-11-09，E2 跑完后自动接手）
 
 ### 10.1 P2：幅度带宽**不按**端点走向分设 —— 结论是"不改"
 
@@ -567,3 +568,42 @@ E2 是逐 job 起 `subprocess.run`，所以 P1 只能在 E2 完成后落地。�
   **只能事后诊断，不能事前筛选**；不参与真假阳性统计、不改 `G8b`。
 
 不改代码、不改判据、不重跑任何拟合。
+
+### 10.6 P6：L1'/L2/L3 接入（2026-11-09）
+
+**结论先行**：L1'、L2 **判据与接口都完善，已接入**；L3 **只挂诊断、不接闸门**。
+
+改动：
+
+- 新建 `bm_ws.py`（由 `evidence/ws_crit/bm_wscrit.py` 派生，**只改文件头定位**，
+  判据一行未动；自检 7/7）；
+- `bm_real.diffusion_gate(..., f, Z)`：新增 `ws_diag`（端点走向 / 家族 / verdict /
+  段长 / 斜率）与 `status="inductive_tail"`；`to_inductive` 优先于「非候选」判定；
+- 触发条件：`is_candidate`（`gate.status=="candidate"`）与残差条件取**或**；
+- 感抗尾短路：`status="skipped_inductive"`，不补跑 Ws（`--auto-mechanism-full` 除外）；
+- `select_mechanism(..., share=...)`：`ws_share_low` 只写 `note`，**不改 choice**。
+
+验证：
+
+| 项 | 结果 |
+|---|---|
+| 迁移对拍 | 31 条谱 × 9 字段 + 8 组 npz × 2 函数，**0 差异**（`relocate_check.json`） |
+| L1' 分档 | AZ31→`inductive_tail`；caseE 两条→`candidate`；`caseF_wo`→`no_candidate`（数据侧 `Wo_like` 不带动门控）；简并优先 `degenerate` |
+| L2 一致性 | 31 条谱 `verdict==candidate` 与 `enter` 不一致 **0** |
+| 实跑 `caseE` | `switched`，Δelpd=131.93 ≥ 25.83，与接入前逐位相同 |
+| 实跑 `AZ31-4Li_100` | 拟合 2→1 次，`skipped_inductive` 保持 none |
+| 回归 | `nofit` 18/18、`fast` 18/0/7、`bmdrt.py check` 18/18、单测 4/4+10/10+6/6 |
+
+L3 不接闸门的理由（实测份额）：
+
+| 组 | `f_min` | `share` 中位 [90% CI] |
+|---|---|---|
+| `caseE` 真 Ws | 0.01 Hz | 0.161 [0.157, 0.165] |
+| `caseE_warburg` 同一真值 | 0.1 Hz | **0.057** [0.053, 0.061] |
+| `caseF_wo` 错元件（Ws 拟合） | 0.1 Hz | 0.011 [0.004, 0.085] |
+
+真 Ws 在窄窗距 5% 阈值只剩 0.7 个百分点 → 阈值不是窗口不变量。要接闸门，先做
+「份额 × 窗口」标定（或改用 `Re Z_Ws(f_min)/σ_im` 的信噪比口径，与 §9.4 同源）。
+
+**默认路径逐位不变**：`--auto-mechanism` 默认关，`diffusion_gate` 只在该分支被调用；
+`select_k` / `select_mechanism` 的决策规则未改。

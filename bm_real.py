@@ -60,6 +60,11 @@ try:                                    # 扩散诊断是可选的；缺了只�
 except Exception:                       # pragma: no cover
     DIFF = None
 
+try:                                    # Ws 数据侧判据（端点走向 / 份额）；缺了只少证据
+    import bm_ws as WS
+except Exception:                       # pragma: no cover
+    WS = None
+
 try:                                    # K-K 事前门禁；缺了只是少一道体检，不阻断拟合
     from bm_kk import kk_check as _kk_check
     from bm_kk import format_report as _kk_format_report
@@ -1325,29 +1330,47 @@ def _none_needs_ws(res, acf_thr: float = 0.8, low_snr_thr: float = 1.5):
                  acf_thr=acf_thr, low_snr_thr=low_snr_thr))
 
 
-def diffusion_gate(kk, none_best, pres=None, pk=None):
+def diffusion_gate(kk, none_best, pres=None, pk=None, f=None, Z=None):
     """门控：只决定「要不要补跑 Ws」，不做模型比较、不改 K。
 
     证据顺序（弱 → 强）：
       1. KK 低频尾 45° 候选（`bm_kk.diffusion_tail_candidate`，必要不充分）；
-      2. none 拟合后的 `n_warburg_like`（HN 分量是否已在替扩散）。
+      2. **数据侧端点走向**（`bm_ws.ws_diagnostics`）：`to_inductive` 直接登记成
+         感抗尾（三类扩散尾都要求 `-Im>0`，符号不符即否证）；`to_cap` /
+         `to_plateau` 只记录家族，不改门控结论；
+      3. none 拟合后的 `n_warburg_like`（HN 分量是否已在替扩散）。
 
     `n_warburg_like > 0` 时**不进入**比较：这是「简并」警告，不是加 W 的
     理由——加 Ws 只会和宽 HN 抢同一段自由度，Δelpd 通常很小甚至为负。
     自动层应输出 uncertain，建议人工对照。
+
+    `f` / `Z` 缺省时跳过第 2 条，行为与 2026-11-09 之前逐位一致。
     """
     tail = ((kk or {}).get("tail") or {})
     nw = int(none_best.get("n_warburg_like", 0) or 0)
+    ws_diag = None
+    if WS is not None and f is not None and Z is not None:
+        try:
+            ws_diag = WS.ws_diagnostics(f, Z)
+        except Exception:                   # noqa: BLE001
+            ws_diag = None
     g = dict(enter=False, status="no_candidate", reason="",
              kk_tail=dict(is_candidate=bool(tail.get("is_candidate")),
                           slope_ny=tail.get("slope_ny"),
                           slope_z=tail.get("slope_z")),
              drt=_drt_evidence(pres, pk),
+             ws_diag=ws_diag,
              n_warburg_like=nw)
     if nw > 0:
         g.update(status="degenerate",
                  reason=f"none 的 HN 已有 {nw} 个分量呈 Warburg 退化指纹；"
                         f"加 Ws 与宽 HN 不可分辨，不自动切换，建议人工对照")
+        return g
+    if ws_diag and ws_diag.get("term") == "to_inductive":
+        g.update(status="inductive_tail",
+                 reason="低频 `-Im<0`（感抗尾，数据侧判据）：三类扩散尾都要求"
+                        "`-Im>0` 且按 f^(-1/2)~f^(-1) 增长，符号不符即否证，"
+                        "不用再看 45° 段长；该特征走吸附支路（R∥L）")
         return g
     if not tail.get("is_candidate"):
         g.update(status="no_candidate",
@@ -1358,7 +1381,7 @@ def diffusion_gate(kk, none_best, pres=None, pk=None):
     return g
 
 
-def select_mechanism(none_res, ws_res, gate, exploratory=False):
+def select_mechanism(none_res, ws_res, gate, exploratory=False, share=None):
     """外层选择器：none vs Ws。**不修改 `select_k()` 的语义**。
 
     规则（取严，全部可复核）：
@@ -1374,9 +1397,16 @@ def select_mechanism(none_res, ws_res, gate, exploratory=False):
     `diffusion_resolution.resolvable=False` **只记录、不降级**：它判的是
     Ws 与 Wo 的可分辨性，不是「加不加 W」。默认只选 Ws 时用它一票否决，
     会把大量本来能加扩散的谱打成 uncertain；要判 Wo 时才需要这条。
+
+    `share`（`bm_ws.ws_share_low` 的结果）**只作诊断、不参与决策**：
+    `Ws` 的 `Rw` 是窗口归一化幅值，与 `R_p` 比没有物理意义，改用
+    `Re Z_Ws(f_min)` 占份额；但该量随窗口下限漂移（同一条 `A_W=2` 的谱
+    在 0.01 Hz 窗是 0.161、0.1 Hz 窗只有 0.057），5% 阈值没有标定，
+    窄窗会误杀真 `Ws`。所以这里只把数报表，闸门等标定完成后再加。
     """
     out = dict(choice="none", status="not_tested", reason="", gate=gate,
-               delta=None, dse=None, threshold=None, guards={}, note=[])
+               delta=None, dse=None, threshold=None, guards={}, note=[],
+               share=share)
     if ws_res is None:
         out.update(status="fit_missing", reason="Ws 未拟合，保持 none")
         return out
@@ -1394,6 +1424,13 @@ def select_mechanism(none_res, ws_res, gate, exploratory=False):
     out["guards"] = guards
     dres = ws_res.get("diffusion_resolution") or {}
     out["ws_resolvable"] = dres.get("resolvable")
+    if share and np.isfinite(share.get("share_med", float("nan"))):
+        out["note"].append(
+            f"简约诊断（不参与决策）：Ws 在 f_min={share['f_min']:.3g} Hz 的 "
+            f"Re 份额中位 {share['share_med']:.3f}（90% CI "
+            f"[{share['share_lo']:.3f}, {share['share_hi']:.3f}]）。"
+            f"该量随窗口下限漂移（同一条 A_W=2 的谱：0.01 Hz 窗 0.161、"
+            f"0.1 Hz 窗 0.057），阈值未标定 → 只报不判")
     if dres and dres.get("resolvable") is False:
         out["note"].append("Ws/Wo 在当前频窗不可分辨：可以加 Ws，但不能据此"
                            "宣称有限长扩散（Wo）；要判 Wo 需更宽频窗")
@@ -2599,14 +2636,36 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
     # 时保持原行为，不叠加自动层。
     auto_mech = None
     if auto_mechanism and diffusion is None:
-        gate = diffusion_gate(kk, best, pres=pres, pk=pk)
+        gate = diffusion_gate(kk, best, pres=pres, pk=pk, f=f, Z=Z)
         need, ev = _none_needs_ws(best)
+        gate_enter = gate.get("status") == "candidate"
         print("\n=== ③c 机制比较（none vs Ws，独立于 select_k） ===")
-        print(f"  门控证据：{gate['status']} — {gate['reason']}（只记录，不决策）")
+        print(f"  门控证据：{gate['status']} — {gate['reason']}")
+        wd = gate.get("ws_diag") or {}
+        if wd:
+            _bd = wd.get("band_dec", float("nan"))
+            _bds = f"{_bd:.2f}" if np.isfinite(_bd) else "—"
+            print(f"  数据侧端点：{wd.get('term')}（family={wd.get('family')}，"
+                  f"verdict={wd.get('verdict')}，45° 段 {_bds} dec）")
         print(f"  none 残差：acf={ev['acf']:.2f}，低频 rms/σ="
               f"{ev['low_rms_over_sigma']:.2f}（阈值 {ev['acf_thr']:.1f} / "
               f"{ev['low_snr_thr']:.1f}）")
-        if not need and not auto_mechanism_full:
+        print(f"  触发：残差{'有系统性' if need else '无系统性'}"
+              f"{'；低频尾是 45° 候选（门控）' if gate_enter else ''}"
+              f"{'；感抗尾 → 不补跑' if gate.get('status') == 'inductive_tail' and not auto_mechanism_full else ''}")
+        if gate.get("status") == "inductive_tail" and not auto_mechanism_full:
+            # L1' 的价值就在这里：数据侧已否证「窗内容性扩散尾」，补跑 Ws
+            # 只会让 Aw 不可辨识（实测 18/18 真实谱都被 diff_amp_unidentifiable
+            # 挡回），白花一次拟合。`--auto-mechanism-full` 时不短路，保留验证路径。
+            auto_mech = dict(choice="none", status="skipped_inductive",
+                             reason="低频 -Im<0（感抗尾，数据侧判据）：三类扩散尾"
+                                    "都要求 -Im>0 且按 f^(-1/2)~f^(-1) 增长，"
+                                    "符号不符即否证；不进入 none vs Ws 比较，"
+                                    "该特征走吸附支路（R∥L）",
+                             gate=gate, residual=ev, delta=None, dse=None,
+                             threshold=None, guards={}, note=[])
+            print(f"  → 跳过 Ws：{auto_mech['reason']}")
+        elif not need and not gate_enter and not auto_mechanism_full:
             auto_mech = dict(choice="none", status="skipped_by_residual",
                              reason="none 已拟合到噪声水平（残差无系统性），"
                                     "补跑 Ws 不可能显著改善，跳过",
@@ -2615,13 +2674,21 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
             print(f"  → 跳过 Ws：{auto_mech['reason']}")
         else:
             k_fixed = int(best["K"])
-            why = "强制全量" if auto_mechanism_full else "残差有系统性"
+            why = ("强制全量" if auto_mechanism_full else
+                   ("低频尾 45° 候选（门控）" if gate_enter and not need
+                    else "残差有系统性"))
             print(f"  补跑 Ws：固定 K={k_fixed}（{why}；不重扫 K，"
                   f"成本约 +1 次拟合）")
             best_ws, note_ws, _ = _fit_ks("Ws", tag=f"Ws/K={k_fixed}",
                                           k_list=[k_fixed])
+            share = None
+            if WS is not None and isinstance(best_ws.get("s"), dict):
+                try:
+                    share = WS.ws_share_low(best_ws["s"], float(np.min(f)))
+                except Exception:            # noqa: BLE001
+                    share = None
             auto_mech = select_mechanism(best, best_ws, gate,
-                                         exploratory=bool(quick))
+                                         exploratory=bool(quick), share=share)
             auto_mech["residual"] = ev
             print(f"\n  → 机制选择：{auto_mech['status']} — "
                   f"{auto_mech['reason']}")

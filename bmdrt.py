@@ -43,11 +43,15 @@
     --kk 默认 gate：拟合前先过 Lin-KK，判 fail 就写 fit_performed=false
     的结果 json 并拒绝定 K（不是运行失败）。数值阈值在 config.json 的 kk 段。
 
-    --auto-mechanism 默认关：先按 none 跑 K；只有 none 的残差仍有系统性
-    （acf>0.8 或最低频段 rms/σ>1.5）才在同一个 K 上补跑一次 Ws，用逐点配对
-    LOO 决定是否切换（Δ ≥ max(2, 1.5·dse)）；否则跳过，保持 none。
+    --auto-mechanism 默认关：先按 none 跑 K；满足下面任一条件才在同一个 K 上
+    补跑一次 Ws，用逐点配对 LOO 决定是否切换（Δ ≥ max(2, 1.5·dse)）：
+      · none 的残差仍有系统性（acf>0.8 或最低频段 rms/σ>1.5）；
+      · 低频尾是 45° 候选（`bm_kk` 事前形状判据 `is_candidate`）。
+    两条都不成立就跳过，保持 none。
     --auto-mechanism-full 强制每条谱都补跑 Ws（验证用，成本约 +50%）。
-    45° 指纹只作记录、不作门槛（真 Ws 可能既无 45°、KK 低频残差也不超阈）。
+    数据侧端点走向（`bm_ws`：still_45/to_cap/to_plateau/to_inductive）随门控
+    一起打印并落盘：`to_inductive`（低频 -Im<0）直接登记为感抗尾、不补跑；
+    其余档只记录家族，不改门控结论。
     select_k 语义不变。
 
     --diffusion 默认 none（与改动前逐位一致）。Ws=半无限 Warburg，
