@@ -1,0 +1,31 @@
+case                             status / level                 档    guard_classes                      判据
+ad_fit_missing                   fit_missing                    A    -                                  由 status=fit_missing
+ad_gate_missing                  gate_not_strong                A    -                                  由 status=gate_not_strong 且 gate 缺失
+ad_gate_not_strong               gate_not_strong                B    -                                  由 status=gate_not_strong
+ad_guard_amp                     guard_degraded                 B    amp_unidentifiable→B               guards: amp_unidentifiable
+ad_guard_corner                  guard_degraded                 B    corner_out_of_window→B             guards: corner_out_of_window
+ad_guard_grade0                  guard_degraded                 A    ad_grade0→A                        guards: ad_grade0
+ad_guard_mixed                   guard_degraded                 A    ad_grade0→A,amp_unidentifiable→B   guards: ad_grade0、amp_unidentifiable
+ad_switched                      switched                       C    -                                  由 status=switched
+ad_uncertain                     uncertain                      B    -                                  由 status=uncertain
+ad_ws_taken                      ws_taken                       A    -                                  由 status=ws_taken
+dres_edge                        level=indistinguishable        B    -                                  由 level=indistinguishable
+dres_empty_f                     level=unknown                  A    -                                  由 level=unknown
+dres_indistinguishable           level=indistinguishable        B    -                                  由 level=indistinguishable
+dres_no_diffusion                level=no_diffusion             None -                                  由 level=no_diffusion：该结论不涉及 A/B/C
+dres_resolvable                  level=resolvable               None -                                  由 level=resolvable：该结论不涉及 A/B/C 限制
+dres_unknown                     level=unknown                  A    -                                  由 level=unknown
+mech_comparison_incomplete       comparison_incomplete          A    -                                  由 status=comparison_incomplete
+mech_fit_missing                 fit_missing                    A    -                                  由 status=fit_missing
+mech_guard_diff_amp              guard_degraded                 B    diff_amp_unidentifiable→B          guards: diff_amp_unidentifiable
+mech_guard_hn_degenerate         degenerate                     B    hn_degenerate→B                    guards: hn_degenerate
+mech_guard_mixed_AB              guard_degraded                 A    ws_grade0→A,diff_amp_unidentifiable→B guards: ws_grade0、diff_amp_unidentifiable
+mech_guard_ws_amp                guard_degraded                 B    ws_amp_unidentified→B              guards: ws_amp_unidentified
+mech_guard_ws_bad_k              guard_degraded                 A    ws_bad_k→A                         guards: ws_bad_k
+mech_guard_ws_grade0             guard_degraded                 A    ws_grade0→A                        guards: ws_grade0
+mech_guard_ws_loo_unavailable    guard_degraded                 A    ws_loo_unavailable→A               guards: ws_loo_unavailable
+mech_share_nan                   switched                       C    -                                  由 status=switched
+mech_skipped_inductive           skipped_inductive              B    -                                  由 status=skipped_inductive
+mech_switched                    switched                       C    -                                  由 status=switched
+mech_uncertain                   uncertain                      B    -                                  由 status=uncertain
+mech_ws_worse                    ws_worse                       C    -                                  由 status=ws_worse

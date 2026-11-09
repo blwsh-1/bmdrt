@@ -51,6 +51,7 @@ import numpy as np
 
 import bm_core as B
 import bm_experiments as E
+import bm_grade as GRADE
 import drt as DRT
 from bm_experiments import acf_max
 from drt import prescreen
@@ -1382,6 +1383,18 @@ def diffusion_gate(kk, none_best, pres=None, pk=None, f=None, Z=None):
 
 
 def select_mechanism(none_res, ws_res, gate, exploratory=False, share=None):
+    """外层选择器（公开入口）：none vs Ws。
+
+    只包一层 `bm_grade.annotate`——给结果贴**证据资格档**（A/B/C），
+    不改任何判据、不改 `status` / `reason` / `guards` / `choice` / `delta`。
+    选择规则全在 `_select_mechanism_impl()` 里；要改规则去改那里，别在这里改。
+    """
+    return GRADE.annotate(_select_mechanism_impl(none_res, ws_res, gate,
+                                                 exploratory=exploratory,
+                                                 share=share))
+
+
+def _select_mechanism_impl(none_res, ws_res, gate, exploratory=False, share=None):
     """外层选择器：none vs Ws。**不修改 `select_k()` 的语义**。
 
     规则（取严，全部可复核）：
@@ -1635,6 +1648,17 @@ def detect_ad(f, Z, res_none, frac_lo: float = 0.40,
 
 
 def select_adsorption(none_res, ad_res, gate, exploratory: bool = False) -> dict:
+    """外层选择器（公开入口）：none vs ad(RL)。
+
+    与 `select_mechanism` 同一分工：只包一层 `bm_grade.annotate` 贴资格档，
+    选择规则全在 `_select_adsorption_impl()` 里。
+    """
+    return GRADE.annotate(_select_adsorption_impl(none_res, ad_res, gate,
+                                                  exploratory=exploratory))
+
+
+def _select_adsorption_impl(none_res, ad_res, gate,
+                            exploratory: bool = False) -> dict:
     """外层选择器：none vs ad(RL)。**不修改 select_k() 语义**。
 
     对齐 select_mechanism 的口径（§6.2）：
@@ -1760,6 +1784,7 @@ def component_review(res, f):
     K = int(res["K"])
     p = np.asarray(res.get("p_peak_out", []), float)
     states = {}
+    cgrades = {}
     for i in range(K):
         v = p[i] if i < p.size else float("nan")
         key = f"component_{i + 1}"
@@ -1771,6 +1796,11 @@ def component_review(res, f):
             states[key] = "uncertain"
         else:
             states[key] = "in_window"
+        # 资格档（只加字段，不改 states）：out_of_window 是 **C** —— 参数定得住、
+        # 预测算得出，但本窗没覆盖该特征频率，无权说该过程存在与否；
+        # 原来两种 uncertain（后验缺失 = A / 0.05<p≤0.5 = B）在这里分开。
+        cgrades[key] = GRADE.component_grade(
+            states[key], (float(v) if np.isfinite(v) else None))
 
     # 窗口内阻抗贡献：后验中位数参数在 f_min 与几何中心处的分量贡献。
     contrib = []
@@ -1856,6 +1886,9 @@ def component_review(res, f):
 
     return dict(
         component_identifiability=states,
+        # 与 states 一一对应的资格档（A/B/C/None）。**C 档原来只活在文字里**：
+        # 峰位出窗的分量会被人读成「没有这个分量」，其实是「本窗无权评价」。
+        component_grade=cgrades,
         window_contribution=contrib,
         parameter_identifiability=param,
         residual_review=residual,
@@ -2689,6 +2722,7 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
                                     "该特征走吸附支路（R∥L）",
                              gate=gate, residual=ev, delta=None, dse=None,
                              threshold=None, guards={}, note=[])
+            auto_mech = GRADE.annotate(auto_mech)   # 资格档 B（数据侧否证）
             print(f"  → 跳过 Ws：{auto_mech['reason']}")
         elif not need and not gate_enter and not auto_mechanism_full:
             auto_mech = dict(choice="none", status="skipped_by_residual",
@@ -2696,6 +2730,7 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
                                     "补跑 Ws 不可能显著改善，跳过",
                              gate=gate, residual=ev, delta=None, dse=None,
                              threshold=None, guards={}, note=[])
+            auto_mech = GRADE.annotate(auto_mech)   # 资格档 B（残差已到噪声）
             print(f"  → 跳过 Ws：{auto_mech['reason']}")
         else:
             k_fixed = int(best["K"])
@@ -2715,7 +2750,8 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
             auto_mech = select_mechanism(best, best_ws, gate,
                                          exploratory=bool(quick), share=share)
             auto_mech["residual"] = ev
-            print(f"\n  → 机制选择：{auto_mech['status']} — "
+            print(f"\n  → 机制选择：{auto_mech['status']} "
+                  f"[资格档 {auto_mech.get('grade') or '-'}] — "
                   f"{auto_mech['reason']}")
             for t in auto_mech.get("note", []):
                 print(f"    · {t}")
@@ -2735,6 +2771,7 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
                                  "不再评估吸附环",
                           gate=None, delta=None, dse=None, threshold=None,
                           guards={}, note=[])
+            ad_sel = GRADE.annotate(ad_sel)     # 资格档 A（代码范围限制，非数据结论）
             print(f"  → 跳过吸附判定：{ad_sel['reason']}")
         else:
             ad_gate = detect_ad(f, Z, best)
@@ -2744,6 +2781,7 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
                               reason=ad_gate["reason"], gate=ad_gate,
                               delta=None, dse=None, threshold=None,
                               guards={}, note=[])
+                ad_sel = GRADE.annotate(ad_sel)   # 资格档按 gate.status 定（A/B）
                 print(f"  → 不补跑 ad：{ad_gate['reason']}")
             else:
                 k_fixed = int(best["K"])
@@ -2754,7 +2792,8 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
                     adsorption_use="RL", ad_init=ad_init)
                 ad_sel = select_adsorption(best, best_ad, ad_gate,
                                            exploratory=bool(quick))
-                print(f"\n  → 吸附选择：{ad_sel['status']} — {ad_sel['reason']}")
+                print(f"\n  → 吸附选择：{ad_sel['status']} "
+                      f"[资格档 {ad_sel.get('grade') or '-'}] — {ad_sel['reason']}")
                 for t in ad_sel.get("note", []):
                     print(f"    · {t}")
                 if ad_sel["choice"] == "ad":

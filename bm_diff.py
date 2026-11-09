@@ -68,6 +68,8 @@ from __future__ import annotations
 
 import numpy as np
 
+import bm_grade as GRADE
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -474,6 +476,19 @@ def looks_like_warburg(sig, tol_pz=0.04, min_bound=0.30, min_out=1.0):
 # --------------------------------------------------------------------------
 
 def diffusion_resolution(f, s=None, diffusion=None, tol: float = 0.02) -> dict:
+    """本频段能否区分 W_short（透射）与 W_open（阻挡）—— 公开入口。
+
+    只包一层 `bm_grade.annotate_level`：给 `level` 贴**证据资格档**
+    （`unknown` = **A**「拿不到 tauD，属配置/算法问题」；`indistinguishable`
+    = **B**「数据边界」；`resolvable` / `no_diffusion` = None）。
+    这两个原来在 `note` 里都读作「不可分」，只有细读分得开。
+    判定逻辑全在 `_diffusion_resolution_impl()`，本层不改任何 `level`。
+    """
+    return GRADE.annotate_level(
+        _diffusion_resolution_impl(f, s=s, diffusion=diffusion, tol=tol))
+
+
+def _diffusion_resolution_impl(f, s=None, diffusion=None, tol: float = 0.02) -> dict:
     """判断**本频段**能不能区分 W_short（透射）与 W_open（阻挡）。
 
     为什么必须单独判

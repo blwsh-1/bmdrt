@@ -83,7 +83,10 @@ L3 的关键改动：**从「裁决器」变成「记账器」**。它输出的�
 
 ---
 
-## 3. 现状映射（代码事实，2026-11-09 核对）
+## 3. 现状映射（代码事实，2026-11-09 核对；§3.4 为拆分后的口径）
+
+> 本节 §3.1–§3.3 记录**拆分前**的样子（保留是为了能复核「原来哪里混了」）。
+> 拆分后的实际字段见 **§3.4**，那是现在 JSON 里的东西。
 
 ### 3.1 已有状态字面量 → 档位
 
@@ -111,16 +114,16 @@ L3 的关键改动：**从「裁决器」变成「记账器」**。它输出的�
 
 **(1) `select_mechanism` 的 8 个 guard 全部汇入一个 `guard_degraded`**
 
-`bm_real.py:1421-1435` 的 guards 分属两档：
+`select_mechanism()`（`_select_mechanism_impl()` 里的 `guards` dict）分属两档：
 
 - **A 类**（算法）：`ws_grade0`、`ws_bad_k`、`ws_loo_unavailable`
 - **B 类**（数据）：`diff_amp_unidentifiable`、`hn_degenerate`、`ws_amp_unidentified`
 
-但 `bm_real.py:1486` 只输出 `status="guard_degraded"` 加一条拼起来的 `reason`。消费端无法区分「采样崩了」与「数据定不住幅值」——前者该重跑，后者重跑一万次也一样。
+但该函数只输出 `status="guard_degraded"` 加一条拼起来的 `reason`。消费端无法区分「采样崩了」与「数据定不住幅值」——前者该重跑，后者重跑一万次也一样。
 
 **(2) `diffusion_resolution` 的 `unknown` 与 `indistinguishable` 都读作「不可分」**
 
-`bm_diff.py:553` 的 `unknown` 是「模型里没有 `tauD` 后验」（A：配置缺失），`:563/:577` 的 `indistinguishable` 是「形状差 < 容差」（B：数据边界）。两者 `note` 都写「不可分」，只有细读才分得开。
+`diffusion_resolution()` 的 `unknown` 是「模型里没有 `tauD` 后验」（A：配置缺失），`indistinguishable`（两个分支：形状差 ≤ tol / 拐点在窗下）是「数据边界」（B）。两者 `note` 都写「不可分」，只有细读才分得开。
 
 **(3) `p_peak_out_max` 高 → 「分量峰在窗外」被读成「没有这个分量」**
 
@@ -129,6 +132,41 @@ L3 的关键改动：**从「裁决器」变成「记账器」**。它输出的�
 ### 3.3 C 档缺失的后果
 
 现有 JSON 里最接近 C 的表达是 `diffusion_resolution.note` 的自然语言段落。也就是说：**C 档目前只存在于文字里，不存在于结构里**。任何下游程序（批量表、报告生成、软件界面）都无法可靠地把「物理相容」与「物理已确认」分开——因为它俩现在都是同一个空字段。
+
+### 3.4 拆分后（v2，已落地 2026-11-09）
+
+新增 `bm_grade.py`（表驱动，`python bm_grade.py` 自检 56/56），只做映射：
+**不读数据、不改任何 `status` / `reason` / `guards` / `choice` / `delta`**。
+
+| 输出位置 | 新增字段 | 取值 |
+|---|---|---|
+| `auto_mechanism` / `ad_selection` | `grade` | `"A"` / `"B"` / `"C"` / `null` |
+| | `grade_reason` | 一句话：由哪个 `status` 或哪些 guard 判的 + 该档该怎么处理 |
+| | `guard_classes` | **只列触发的** guard → 档（`{}` = 没触发） |
+| | `not` | 写死「这条推不出什么」 |
+| `diffusion_resolution` | `grade` / `grade_reason` / `not` | `unknown`→A、`indistinguishable`→B、`resolvable`/`no_diffusion`→`null` |
+| `component_review` | `component_grade` | 与 `component_identifiability` 一一对应：`in_window`→`null`、`out_of_window`→**C**、`uncertain` 分两种（后验缺失→A / 0.05<p≤0.5→B） |
+
+映射表在 `bm_grade.py` 顶部三张表：`GUARD_CLASS`（11 条）、`STATUS_CLASS`（13 条）、`LEVEL_CLASS`（4 条）。未登记的 guard/status **一律按 A**（宁可说「算法不确定」，不要说「数据不确定」），并在 `grade_reason` 里点名，避免静默归类。
+
+`grade = null` 有明确含义：**该结论不落在三档内**，不构成资格限制（例如 `resolvable` = 「本频段能分 Ws/Wo」，那是能力陈述，不是机制结论；机制结论仍归 C）。
+
+**回归（`evidence/ws_crit/grade_check.py`）**
+
+1. 合成 30 例覆盖全部分支（6 种 status × 各 guard 单独/混合 × 4 个 `level` × 4 个组分状态）。**改前快照入库**为 `evidence/ws_crit/GRADE_SNAPSHOT.json`，任何人在改后跑
+   `python evidence/ws_crit/grade_check.py --verify evidence/ws_crit/GRADE_SNAPSHOT.json`
+   即可复核：**旧字段 0 处变化，只多出 114 个新键**（`grade`×30、`grade_reason`×30、`not`×30、`guard_classes`×24）。逐例档位表见 `GRADE_TABLE.txt`，对拍记录见 `GRADE_DIFF.txt`。
+2. 端到端三对（`git worktree` 取改动前代码，同一命令、同一 seed、同一 `--ta` 各跑一次）：
+
+| 谱 / 配置 | 旧代码 | 新代码 | JSON 差异 |
+|---|---|---|---|
+| AZ31-4Li_100 `--auto-mechanism` | `skipped_inductive` | 同，档 **B** | 仅 `t_fit_s`（计时） |
+| Blank `--auto-mechanism-full` | `switched`（Δ=109.89） | 同，档 **C** | 仅 `t_fit_s` |
+| AZ31-4Li_100 `--auto-mechanism-full` | `guard_degraded`（`diff_amp_unidentifiable`+`ws_amp_unidentified`） | 同，档 **B** | 仅 `t_fit_s` |
+
+即：**三个真实路径的判决、`elpd`、分量、残差全部逐位不变**，只有计时字段和 8 个新键。
+
+**这一层还没做到的**：`not` 现在是**每条结论一个**（选择器级），不是 §4.1 那种**每条证据一个**；证据卡（多模型并列、`next_evidence_needed`）仍需单独实现。拆分只是把地基弄平。
 
 ---
 
@@ -194,7 +232,7 @@ L3 的关键改动：**从「裁决器」变成「记账器」**。它输出的�
 3. **统一证据卡输出接口**——按 §4 落地成只读生成器；**不建评分**。
 4. **积累独立实验数据后**，再讨论是否自动化物理判定。
 
-第 3 步的前置条件：先把 §3.2 的三处混用拆开（这需要改 `select_mechanism` 与 `diffusion_resolution` 的输出字段，**属生产代码变更，需单独批**）。在拆开之前做证据卡，等于给一个混用的状态机加外壳。
+第 3 步的前置条件——拆开 §3.2 的三处混用——**已完成**（§3.4：`grade` / `guard_classes` / `grade_reason` / `not` / `component_grade`，生产代码只加字段、判决逐位不变）。剩下的活是**证据卡生成器**（只读消费这些字段，输出 §4 的形状），以及多模型并列输出（L2 的 `Δ±dse` + 塌陷/出窗标记，程序不单选）。
 
 ---
 
