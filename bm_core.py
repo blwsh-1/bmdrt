@@ -332,8 +332,20 @@ def make_model(K: int = 10, alpha: float | None = 1.0, sigma: tuple | None = Non
                 s_re = numpyro.sample("s_re", dist.LogNormal(jnp.log(0.01 * zmax), 1.0))
                 s_im = numpyro.sample("s_im", dist.LogNormal(jnp.log(0.01 * zmax), 1.0))
         else:
-            s_re = jnp.asarray(float(sigma[0]))
-            s_im = jnp.asarray(float(sigma[1]))
+            # 逐点 σ（与 `bm_top._make_model` 同一语义）：数组按频点广播。
+            # **标量输入仍走 `jnp.asarray(float(...))` 的旧路径**，0 维、数值相同，
+            # 所以默认行为逐位不变（`bmdrt.py check` 守这条）。
+            # 长度不匹配必须显式报错：numpyro 会让 `(n,)` 与 `(n,)` 正常广播，
+            # 但错位的数组会静默产出错误的 likelihood，事后从 R̂ 看不出来。
+            s_re = jnp.asarray(np.asarray(sigma[0], dtype=float))
+            s_im = jnp.asarray(np.asarray(sigma[1], dtype=float))
+            for _nm, _s in (("s_re", s_re), ("s_im", s_im)):
+                if _s.ndim > 1:
+                    raise ValueError(
+                        f"sigma[{_nm}] 只能是标量或一维（逐点），收到 ndim={_s.ndim}")
+                if _s.ndim == 1 and _s.shape[0] != Zr.shape[0]:
+                    raise ValueError(
+                        f"sigma[{_nm}] 长度 {_s.shape[0]} 与频点数 {Zr.shape[0]} 不一致")
 
         numpyro.sample("obs_re", dist.Normal(Zt.real, s_re), obs=Zr)
         numpyro.sample("obs_im", dist.Normal(Zt.imag, s_im), obs=Zi)
