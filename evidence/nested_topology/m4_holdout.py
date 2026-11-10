@@ -58,11 +58,10 @@ def _metrics(f, Z, Zm):
 
 
 def _corr_pairs(ch: dict, names: list[str], thr: float = 0.90) -> list[dict]:
-    cols = []
-    for k in names:
-        v = np.asarray(ch[k], float)
-        v = v.reshape(v.shape[0], -1)
-        cols.append(np.log(v))
+    # 必须先摊成 (n_draw_total,) 再取列：`(chain, draw)` 直接 `column_stack`
+    # 会得到 (chain, draw*k) 的二维拼贴，`corrcoef` 当成 k 个变量 × 2 个观测，
+    # 必然给出 ±1.000（第一版就这么错了，见 §9.4.23 的更正）。
+    cols = [np.log(np.asarray(ch[k], float).reshape(-1)) for k in names]
     M = np.column_stack(cols)
     C = np.corrcoef(M, rowvar=False)
     out = []
