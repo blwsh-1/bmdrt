@@ -53,6 +53,8 @@ evidence/nested_topology/*
 !evidence/nested_topology/m4_ad_vs_nested_isomorph.py
 !evidence/nested_topology/m4_arm_compare.py
 !evidence/nested_topology/m4_armL_2emc.py
+!evidence/nested_topology/m4_armLK.py
+!evidence/nested_topology/m4_armLK_diag.py
 !evidence/nested_topology/m4_shape_roc.py
 !evidence/nested_topology/m3_regress_scalar.py
 !evidence/nested_topology/m3_regress_scalar.json
