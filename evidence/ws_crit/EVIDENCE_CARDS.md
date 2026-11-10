@@ -60,15 +60,15 @@
 
 未采到 / 不可用：
 
-- `lowf_slope`（不可用） slope_im=-0.1103，r2=0.8884，band_dec=0.6122，term=to_plateau（斜率不可用（-Im 在低频端 ≤0 或线性度不足）） — **推不出**：斜率 ≠ −0.5 不能推出「没有 Ws」：弧尾共存时真 Ws 的斜率会被拖到 −0.41…−0.49（WP2 §3.5.1）
-- `freq_window`（缺）（本 run 落盘的是所选模型（none），Ws 臂的 τ_D 后验没保存；auto_mechanism.ws_resolvable=False。要看 f_D 需要把 Ws 臂结果单独落盘） — **推不出**：f_D 在窗外不能推出「没有该过程」；只能说「本窗无权评价」（C 档）
-- `cross_model`（缺）（单臂 JSON 只有自己；要跨模型差跑 multi_model） — **推不出**：预测重叠不能推出「机制等价」；只说明本窗+本噪声不可分（B 档）
+- `lowf_slope`（不可用） slope_im=-0.1103，r2=0.8884，band_dec=0.6122，term=to_plateau；备注：斜率不可用（-Im 在低频端 ≤0 或线性度不足） — **推不出**：斜率 ≠ −0.5 不能推出「没有 Ws」：弧尾共存时真 Ws 的斜率会被拖到 −0.41…−0.49（WP2 §3.5.1）
+- `freq_window`（缺）；备注：本 run 落盘的是所选模型（none），Ws 臂的 τ_D 后验没保存；auto_mechanism.ws_resolvable=False。要看 f_D 需要把 Ws 臂结果单独落盘 — **推不出**：f_D 在窗外不能推出「没有该过程」；只能说「本窗无权评价」（C 档）
+- `cross_model`（缺）；备注：单臂 JSON 只有自己；要跨模型差跑 multi_model — **推不出**：预测重叠不能推出「机制等价」；只说明本窗+本噪声不可分（B 档）
 
 还缺什么（next_evidence_needed）：
 
 - 把 f_min 下移 1 decade，让 45° 段变长
 - cv(A_W)=0.45 > 0.15：幅值没被定住，重跑不会变，需要更宽窗或更低噪声
-- 把 f_min 下移，使 f_D 进入窗口
+- 补测使 f_D 进窗：转折在窗下就下移 f_min，在窗上就上移 f_max
 - 同一谱上的 Ws/Wo/K+1 配对 LOO 与逐点预测差（multi_model 表）
 - 并列保留候选模型，不要单选；要分开需更宽频窗或独立重复实验
 
@@ -209,16 +209,16 @@
 
 未采到 / 不可用：
 
-- `lowf_slope`（不可用） band_dec=0.1429，term=to_inductive（斜率不可用（-Im 在低频端 ≤0 或线性度不足）） — **推不出**：斜率 ≠ −0.5 不能推出「没有 Ws」：弧尾共存时真 Ws 的斜率会被拖到 −0.41…−0.49（WP2 §3.5.1）
-- `aw_amp`（不可用） A_W=13.5（只有 A_W 点估计，没有 sd/cv（该 run 的 share 未算 cv_aw）） — **推不出**：「A_W > 0」不等于扩散存在；「A_W 小 / cv 大」也不等于不存在——只说明幅值没被本窗+本噪声定住
-- `freq_window`（缺）（本 run 落盘的是所选模型（none），Ws 臂的 τ_D 后验没保存；auto_mechanism.ws_resolvable=False。要看 f_D 需要把 Ws 臂结果单独落盘） — **推不出**：f_D 在窗外不能推出「没有该过程」；只能说「本窗无权评价」（C 档）
-- `cross_model`（缺）（单臂 JSON 只有自己；要跨模型差跑 multi_model） — **推不出**：预测重叠不能推出「机制等价」；只说明本窗+本噪声不可分（B 档）
+- `lowf_slope`（不可用） band_dec=0.1429，term=to_inductive；备注：斜率不可用（-Im 在低频端 ≤0 或线性度不足） — **推不出**：斜率 ≠ −0.5 不能推出「没有 Ws」：弧尾共存时真 Ws 的斜率会被拖到 −0.41…−0.49（WP2 §3.5.1）
+- `aw_amp`（不可用） A_W=13.5；备注：只有 A_W 点估计，没有 sd/cv（该 run 的 share 未算 cv_aw） — **推不出**：「A_W > 0」不等于扩散存在；「A_W 小 / cv 大」也不等于不存在——只说明幅值没被本窗+本噪声定住
+- `freq_window`（缺）；备注：本 run 落盘的是所选模型（none），Ws 臂的 τ_D 后验没保存；auto_mechanism.ws_resolvable=False。要看 f_D 需要把 Ws 臂结果单独落盘 — **推不出**：f_D 在窗外不能推出「没有该过程」；只能说「本窗无权评价」（C 档）
+- `cross_model`（缺）；备注：单臂 JSON 只有自己；要跨模型差跑 multi_model — **推不出**：预测重叠不能推出「机制等价」；只说明本窗+本噪声不可分（B 档）
 
 还缺什么（next_evidence_needed）：
 
 - 把 f_min 下移 1 decade，让 45° 段变长
 - 更长采样或更低噪声，把 cv(A_W) 压到判据线以下
-- 把 f_min 下移，使 f_D 进入窗口
+- 补测使 f_D 进窗：转折在窗下就下移 f_min，在窗上就上移 f_max
 - 同一谱上的 Ws/Wo/K+1 配对 LOO 与逐点预测差（multi_model 表）
 - 并列保留候选模型，不要单选；要分开需更宽频窗或独立重复实验
 

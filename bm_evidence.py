@@ -93,9 +93,9 @@ ITEM = {
     ),
     "freq_window": dict(
         source="diffusion_resolution（bm_diff）",
-        reads="扩散特征频率 f_D 是否落在本频窗内（差几个 decade）",
+        reads="扩散特征频率 f_D 落在窗内还是窗外（窗内/窗下/窗上，由数值比较定）",
         not_="f_D 在窗外不能推出「没有该过程」；只能说「本窗无权评价」（C 档）",
-        need=["把 f_min 下移，使 f_D 进入窗口"],
+        need=["补测使 f_D 进窗：转折在窗下就下移 f_min，在窗上就上移 f_max"],
     ),
     "paired_loo": dict(
         source="auto_mechanism.delta / dse / threshold",
@@ -424,15 +424,32 @@ def _diffusion_card(run):
         ev.append(_ev("freq_window", dict(level=lvl), "unusable",
                       note="模型里没有 tauD 后验（配置缺项）"))
     else:
-        below = dres.get("below_fD")
+        # `bm_diff.diffusion_resolution.below_fD` 是 `bool(f.min() < f_D)`：
+        # **True 表示窗口里有点低于 f_D（转折可能进窗）**，不是「f_D 在窗下」。
+        # 名字容易读反，这里一律用 f_D / f_min / f_max 的数值直接判位置。
+        fD = _num(dres.get("f_D"))
+        fmin = _num(dres.get("f_min"))
+        fmax = _num(dres.get("f_max"))
+        pos, extra_need = "unknown", None
+        if fD is not None and fmin is not None:
+            if fD < fmin:
+                pos = "below_fmin"
+                dec = math.log10(fmin / fD) if fD > 0 else float("nan")
+                extra_need = [f"f_D={fD:.3g} Hz 在窗口下界 {fmin:.3g} Hz 之下 "
+                              f"{dec:.2f} decade：当前窗口看不到转折，需要把 f_min 下移"]
+            elif fmax is not None and fD > fmax:
+                pos = "above_fmax"
+                extra_need = [f"f_D={fD:.3g} Hz 高于窗口上界 {fmax:.3g} Hz："
+                              "本窗只看到低频渐近段，看不到转折"]
+            else:
+                pos = "in_window"
         ev.append(_ev(
             "freq_window",
-            dict(level=lvl, f_D=_num(dres.get("f_D")), f_min=_num(dres.get("f_min")),
-                 below_fD=_num(below), max_reldiff=_num(dres.get("max_reldiff")),
+            dict(level=lvl, f_D=fD, f_min=fmin, f_max=fmax,
+                 window_position=pos,
+                 max_reldiff=_num(dres.get("max_reldiff")),
                  tauD_max_resolvable=_num(dres.get("tauD_max_resolvable"))),
-            state="read",
-            extra_need=(["f_D 在窗下：当前窗口看不到转折，需要把 f_min 下移"]
-                        if below else None)))
+            state="read", extra_need=extra_need))
 
     pc = run.get("param_corr") or {}
     strong = pc.get("strong") or []
@@ -683,9 +700,15 @@ def _arm_row(label, run):
     cv = _num(share.get("cv_aw"))
     if cv is not None and cv > cv_max:
         flags.append(f"幅值未定住（cv={cv:.2f} > {cv_max:.2f}）")
-    fD, fmin = _num(dres.get("f_D")), _num(dres.get("f_min"))
-    if dres.get("below_fD") and fD is not None and fmin is not None:
-        flags.append(f"f_D={fD:.3g} Hz 在窗下（f_min={fmin:.3g}）")
+    # 只标记「转折出窗」；f_D 落在窗内不是异常，也不等于数据里有扩散。
+    # 判位置用数值比较，不用 `below_fD`（它的语义是 f_min < f_D，易读反）。
+    fD, fmin, fmax = (_num(dres.get("f_D")), _num(dres.get("f_min")),
+                      _num(dres.get("f_max")))
+    if fD is not None and fmin is not None:
+        if fD < fmin:
+            flags.append(f"转折在窗外：f_D={fD:.3g} Hz < f_min={fmin:.3g} Hz")
+        elif fmax is not None and fD > fmax:
+            flags.append(f"转折在窗外：f_D={fD:.3g} Hz > f_max={fmax:.3g} Hz")
     nw = int(run.get("n_warburg_like") or 0)
     if nw > 0:
         flags.append(f"HN 已呈 Warburg 指纹（{nw} 个）")
