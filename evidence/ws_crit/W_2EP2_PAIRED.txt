@@ -1,0 +1,42 @@
+谱：2EP-2_exp2_0500mA  n=56  f=1–1e+05 Hz
+
+=== ① 逐臂（elpd 由逐点 loglik 重算，与落盘值核对） ===
+arm           elpd      se   k>.7%  pk_max grade  div  cap% 评估             diffusion_params
+k1_none     491.20   21.27    3.6%    1.08     2    0   0.0 evaluable      {}
+k1_Ws       497.04   23.66    3.6%    1.27     2    0   0.0 evaluable      {"Rw": 0.000316, "Aw": 0.014098}
+k1_Wo       495.02   22.86    3.6%    0.91     2    0   0.0 evaluable      {"Rwo": 0.000344, "tauD": 0.012559}
+k2_none     496.77   23.79    3.6%    1.08     0    0   0.0 non_evaluable  {}
+k2_Ws       496.16   23.99    3.6%    1.37     0    1   0.1 non_evaluable  {"Rw": 0.000287, "Aw": 0.012811}
+
+=== ② 配对差（Δ=Σ逐点差；dse=√n·std(逐点差)；线=max(2,1.5·dse)） ===
+A - B                        Δ     dse       线  判读
+k1_none - k1_Ws          -5.84    5.45    8.17  不可区分
+k1_none - k1_Wo          -3.82    3.37    5.06  不可区分
+k1_none - k2_none        -5.57    5.36    8.04  不可区分  [含 grade=0 臂，仅参考]
+k1_none - k2_Ws          -4.96    5.71    8.57  不可区分  [含 grade=0 臂，仅参考]
+k1_Ws - k1_Wo             2.02    2.91    4.37  不可区分
+k1_Ws - k2_none           0.27    0.56    2.00  不可区分  [含 grade=0 臂，仅参考]
+k1_Ws - k2_Ws             0.88    0.45    2.00  不可区分  [含 grade=0 臂，仅参考]
+k1_Wo - k2_none          -1.75    2.91    4.36  不可区分  [含 grade=0 臂，仅参考]
+k1_Wo - k2_Ws            -1.14    3.22    4.83  不可区分  [含 grade=0 臂，仅参考]
+k2_none - k2_Ws           0.61    0.56    2.00  不可区分  [含 grade=0 臂，仅参考]
+
+=== ③ 扩散幅值 vs 噪声（后验中位数 / sd / cv） ===
+k1_Ws: Rw med=0.000316007 sd=8.30687e-05 cv=0.26 q05=0.00017896 q95=0.000443233
+    σ≈0.00370864  A_W=0.0140985  |Z_Ws(f_min)|=0.00561997 Ω = 1.515σ  |Rw|/zmax=0.4642%
+k1_Wo: Rwo med=0.000344301 sd=0.00214001 cv=6.22 q05=3.51117e-05 q95=0.00461286
+    σ≈0.00379049  A_W=0  |Z_Ws(f_min)|=nan Ω = nanσ  |Rw|/zmax=0.5058%
+k2_Ws: Rw med=0.000287139 sd=0.000101715 cv=0.35 q05=8.54512e-05 q95=0.000433622
+    σ≈0.00370671  A_W=0.0128106  |Z_Ws(f_min)|=0.00510658 Ω = 1.378σ  |Rw|/zmax=0.4218%
+
+=== ④ 加 W 后 RC 分量漂移（简并诊断） ===
+k1_none   n=1 f0=787.4Hz w=0.02152Ω φ=0.821
+    dres.level=no_diffusion f_D=None resolvable=False max_reldiff=None
+k1_Ws     n=1 f0=904.7Hz w=0.01946Ω φ=0.899
+    dres.level=unknown f_D=None resolvable=False max_reldiff=None
+k1_Wo     n=1 f0=814.4Hz w=0.02105Ω φ=0.848
+    dres.level=resolvable f_D=12.672452734190268 resolvable=True max_reldiff=0.998959904686192
+k2_none   n=2 f0=869.5Hz w=0.02007Ω φ=0.882 | f0=0.3Hz w=0.01807Ω φ=0.772
+    dres.level=no_diffusion f_D=None resolvable=False max_reldiff=None
+k2_Ws     n=2 f0=1005.6Hz w=0.01877Ω φ=0.893 | f0=648.5Hz w=0.00797Ω φ=0.851
+    dres.level=unknown f_D=None resolvable=False max_reldiff=None
