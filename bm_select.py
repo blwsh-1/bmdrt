@@ -144,6 +144,21 @@ TREE_CAP_MAX = 0.05       # 树深触顶占比
 CORR_STRONG = 0.95        # 立项书 §9.4 的结构简并护栏
 BOUND_EPS = 0.01          # 参数距 Uniform 先验边界的相对宽度
 
+#: 分量「未定位」判据（§9.4.17.7 / 风险 R15）。两把尺子互相独立，
+#: **任一命中**即判该分量没被数据定住：
+#:   · 时间常数 5–95% 跨 `> COMP_UNRES_DECADE`：窗口共 5 decade，
+#:     定不到 2 decade 的「时间常数」不是一个独立的弛豫；
+#:   · 幅值 `w_i/W < COMP_UNRES_AMP`：低于既有检测下限的量级
+#:     （`SNR_im≈15` → 6.7%，见 `WS_CRITERION_PLAN.md`），拟合上看不见。
+#: 阈值只写这一次，判据实现见 `unresolved_components()`。
+#:
+#: **与 R̂ 互补，不能互相替代**（`m4_compempty_check.py --real` 实测）：
+#: 同一配置 seed0 上 R̂=1.008（合格）而排序后 τ 跨 2.14 decade（本护栏命中）；
+#: seed4 上 R̂=1.64（命中）而 τ 跨 1.88 decade（本护栏未命中，因为两条链各自
+#: 把次分量放在**不同的紧模态**里，排序后反而不摊开）。两条都要报。
+COMP_UNRES_AMP = 0.05
+COMP_UNRES_DECADE = 2.0
+
 #: 采样预算档。`quick` 必须逐位等于 A2 的 800/400/2，否则前后对比失效。
 #: `standard` 是 §9.4.4 预注册档，数值不改；`light` 是 11-10 B1 实测后发现
 #: standard 在刚性谱上代价失控（单例 >50 min）而加的轻量档，属工程配置。
@@ -158,7 +173,8 @@ RETRY_SEED_STEP = 1000    # 重跑换随机流，不复用原 seed
 #: 两族**同一张** guard 清单。值只能是 ok / triggered / not_evaluable /
 #: not_applicable —— 算不出来就显式写 not_evaluable，绝不填 ok 冒充通过。
 GUARD_A = ("rhat", "div_frac", "ess_bulk", "ess_tail", "bad_k", "loo_ok", "tree_cap")
-GUARD_B = ("param_at_bound", "param_degenerate", "loop_amp", "loop_corner")
+GUARD_B = ("param_at_bound", "param_degenerate", "loop_amp", "loop_corner",
+           "comp_unresolved")
 GUARD_NAMES = GUARD_A + GUARD_B
 
 #: 族内「降配参赛」判据（v1.4 修实现缺陷，见 §9.4.1）：被质量门禁剔除的候选，
@@ -385,6 +401,48 @@ def _uniform_bound_frac(s: dict) -> float | None:
     return near / total if total else None
 
 
+def unresolved_components(s: dict, *, amp: float = COMP_UNRES_AMP,
+                          decade: float = COMP_UNRES_DECADE) -> dict | None:
+    """voigt 族后验里「时间常数或幅值没被数据定住」的分量（§9.4.17 / R15）。
+
+    返回 `dict(k, span_dec, amp_frac, unresolved, n_resolved)`，槽位按排序统计量
+    对齐；`None` = 后验里没有可判字段（**不是**「都定住了」）。
+
+    **必须用排序统计量。** 混合模型的编号在样本间自由交换（K=2 实测列排序
+    一致率 0.504），直接对 `s['tau'][:, i]` 取分位会得到「列跨两个模态」的
+    假象：本谱 K=2+L 的列跨 2.35 decade，而把它排序后只有一个槽跨 1.88 decade。
+    更要紧的是**列中位会严重误导**——同一配置里次分量列中位 `w/W`=0.018，
+    排序后（每样本取最小幅值再取中位）是 **0.156**，差了近 10 倍。曾据此
+    把该分量判成「空载」，被排序统计量直接否掉（见 §9.4.17.5 的更正）。
+
+    阈值为什么这么定：时间常数用 **2 decade**（窗口共 5 decade，定不到 2 decade
+    不能算独立弛豫）；幅值用 **5%**（`SNR_im≈15` 的检测下限 6.7% 同量级）。
+    幅值这把尺子在本批 7 条 2EMC 谱上一次也没触发过（所有分量 ≥15%），
+    保留它是为了防止「幅值近零、τ 又恰好紧」的退化样本冒充一个弛豫。
+    """
+    tau, w = s.get("tau"), s.get("w")
+    if tau is None or w is None:
+        return None
+    tau = np.atleast_2d(np.asarray(tau, float))
+    w = np.atleast_2d(np.asarray(w, float))
+    if tau.shape != w.shape or tau.shape[1] < 1:
+        return None
+    if not (np.isfinite(tau).all() and np.isfinite(w).all()):
+        return None
+    lt = np.sort(np.log(tau), axis=1)                    # 每个样本内按 τ 升序
+    ws = np.sort(w, axis=1)                              # 幅值升序：[:, 0] 最小
+    tot = np.maximum(ws.sum(axis=1), 1e-300)
+    k = lt.shape[1]
+    span, frac = [], []
+    for j in range(k):
+        lo, hi = np.percentile(lt[:, j], [5, 95])
+        span.append(float((hi - lo) / np.log(10.0)))     # decade
+        frac.append(float(np.median(ws[:, j] / tot)))
+    bad = [j for j in range(k) if span[j] > decade or frac[j] < amp]
+    return dict(k=k, span_dec=span, amp_frac=frac, unresolved=bad,
+                n_resolved=k - len(bad))
+
+
 def guard_state(c: dict, n_draw: int, f_max: float | None = None) -> dict:
     """两族**同一张** guard 清单，只记账（A 类之外的项不进门禁）。
 
@@ -454,7 +512,19 @@ def guard_state(c: dict, n_draw: int, f_max: float | None = None) -> dict:
 
     if is_v:
         g["loop_amp"] = g["loop_corner"] = "not_applicable"
+        # 分量未定位：只有 K≥2 才有「多余自由度」可判；K=1 记 not_applicable 而
+        # 不是 ok——「不适用」和「通过了」不能混（§9.4.17.4 的同一条纪律）。
+        ec = unresolved_components(s)
+        if ec is None:
+            g["comp_unresolved"] = "not_evaluable"
+        elif ec["k"] < 2:
+            g["comp_unresolved"] = "not_applicable"
+        else:
+            g["comp_unresolved"] = "triggered" if ec["unresolved"] else "ok"
     else:
+        # nested 无 stick-breaking 权重，「冗余分量」的判据口径未定（M5）；
+        # 结构性不提供 ≠ 通过，故 not_applicable 而不是 ok。
+        g["comp_unresolved"] = "not_applicable"
         sig = raw.get("sigma_im") or raw.get("sigma_re")
         R = next((np.asarray(s[k], float).ravel() for k in ("R_ad", "R_L")
                   if k in s), None)
