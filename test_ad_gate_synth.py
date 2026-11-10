@@ -61,6 +61,21 @@ def z_series_l(f, L):
     return 1j * 2 * np.pi * np.asarray(f, float) * L
 
 
+def z_ws(f, A_W, f_D=None):
+    """扩散尾（独立解析式，**不** import bm_ws / bm_diff）。
+
+    半无限 Warburg：Z = A_W / √(jω)，幅值 A_W/√ω、相位 −45°；
+    给 f_D 时乘 tanh(√(jωτ_D)) 得有限长（FLW），τ_D = 1/(2π f_D)。
+    A_W 与 `bm_ws` 的 `A_W` 同量纲（Ω·s^-1/2），只用于构造重叠形态。
+    """
+    w = 2 * np.pi * np.asarray(f, float)
+    s = np.sqrt(1j * w)
+    z = A_W / s
+    if f_D is not None:
+        z = z * np.tanh(s / np.sqrt(2 * np.pi * f_D))
+    return z
+
+
 def z_none(f, arcs=ARC_TRUE, r_inf=R_INF):
     z = np.full(np.shape(f), r_inf, complex)
     for rad, fc, phi in arcs:
@@ -79,15 +94,18 @@ def drift_ramp(f, amp):
 
 
 def make_spectrum(f, rl=None, arcs=ARC_TRUE, drift=0.0, pseudo_l=0.0,
-                  noise=0.0, seed=0):
-    """合成观测：none 真值 + 可选 RL / 漂移 / 伪感抗 + 噪声。
+                  noise=0.0, seed=0, ws=None):
+    """合成观测：none 真值 + 可选 RL / 扩散尾 / 漂移 / 伪感抗 + 噪声。
 
     rl = (R_ad, f_c) 用独立解析式生成，**不经** bm_ad。
+    ws = (A_W, f_D) 半无限（f_D=None）或有限长扩散尾，**不经** bm_ws / bm_diff。
     pseudo_l：宽频常数虚部（仪器伪感抗的简化），单位 Ω。
     """
     z = z_none(f, arcs)
     if rl is not None:
         z = z + z_rl(f, rl[0], rl[1])
+    if ws is not None:
+        z = z + z_ws(f, ws[0], ws[1] if len(ws) > 1 else None)
     if drift:
         z = z + drift_ramp(f, drift)
     if pseudo_l:
@@ -431,6 +449,77 @@ def sweep():
 
 
 # --------------------------------------------------------------------------
+# D. RL + 扩散尾重叠（M6 §4.2 M6.2b / E5）：**只统计，不设通过线**
+# --------------------------------------------------------------------------
+
+E5_CSV = ROOT / "out/m6/e5/diffusion_overlap.csv"
+
+
+def diffusion_overlap():
+    """RL 峰与 Warburg / FLW 尾共存时的门控行为，只记计数。
+
+    重叠比 r = Im(RL @ f_c) / |Im(Ws @ f_c)|（用解析式算，不经拟合）：
+
+      · 峰不在 band 内（f_c < 1.2·band下沿 或 > 0.8·band上沿）→ `峰出窗`，
+        门控本来就不该建环，**不计假阴性**；
+      · r ≥ 3   峰主导   → `enter=False` 记**假阴性**（§4.2 判据：必须 0 条）；
+      · r ≤ 1/3 扩散主导 → `strong=True` 记**误建环**；
+      · 其余    混合区   → 只计数，不判定。
+
+    `A_W=0` 行是**对照**（RL 无扩散）：峰在窗内时应 `strong=True`，
+    不成立记为 `对照失效`——这是生成器/门控的回归信号，不是扩散重叠的结论。
+    第一次跑没有基线，故本组不进退出码，只打印计数。
+    """
+    rows = []
+    fb = band_pts(F_AZ)
+    specs = [("半无限Ws", None), ("FLW f_D=1Hz", 1.0), ("FLW f_D=1kHz", 1.0e3)]
+    for typ, fd in specs:
+        for rad in (30.0, 100.0):
+            for fc in (0.03, 0.1, 0.5, 1.0, 3.0, 10.0):
+                for aw in (0.0, 0.3, 1.0, 3.0, 10.0, 30.0, 100.0, 300.0):
+                    Z = make_spectrum(F_AZ, rl=(rad, fc), ws=(aw, fd))
+                    g = gate(F_AZ, Z)
+                    c = g["checks"]
+                    in_band = fb[0] * 1.2 <= fc <= fb[-1] * 0.8
+                    i_pk = int(np.argmin(np.abs(F_AZ - fc)))
+                    zrl = z_rl(F_AZ[i_pk:i_pk + 1], rad, fc)[0]
+                    if aw <= 0:
+                        ratio = float("nan")
+                        regime = "对照(无扩散)"
+                    elif not in_band:
+                        ratio = float("nan")
+                        regime = "峰出窗"
+                    else:
+                        zws = z_ws(F_AZ[i_pk:i_pk + 1], aw, fd)[0]
+                        ratio = float(zrl.imag / max(abs(zws.imag), 1e-300))
+                        regime = ("峰主导" if ratio >= 3.0 else
+                                  "扩散主导" if ratio <= 1.0 / 3.0 else "混合")
+                    fn = regime == "峰主导" and not g["enter"]
+                    fp = regime == "扩散主导" and bool(g["strong"])
+                    ctl_fail = (regime == "对照(无扩散)" and in_band
+                                and not g["strong"])
+                    rows.append(dict(
+                        type=typ, R_ad=rad, f_c=fc, A_W=aw,
+                        peak_in_band=str(in_band).lower(),
+                        ratio=("" if not np.isfinite(ratio) else round(ratio, 3)),
+                        regime=regime, status=g["status"],
+                        enter=bool(g["enter"]), strong=bool(g["strong"]),
+                        k_left=c.get("k_left"), k_right=c.get("k_right"),
+                        fn=str(fn).lower(), fp=str(fp).lower(),
+                        ctl_fail=str(ctl_fail).lower()))
+    return rows
+
+
+def _dump_csv(path: Path, rows: list[dict]) -> None:
+    import csv as _csv
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8-sig", newline="") as fh:
+        w = _csv.DictWriter(fh, fieldnames=list(rows[0].keys()))
+        w.writeheader()
+        w.writerows(rows)
+
+
+# --------------------------------------------------------------------------
 # main
 # --------------------------------------------------------------------------
 
@@ -481,10 +570,43 @@ def main():
         print(f"    [观察] [{r['group']}] {r['param']}: {r['status']} "
               f"enter={r['enter']} strong={r['strong']}")
 
+    d = diffusion_overlap()
+    _dump_csv(E5_CSV, d)
+    from collections import Counter as _C
+    print(f"  n={len(d)} 条（3 类扩散尾 × 2 R_ad × 6 f_c × 8 A_W），"
+          f"明细 {E5_CSV.relative_to(ROOT)}")
+    for reg in ("对照(无扩散)", "峰出窗", "扩散主导", "混合", "峰主导"):
+        sub = [r for r in d if r["regime"] == reg]
+        if not sub:
+            continue
+        ent = sum(1 for r in sub if r["enter"])
+        sg = sum(1 for r in sub if r["strong"])
+        print(f"  {reg:<12} n={len(sub):3d} enter={ent:2d} strong={sg:2d} "
+              f"状态={dict(_C(r['status'] for r in sub))}")
+    fn = [r for r in d if r["fn"] == "true"]
+    fp = [r for r in d if r["fp"] == "true"]
+    ctl = [r for r in d if r["ctl_fail"] == "true"]
+    print(f"\n  假阴性（峰主导却 enter=False）{len(fn)} 条"
+          f"{' → 全部列在下面' if fn else ''}")
+    for r in fn:
+        print(f"    [FN] {r['type']} R={r['R_ad']:g} f_c={r['f_c']:g} "
+              f"A_W={r['A_W']:g} r={r['ratio']} → {r['status']} "
+              f"k_left={r['k_left']} k_right={r['k_right']}")
+    print(f"  误建环（扩散主导却 strong=True）{len(fp)} 条")
+    for r in fp:
+        print(f"    [FP] {r['type']} R={r['R_ad']:g} f_c={r['f_c']:g} "
+              f"A_W={r['A_W']:g} r={r['ratio']} → {r['status']}")
+    print(f"  对照失效（A_W=0、峰在窗内却未 strong）{len(ctl)} 条")
+    for r in ctl:
+        print(f"    [CTL] {r['type']} R={r['R_ad']:g} f_c={r['f_c']:g} "
+              f"→ {r['status']}")
+
     print("\n" + "=" * 100)
     print(f"A 结果：{len(res) - bad}/{len(res)} 通过；B 差异 {len(diffs)}；"
           f"C 严格断言 {len(strict) - len(bad_c)}/{len(strict)} 通过")
-    print("注意：C 的假阳性率只代表给定模拟分布，不能替代真实对照谱统计上界。")
+    print(f"D（E5 扩散重叠）：{len(d)} 条，假阴性 {len(fn)} 条，误建环 {len(fp)} 条；"
+          f"第一次跑无基线，不设通过线，不进退出码。")
+    print("注意：C/D 的假阳性率只代表给定模拟分布，不能替代真实对照谱统计上界。")
     raise SystemExit(1 if (bad or diffs or bad_c) else 0)
 
 
