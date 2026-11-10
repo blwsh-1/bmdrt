@@ -3,6 +3,7 @@
 
 分两段，**不混报**：
 
+  C. 门禁逻辑（秒级）：`--gate-comp` 改变什么、什么时候整族降级（§9.4.18.2）。
   A. 逻辑段（不采样，秒级）：用合成后验打真假阳性 / 四态语义。
      A1 标签互换但两分量都定得住 → 必须 `ok`（直接取列分位会误判，这是关键假阳性）
      A2 一个分量 τ 跨 5 decade      → `triggered`，且只有该槽被标
@@ -113,6 +114,43 @@ def logic_checks() -> int:
     return bad
 
 
+def gate_checks() -> int:
+    """C. 门禁逻辑（合成候选，不采样）：`--gate-comp` 到底改变什么。
+
+    C1 gate 关：K=2（elpd 更高、comp 未定位）照旧参赛 → best=K=2，不降级
+    C2 gate 开且 K=2 领先 >DEGRADE_MARGIN：K=2 被剔 → **整族 degraded**（并列），
+       这正是 §9.4.18.2 预先写死的代价
+    C3 gate 开但 K=2 只领先 2 nats（< DEGRADE_MARGIN）：干净回落到 K=1，不降级
+    C4 `_k_note` 只在 k_eff<K 时出话，且不塞进 reason
+    """
+    bad = 0
+
+    def chk(tag, got, want):
+        nonlocal bad
+        ok = got == want
+        bad += 0 if ok else 1
+        print(f"  {'PASS' if ok else 'FAIL'}  {tag:<40} {str(got):<22} 期望 {want}")
+
+    def cand(label, dof, elpd, comp, k_eff):
+        return dict(family="voigt", label=label, dof=dof, elpd=float(elpd),
+                    pointwise=np.linspace(1.0, 2.0, 20), rhat=1.01, div=0,
+                    ok=True, raw={}, comp_state=comp, k_eff=k_eff)
+
+    c1 = cand("K=1", 1, 100.0, "not_applicable", 1)
+    c2 = cand("K=2", 2, 110.0, "triggered", 1)
+    c3 = cand("K=2", 2, 102.0, "triggered", 1)
+
+    b, d, _ = S._family_state([c1, c2], 800)                 # 注意：显式传的是位置参数
+    chk("C1 gate 关：K=2 照旧参赛", (b["label"], d), ("K=2", False))
+    b, d, why = S._family_state([c1, c2], 800, gate_b=True)
+    chk("C2 gate 开 + 领先 10 nats：回落 K=1 且整族降级",
+        (b["label"], d, "降配参赛" in why), ("K=1", True, True))
+    b, d, _ = S._family_state([c1, c3], 800, gate_b=True)
+    chk("C3 gate 开 + 领先 2 nats：干净回落 K=1", (b["label"], d), ("K=1", False))
+    chk("C4 k_eff<K 才出话", (bool(S._k_note(c2)), bool(S._k_note(c1))), (True, False))
+    return bad
+
+
 def real_checks() -> int:
     """实测段**委托给 `m4_armLK_diag.py`**，不另写一份拟合逻辑。
 
@@ -131,6 +169,8 @@ def main(argv=None):
     a = ap.parse_args(argv)
     print("A. 逻辑段（合成后验）")
     bad = logic_checks()
+    print("\nC. 门禁逻辑（合成候选，不采样）")
+    bad += gate_checks()
     if a.real:
         bad += real_checks()
     print(f"\n{'全部通过' if bad == 0 else f'{bad} 项失败'}（B 类 guard 共 "

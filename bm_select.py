@@ -305,11 +305,22 @@ def fit_voigt(f, Z, K: int, *, seed: int = 0, include_L: bool = False,
     pt = r.get("pointwise_elpd")
     pt = None if pt is None else np.asarray(pt, float)
     caps = _caps_suffix(include_L, adsorption)
+    # 分量是否定位：跟着候选一起返回，**不改任何判定**（§9.4.18.2 默认路径逐位不变）。
+    # 放进这里而不是 `_select_one`，是为了让 candidate_trace / JSON 里每个候选都自带
+    # `k_eff`，事后不用重跑 MCMC 才能解释「K=2 里到底几个分量被定住了」。
+    ec = unresolved_components((r or {}).get("s") or {})
+    comp_state = ("not_evaluable" if ec is None else
+                  "not_applicable" if ec["k"] < 2 else
+                  "triggered" if ec["unresolved"] else "ok")
     return dict(family="voigt", dof=K, branch=None, label=f"K={K}{caps}",
                 include_L=bool(include_L), adsorption=adsorption,
                 elpd=float(r["elpd"]), se=float(r["elpd_se"]), pointwise=pt,
                 div=int(r.get("ndiv") or 0), rhat=r.get("rhat_max"),
-                grade=r.get("grade"), ok=_usable(pt, r["elpd"]), raw=r)
+                grade=r.get("grade"), ok=_usable(pt, r["elpd"]), raw=r,
+                k_eff=(None if ec is None else int(ec["n_resolved"])),
+                comp_state=comp_state,
+                comp_span=(None if ec is None else list(ec["span_dec"])),
+                comp_amp=(None if ec is None else list(ec["amp_frac"])))
 
 
 def _caps_suffix(include_L: bool, adsorption: str | None) -> str:
@@ -604,7 +615,8 @@ def _refit(c: dict, f, Z, *, seed: int, kw: dict,
 
 
 def _family_state(cands: list[dict], n_draw: int,
-                  strict: bool = False) -> tuple[dict | None, bool, str]:
+                  strict: bool = False,
+                  gate_b: bool = False) -> tuple[dict | None, bool, str]:
     """族内取最优，同时判断**采样失败有没有污染该族的比较基准**。
 
     返回 `(best, degraded, why)`。旧实现只做「剔除不合格 → 取剩余里 elpd 最大」，
@@ -615,9 +627,26 @@ def _family_state(cands: list[dict], n_draw: int,
     修法不改阈值、不改用例：只要「被剔除者的 elpd 高于参赛最优者 + DEGRADE_MARGIN」，
     就认为该族基准不可信，整族 `degraded`，最终输出**并列**（合规输出），
     而不是硬造一个 Δ。整族无可用候选时同样记 degraded，不再抛异常。
+
+    `gate_b=True`（`--gate-comp`，§9.4.18）：把 `comp_unresolved` 也当不合格。
+    **注意后果**：未定位的 K=2 往往 elpd 更高，于是 `DEGRADE_MARGIN` 会立刻生效、
+    整族记 degraded → 输出并列。这是 fail-closed 的**设计意图**，不是 bug；
+    但它会让 voigt 的命中数下降，所以必须单列清楚代价。
     """
     q = {c["label"]: _quality(c, n_draw, strict) for c in cands}
     ok = [c for c in cands if q[c["label"]][0]]
+    if gate_b:
+        blocked, ok2 = [], []
+        for c in ok:
+            st = c.get("comp_state")
+            if st in ("triggered", "not_evaluable"):
+                blocked.append(c)
+            else:
+                ok2.append(c)
+        for c in blocked:
+            q[c["label"]] = (False, f"comp_unresolved={c.get('comp_state')}"
+                                    f"（k_eff={c.get('k_eff')}/{c.get('dof')}）")
+        ok = ok2
     if not ok:
         why = "; ".join(f"{c['label']}→{q[c['label']][1]}" for c in cands)
         return None, True, f"族内无可用候选（{why}）"
@@ -658,7 +687,7 @@ def paired_diff(pt_a, pt_b, f=None) -> tuple[float, float]:
 
 def _compare_group(V: list[dict], N: list[dict], n_draw: int,
                    strict: bool, f=None, voigt_ok: bool = True,
-                   voigt_why: str = "") -> dict:
+                   voigt_why: str = "", gate_b: bool = False) -> dict:
     """一组「voigt 候选 vs nested 候选」的配对判定（2 vs 2 或 2 vs 4）。
 
     `voigt_ok=False`（见 `voigt_can_represent`）时，**只把「否则会判并列」的那一档**
@@ -670,14 +699,16 @@ def _compare_group(V: list[dict], N: list[dict], n_draw: int,
         定义或排除该族，**加采样无效**），后者才是 C 档。
         注意「voigt 被排除」≠「nested 是对的」——机制仍无外部证据。
     """
-    v, dv, why_v = _family_state(V, n_draw, strict)
-    n, dn, why_n = _family_state(N, n_draw, strict)
+    v, dv, why_v = _family_state(V, n_draw, strict, gate_b=gate_b)
+    n, dn, why_n = _family_state(N, n_draw, strict, gate_b=gate_b)
     why = "; ".join(x for x in (why_v, why_n) if x)
+    kn = _k_note(v)
     if dv or dn or v is None or n is None:
         # 比较基准被采样失败污染 → **不做配对**，输出合规的「并列」。
         return dict(decision="indistinguishable", d_elpd=None, dse=None, z=None,
                     voigt=v, nested=n, degraded=True,
-                    degraded_why=why or "族内无可用候选", reason="", note="")
+                    degraded_why=why or "族内无可用候选", reason="", note="",
+                    k_note=kn)
     d_elpd, dse = paired_diff(n["pointwise"], v["pointwise"], f=f)
     # dse 不可用（n=1、逐点差方差恰为 0）时**两个方向都不能判**。
     # 旧实现把 z 设成 +inf：正向 Δ≥4 会无条件切 nested（绕过显著性门槛），
@@ -686,7 +717,8 @@ def _compare_group(V: list[dict], N: list[dict], n_draw: int,
         return dict(decision="indistinguishable", d_elpd=None, dse=None, z=None,
                     voigt=v, nested=n, degraded=False, degraded_why="",
                     reason=f"dse 不可用（{dse!r}）：逐点差方差为 0 或非有限，"
-                           "无法做显著性判定，两方向一律并列", note="")
+                           "无法做显著性判定，两方向一律并列", note="",
+                    k_note=kn)
     z = d_elpd / dse
     sw = (d_elpd >= SWITCH_DELTA and z >= SWITCH_Z)
     bk = (-d_elpd >= SWITCH_DELTA and -z >= SWITCH_Z)
@@ -703,7 +735,24 @@ def _compare_group(V: list[dict], N: list[dict], n_draw: int,
     # 「这次没算出来」。两者混一起是 §9.4.6 记过的同类错误。
     return dict(decision=dec, d_elpd=d_elpd, dse=dse, z=z, voigt=v, nested=n,
                 degraded=False, degraded_why="",
-                reason="", note=why if dec == "voigt_inadmissible" else "")
+                reason="", note=why if dec == "voigt_inadmissible" else "",
+                k_note=kn)
+
+
+def _k_note(v: dict | None) -> str:
+    """「K 是 elpd 选的，但分量没全定位」的提示（只记账，不改决策）。
+
+    §9.4.18：`k_eff < K` 说明多出来的那几个分量没有被数据定住。
+    这条**不能**替代 `decision`，也不能塞进 `reason`（那是「算不出」的字段）；
+    它是给报告用的一句话，`k_eff` 的数值在候选里。
+    """
+    if not v or v.get("family") != "voigt":
+        return ""
+    k, ke = v.get("dof"), v.get("k_eff")
+    if ke is None or k is None or int(ke) >= int(k):
+        return ""
+    return (f"K={k} 由 elpd 选出，但只有 {ke} 个分量被定位"
+            f"（comp_unresolved={v.get('comp_state')}）→ K 不得读成时间常数个数")
 
 
 def _select_one(f, Z, *, krange=(1, 2), layers=(1, 2), branches=BRANCHES,
@@ -712,7 +761,7 @@ def _select_one(f, Z, *, krange=(1, 2), layers=(1, 2), branches=BRANCHES,
                 pair_mode: str = "pooled", retry: int = 0,
                 strict: bool = False, retry_kw: dict | None = None,
                 include_L: bool | None = None,
-                adsorption=_UNSET) -> dict:
+                adsorption=_UNSET, gate_b: bool = False) -> dict:
     """单个 seed 的完整判定。
 
     `include_L` / `adsorption` 是 **voigt 族的元件能力**，默认取 `VOIGT_CAPS`
@@ -762,7 +811,8 @@ def _select_one(f, Z, *, krange=(1, 2), layers=(1, 2), branches=BRANCHES,
                   [(br, [c for c in Nc if c["branch"] == br]) for br in bs])
         return [dict(group=name, **_compare_group(Vc, sub, nd, strict, f,
                                                   voigt_ok=voigt_ok,
-                                                  voigt_why=voigt_why))
+                                                  voigt_why=voigt_why,
+                                                  gate_b=gate_b))
                 for name, sub in groups]
 
     gres = evaluate(V, N, n_draw)
@@ -952,8 +1002,15 @@ def _slim_runs(runs: list[dict], f_max: float | None = None,
         for c in r["all_voigt"] + r["all_nested"]:
             usable, why = _quality(c, nd, strict)
             cands.append(dict(family=c["family"], label=c["label"],
+                              dof=c.get("dof"),
                               elpd=round(c["elpd"], 2), rhat=fin(c["rhat"]),
                               div=c["div"], usable=bool(usable), why=why,
+                              # K 与「实际定位到几个分量」分开记（§9.4.18）：
+                              # `k_eff` 只对 voigt 有定义，nested 记 None。
+                              k_eff=c.get("k_eff"),
+                              comp_state=c.get("comp_state"),
+                              comp_span=[fin(x) for x in (c.get("comp_span") or [])] or None,
+                              comp_amp=[fin(x) for x in (c.get("comp_amp") or [])] or None,
                               guards=guard_state(c, nd, f_max)))
         out.append(dict(seed=r["seed"],
                         effective_seed=r.get("effective_seed", r["seed"]),
@@ -1031,7 +1088,8 @@ def _selftest(noise: float = 0.01, seed: int = 1, n_seeds: int = 3,
               retry: int = 0, strict: bool = False,
               budget: str = "quick",
               retry_budget: str = "standard",
-              include_L=None, adsorption=_UNSET) -> tuple[int, list[dict]]:
+              include_L=None, adsorption=_UNSET,
+              gate_b: bool = False) -> tuple[int, list[dict]]:
     # `VOIGT_CAPS` 已改为**由 `fit_voigt` 签名推导**（见 `_usable` 之后），
     # 所以「常量与签名漂移」在结构上不可能发生。剩下的唯一风险是
     # **参数加了但没转发给 `R.fit_one`**——那时判据说「表示不了」、拟合其实也没开，
@@ -1055,7 +1113,8 @@ def _selftest(noise: float = 0.01, seed: int = 1, n_seeds: int = 3,
           "选到哪条支路属族内结果，不计入错切。")
     print(f"配对模式={pair_mode}  基础预算={budget}({BUDGETS[budget]['n_warmup']}/"
           f"{BUDGETS[budget]['n_samples']}/{BUDGETS[budget]['num_chains']})  "
-          f"族内重跑={retry}({retry_budget})  strict-guards={strict}")
+          f"族内重跑={retry}({retry_budget})  strict-guards={strict}  "
+          f"gate-comp={gate_b}")
     _il_eff = bool(VOIGT_CAPS["include_L"] if include_L is None else include_L)
     _ad_eff = VOIGT_CAPS["adsorption"] if adsorption is _UNSET else adsorption
     print(f"voigt 族能力 {_caps_suffix(_il_eff, _ad_eff) or '（基线，两项全关）'}"
@@ -1072,7 +1131,8 @@ def _selftest(noise: float = 0.01, seed: int = 1, n_seeds: int = 3,
                                    retry=retry, strict=strict,
                                    include_L=_il_eff, adsorption=_ad_eff,
                                    kw=dict(BUDGETS[budget]),
-                                   retry_kw=dict(BUDGETS[retry_budget]))
+                                   retry_kw=dict(BUDGETS[retry_budget]),
+                                   gate_b=gate_b)
         ok, hits, wrong = _verdict(expect, r["decisions"])
         bad += (wrong > 0)
         # 逐 seed 的 nested 选中标签 → 支路分布（族内信息，只报数）
@@ -1138,6 +1198,30 @@ def _selftest(noise: float = 0.01, seed: int = 1, n_seeds: int = 3,
     for fam, d in guard_summary(rows).items():
         print(f"  {fam:<7}A 类 guard：ok={d['ok']} triggered={d['triggered']} "
               f"not_evaluable={d['not_evaluable']} not_applicable={d['not_applicable']}")
+    # 分量定位（B 类，§9.4.18）：K 与 k_eff 必须分开报，二者相等才算「K 用满了」。
+    comp: dict[str, int] = {}
+    under: set[str] = set()
+    for r in rows:
+        for tr in r.get("candidate_trace") or []:
+            for c in tr.get("candidates") or []:
+                if c["family"] != "voigt":
+                    continue
+                st = c.get("comp_state")
+                if st:
+                    comp[st] = comp.get(st, 0) + 1
+                ke, kk = c.get("k_eff"), c.get("dof")
+                if ke is not None and kk and int(ke) < int(kk):
+                    under.add(f"{r['case']}:{c['label']}(k_eff={ke})")
+    if comp:
+        print("  voigt 候选 comp_unresolved：" +
+              "  ".join(f"{k}={v}" for k, v in sorted(comp.items())) +
+              ("" if gate_b else "   ← 只记账，未进门禁"))
+    if under:
+        print(f"  **K 未用满**（k_eff<K，K 不得读成时间常数个数）："
+              f"{sorted(under)}")
+        if not gate_b:
+            print("    这些候选仍可参赛；要它影响判定请显式加 --gate-comp"
+                  "（§9.4.18，代价=降配护栏会把整族打成并列）")
     h = _health(rows)
     print(f"rc={1 if bad else 0} 只代表「有无错切」，**不代表通过**。健康度："
           f"降级 {h['degraded']}/{h['n_eval']}、unstable {h['unstable_cases']}/"
@@ -1264,6 +1348,9 @@ def main(argv=None) -> int:
     ap.add_argument("--voigt-adsorption", choices=("none", "RL"), default="none",
                     help="voigt 族启用吸附支路 R·jωτ/(1+jωτ)（覆盖低频感抗）。"
                          "同上，属能力臂")
+    ap.add_argument("--gate-comp", action="store_true",
+                    help="把分量未定位（comp_unresolved）接进族内择优。"
+                         "**会**触发 DEGRADE_MARGIN → 输出并列，代价见 §9.4.18.2")
     ap.add_argument("--json", default=None, help="把自检结果写到该路径")
     a = ap.parse_args(argv)
     branches = _as_branches([x.strip() for x in a.branches.split(",") if x.strip()])
@@ -1333,7 +1420,8 @@ def main(argv=None) -> int:
                          pair_mode=a.pair_mode, retry=a.retry_degraded,
                          strict=a.strict_guards, budget=a.budget,
                          retry_budget=a.retry_budget,
-                         include_L=v_il, adsorption=v_ad)
+                         include_L=v_il, adsorption=v_ad,
+                         gate_b=bool(a.gate_comp))
     if a.json:
         import json
         with open(a.json, "w", encoding="utf-8") as fp:
@@ -1342,6 +1430,7 @@ def main(argv=None) -> int:
                            budget=a.budget, retry=a.retry_degraded,
                            retry_budget=a.retry_budget,
                            strict_guards=a.strict_guards,
+                           gate_comp=bool(a.gate_comp),
                            voigt_caps=dict(include_L=v_il, adsorption=v_ad),
                            guard_names=dict(A=list(GUARD_A), B=list(GUARD_B)),
                            guard_summary=guard_summary(rows),
