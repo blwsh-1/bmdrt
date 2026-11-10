@@ -58,6 +58,7 @@ evidence/nested_topology/*
 !evidence/nested_topology/m4_compempty_check.py
 !evidence/nested_topology/m4_real_nested_fit.py
 !evidence/nested_topology/m4_real_select.py
+!evidence/nested_topology/m4_plot_fit.py
 !evidence/nested_topology/m4_shape_roc.py
 !evidence/nested_topology/m3_regress_scalar.py
 !evidence/nested_topology/m3_regress_scalar.json
