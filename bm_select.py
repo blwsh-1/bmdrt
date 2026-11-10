@@ -3,10 +3,14 @@
 
 本文件的范围
 ------------
-· 输入只有**合成谱**：`bm_core.true_spectrum`（voigt 真值）+ `bm_top_gen`
-  四个拓扑与三个边界用例。
-· **不读真实数据、不改 `bm_real.py` / `bm_top.py` / `bmdrt.py`**。接生产
-  路径（`topology=` 开关）是第 3 步，要单独批。
+· 输入有两条路：
+  - **合成谱**（`--cases`，默认）：`bm_core.true_spectrum`（voigt 真值）+
+    `bm_top_gen` 四个拓扑与三个边界用例。自检与预注册实验都走这条。
+  - **真实谱**（`--real GLOB`）：**只做可表示性诊断，不拟合**。秒级返回
+    「voigt 族在结构上能否表示这条谱」，用于决定某批谱该不该进跨族比较。
+    真实谱上跑完整选择（要拟合、要几分钟一条）目前**没有**入口。
+· **不改 `bm_real.py` / `bm_top.py` / `bmdrt.py`**。接生产路径（`topology=`
+  开关）要单独批；届时建议先跑 `--real`，voigt 不可表示的谱直接免掉比较。
 · 两族噪声口径统一为 `sigma=None + sigma_floor`（立项书 R3）。`sigma=None`
   在两侧都落到 `LogNormal(log 0.01·zmax, 1)` 的同一先验上；只有同一似然
   定义下的 elpd 才可比。固定 σ 或逐点 σ 会破坏这条，不要在这种地方图省事。
@@ -98,7 +102,11 @@ draws 400→600 只多 0.6 s）、多链本身不可用（生产 3 链跑完 171
 from __future__ import annotations
 
 import argparse
+import contextlib
+import glob as _glob
 import inspect
+import io
+import os
 import sys
 import time
 
@@ -1068,9 +1076,102 @@ def _selftest(noise: float = 0.01, seed: int = 1, n_seeds: int = 3,
     return (1 if bad else 0), rows
 
 
+# --------------------------------------------------------------------------
+# 真实谱：可表示性诊断（秒级，不拟合）
+# --------------------------------------------------------------------------
+
+def real_diagnose(paths, *, include_L=None, adsorption=_UNSET,
+                  verbose: bool = True) -> list[dict]:
+    """对一批真实谱逐条判断 **voigt 族在结构上能否表示它**。
+
+    只做谱形判据（`voigt_can_represent`），**不拟合、不采样**，所以是秒级。
+    这回答的是「这条谱该不该放进跨族比较」，不是「哪族更好」——后者要拟合，
+    且按 `THREE_LAYER_SCOPE.md` 最多记 B 档。
+
+    之所以单独做这个入口：选择器原先只能跑 `_cases()` 的四个合成用例，
+    对用户手上的谱没有入口。而真实谱的结论**恰恰不需要拟合**就能给出最要紧
+    的那一半——哪一族根本进不了候选空间（B-缺项）。
+    """
+    include_L = VOIGT_CAPS["include_L"] if include_L is None else include_L
+    if adsorption is _UNSET:
+        adsorption = VOIGT_CAPS["adsorption"]
+
+    rows = []
+    for path in paths:
+        try:
+            # `load_spectrum` 会往 stdout 打「读入 N 点」，表格里不需要
+            with contextlib.redirect_stdout(io.StringIO()):
+                f, Z = R.load_spectrum(path)
+        except BaseException as e:                       # noqa: BLE001
+            rows.append(dict(path=path, name=os.path.basename(path),
+                             ok=False, why=f"读取失败：{type(e).__name__}: {e}",
+                             n=0, f_min=float("nan"), f_max=float("nan"),
+                             im_depth=float("nan"), n_ind=0,
+                             n_ind_low=0, n_ind_high=0, split=float("nan")))
+            continue
+
+        f = np.asarray(f, float)
+        Z = np.asarray(Z, complex)
+        zmax = float(np.max(np.abs(Z))) or 1.0
+        im_depth = float(np.max(Z.imag) / zmax)          # 只看正虚部
+        fi = _ind_freqs(f, Z)
+        split = float(np.sqrt(f.min() * f.max()))
+        lo = int(np.sum(fi <= split))
+        hi = int(fi.size - lo)
+        ok, why = voigt_can_represent(f, Z, include_L=include_L,
+                                      adsorption=adsorption)
+        rows.append(dict(path=path, name=os.path.basename(path), ok=bool(ok),
+                         why=why, n=int(f.size), f_min=float(f.min()),
+                         f_max=float(f.max()), im_depth=im_depth,
+                         n_ind=int(fi.size), n_ind_low=lo, n_ind_high=hi,
+                         split=split))
+
+    if verbose:
+        def _tag(r):
+            """一行能读完的判定标签。长理由放到汇总里，逐行重复会刷屏。"""
+            if r["n"] == 0:
+                return "读取失败"
+            if r["ok"]:
+                return "可"
+            lo, hi = r["n_ind_low"] > 0, r["n_ind_high"] > 0
+            return "低+高" if (lo and hi) else ("仅低" if lo else "仅高")
+
+        caps = _caps_suffix(include_L, adsorption) or "（基线，两项全关）"
+        print(f"voigt 族能力 = {caps}；感抗按几何中频 sqrt(f_min·f_max) 分低/高两段")
+        print(f"{'file':<28}{'N':>4}  {'f/Hz':<13}{'Im+':>7}  {'低/高':<7}判定")
+        for r in rows:
+            if r["n"] == 0:
+                print(f"{r['name']:<28}{'-':>4}  {'-':<13}{'-':>7}  {'-':<7}{r['why']}")
+                continue
+            fr = f"{r['f_min']:.3g}–{r['f_max']:.3g}"
+            print(f"{r['name']:<28}{r['n']:>4}  {fr:<13}{r['im_depth']:>7.1%}  "
+                  f"{r['n_ind_low']:>2}/{r['n_ind_high']:<4}  {_tag(r)}")
+
+        cat: dict[str, int] = {}
+        for r in rows:
+            k = _tag(r)
+            cat[k] = cat.get(k, 0) + 1
+        print("\n判定分布：" + "；".join(f"{k} {v}/{len(rows)}"
+                                     for k, v in sorted(cat.items())))
+        if cat.get("仅低") or cat.get("低+高"):
+            print("  仅低/低+高 = **低频感抗** → 需把 R∥L 放进第二并联节点"
+                  "（= 改族定义；顶层 adsorption 不足以表示，§9.4.12）")
+        if cat.get("仅高") or cat.get("低+高"):
+            print("  仅高/低+高 = **高频仪器感抗** → 需 include_L，或按 A 条预裁那几点")
+        if rows and not any(r["ok"] for r in rows):
+            print("全部不可表示 → 全落在 B-缺项：**不是「两族等价」，是 voigt 不在候选"
+                  "空间**；处理方向是换族定义或排除该族，加采样无效。")
+        print("注：本条只看谱形，不拟合。nested 族两条支路对上述谱结构上均可用。")
+    return rows
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="M4 跨族选择器（voigt vs nested）")
     ap.add_argument("--dry", action="store_true", help="只打印用例，不拟合")
+    ap.add_argument("--real", default=None, metavar="GLOB",
+                    help="真实谱诊断：对匹配的文件只判「voigt 能否表示这类谱」"
+                         "（秒级、不拟合）。可逗号分隔多个 glob，例如 "
+                         "'out/_m6_samples/z_csv/*.csv,archive/*.csv'")
     ap.add_argument("--noise", type=float, default=0.01, help="噪声 σ / max|Z|")
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--seeds", type=int, default=5,
@@ -1099,6 +1200,30 @@ def main(argv=None) -> int:
     v_il = bool(a.voigt_include_L)
     v_ad = None if a.voigt_adsorption == "none" else a.voigt_adsorption
     v_caps = _caps_suffix(v_il, v_ad) or "（基线，两项全关）"
+
+    if a.real:
+        pats = [x.strip() for x in a.real.split(",") if x.strip()]
+        paths, miss = [], []
+        for pat in pats:
+            hit = sorted(_glob.glob(pat))
+            if hit:
+                paths.extend(hit)
+            else:
+                miss.append(pat)
+        if miss:
+            print(f"未匹配到文件：{miss}", file=sys.stderr)
+        if not paths:
+            print("没有任何文件可诊断（检查 --real 的 glob）", file=sys.stderr)
+            return 2
+        rows = real_diagnose(paths, include_L=v_il, adsorption=v_ad)
+        if a.json:
+            import json
+            with open(a.json, "w", encoding="utf-8") as fp:
+                json.dump(dict(real=True, n=len(rows),
+                               voigt_caps=dict(include_L=v_il, adsorption=v_ad),
+                               rows=rows), fp, ensure_ascii=False, indent=1)
+            print(f"诊断结果已写入 {a.json}")
+        return 0
 
     if a.dry:
         cases = _cases(a.noise, a.seed)
