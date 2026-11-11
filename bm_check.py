@@ -317,6 +317,52 @@ def part_b(fast: bool = False):
 
 
 # ==========================================================================
+# C. B 类 guard 的族适配（2026-11-11）
+# ==========================================================================
+
+def part_c():
+    """`param_at_bound` 的边界必须与**模型里的先验**同源，不能各写一套。
+
+    这次修的直接原因：`bm_select._uniform_bound_frac` 只认 `n*` 键名，
+    voigt 的指数叫 `phi` → 实测 168/168 候选 `not_evaluable`，φ 贴 0.5
+    （CPE 退化成 Warburg）与 ζ 贴边从来没被报过。边界改成表驱动之后，
+    必须在这里对拍，否则表一漂就和模型脱钩。
+    """
+    import inspect
+
+    import bm_select as SEL
+    import bm_top as TOP
+
+    print("\n" + "=" * 70)
+    print("C. B 类 guard 的族适配（先验边界来源）")
+    print("=" * 70)
+
+    phi_lo = float(inspect.signature(B.make_model).parameters["phi_lo"].default)
+    check("C1 voigt phi 边界 = (make_model.phi_lo, 1.0)",
+          tuple(SEL.PRIOR_BOUNDS["voigt"]["phi"]) == (phi_lo, 1.0),
+          f"表={SEL.PRIOR_BOUNDS['voigt']['phi']}  签名默认 phi_lo={phi_lo:g}")
+
+    src = inspect.getsource(B.make_model)
+    check("C2 voigt zeta ~ Uniform(0.3, 2.0)（源码对拍）",
+          "Uniform(0.3, 2.0)" in src, "make_model 里 zeta 的自由先验")
+    check("C3 voigt phi ~ Uniform(phi_lo, 1.0)（源码对拍）",
+          "Uniform(phi_lo, 1.0)" in src, "make_model 里 phi 的先验")
+
+    t = TOP._prior_table(100.0, 1.0, "parallel", 2)
+    det, ok = [], True
+    for nm in ("n1", "n2"):
+        lo, hi = (float(x) for x in SEL.PRIOR_BOUNDS["nested"][nm])
+        d = t[nm]
+        det.append(f"{nm}[{float(d.low):g},{float(d.high):g}]")
+        ok &= (abs(float(d.low) - lo) < 1e-12 and abs(float(d.high) - hi) < 1e-12)
+    check("C4 nested n1/n2 边界 = _prior_table 的实际分布", ok, " ".join(det))
+
+    check("C5 每族都至少有一个可判参数",
+          all(len(v) >= 1 for v in SEL.PRIOR_BOUNDS.values()),
+          "；".join(f"{k}:{list(v)}" for k, v in SEL.PRIOR_BOUNDS.items()))
+
+
+# ==========================================================================
 # 汇总
 # ==========================================================================
 
@@ -343,8 +389,10 @@ if __name__ == "__main__":
     _FAST = (cmd == "fast")
     part_a()
     if cmd == "nofit":
+        part_c()
         _nfail = summary()
     else:
         part_b(fast=_FAST)
+        part_c()
         _nfail = summary()
     raise SystemExit(1 if _nfail else 0)

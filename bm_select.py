@@ -107,6 +107,7 @@ import glob as _glob
 import inspect
 import io
 import os
+import re
 import sys
 import time
 
@@ -152,8 +153,32 @@ DIV_FRAC_MAX = 0.02
 BAD_K_MAX = 0.10          # Pareto-k>0.7 的点占比
 ESS_MIN = 100.0           # grade() 的「可用」线
 TREE_CAP_MAX = 0.05       # 树深触顶占比
-CORR_STRONG = 0.95        # 立项书 §9.4 的结构简并护栏
-BOUND_EPS = 0.01          # 参数距 Uniform 先验边界的相对宽度
+#: **nested 侧**标量路径的强相关阈值（`_corr_pairs`）。voigt 侧不再用这个数，
+#: 而是直接读 `bm_corr.param_corr()` 的 `strong`（阈值 = `param_corr.strong_tol`，
+#: 默认 `bm_corr.STRONG=0.90`）——那里已经做过分量对齐。两条路径的阈值**目前
+#: 仍不相等**：统一数值会改变 nested 的既有状态，本轮不改（见
+#: `docs/round_2026-11-11/guard_semantics.md` §4「待决策」）。
+CORR_STRONG = 0.95        # 立项书 §9.4 的结构简并护栏（nested 标量路径）
+#: 贴边带宽 = **各自的** Uniform 区间宽度的 1%（`eps_j = 0.01·(U_j−L_j)`）。
+#: 旧实现写死 `0.5·BOUND_EPS`，只对 `[0.5, 1]` 成立：换成 `zeta` 的 `[0.3, 2]`
+#: 就把带宽算成 0.5% 而不是 1%，换区间就错，所以按区间宽度归一。
+BOUND_EPS = 0.01
+#: 单参数贴边样本占比的阈值（旧口径同为 5%，**数值不变**）。
+AT_BOUND_FRAC = 0.05
+
+#: 有限上/下界的**先验**参数表——只有 Uniform 才有可判的边界。
+#: LogNormal（`R_inf`/`W`/`Q1`/`Q2`/`R`/`tau_ad`…）没有有限上下界，
+#: **不能**把「R/Q>0」当成区间去算贴边比例；那些参数走先验敏感性/后验尾部
+#: 诊断，不是 `param_at_bound` 的同一种判据。
+#:
+#: 来源必须与模型定义一致，`bm_check.check_prior_bounds()` 逐条对拍源码：
+#:   · voigt  `phi`  ~ `Uniform(phi_lo, 1.0)`、`zeta` ~ `Uniform(0.3, 2.0)`
+#:           （`bm_core.make_model`；`zeta_fixed` 时 zeta 不采样 → 记 `fixed`）
+#:   · nested `n1`/`n2` ~ `Uniform(0.5, 1.0)`（`bm_top` 的先验表）
+PRIOR_BOUNDS = {
+    "voigt": {"phi": (0.5, 1.0), "zeta": (0.3, 2.0)},
+    "nested": {"n1": (0.5, 1.0), "n2": (0.5, 1.0)},
+}
 
 #: 分量「未定位」判据（§9.4.17.7 / 风险 R15）。两把尺子互相独立，
 #: **任一命中**即判该分量没被数据定住：
@@ -323,7 +348,7 @@ def fit_voigt(f, Z, K: int, *, seed: int = 0, include_L: bool = False,
     comp_state = ("not_evaluable" if ec is None else
                   "not_applicable" if ec["k"] < 2 else
                   "triggered" if ec["unresolved"] else "ok")
-    return dict(family="voigt", dof=K, branch=None, label=f"K={K}{caps}",
+    cand = dict(family="voigt", dof=K, branch=None, label=f"K={K}{caps}",
                 include_L=bool(include_L), adsorption=adsorption,
                 elpd=float(r["elpd"]), se=float(r["elpd_se"]), pointwise=pt,
                 div=int(r.get("ndiv") or 0), rhat=r.get("rhat_max"),
@@ -332,6 +357,10 @@ def fit_voigt(f, Z, K: int, *, seed: int = 0, include_L: bool = False,
                 comp_state=comp_state,
                 comp_span=(None if ec is None else list(ec["span_dec"])),
                 comp_amp=(None if ec is None else list(ec["amp_frac"])))
+    # B 类两项的明细（2026-11-11）：判据只有 `guard_state()` 一份，这里只是
+    # 把「为什么是这个状态」落盘，避免事后要重跑 MCMC 才能解释状态翻转。
+    cand["guard_detail"] = guard_detail(cand)
+    return cand
 
 
 def _caps_suffix(include_L: bool, adsorption: str | None) -> str:
@@ -356,11 +385,13 @@ def fit_nested(f, Z, layers: int, *, branch: str = BRANCH, seed: int = 0,
                   sigma=None, sigma_floor=float(sigma_floor), progress=False)
     pt = o.get("pointwise_elpd")
     pt = None if pt is None else np.asarray(pt, float)
-    return dict(family="nested", dof=layers, branch=branch,
+    cand = dict(family="nested", dof=layers, branch=branch,
                 label=f"{branch}/L={layers}",
                 elpd=float(o["elpd"]), se=float(o["elpd_se"]), pointwise=pt,
                 div=int(o.get("divergences") or 0), rhat=o.get("rhat_max"),
                 grade=None, ok=_usable(pt, o["elpd"]), raw=o)
+    cand["guard_detail"] = guard_detail(cand)
+    return cand
 
 
 def _usable(pt, elpd) -> bool:
@@ -382,10 +413,26 @@ def _finite(x) -> bool:
 
 
 def _corr_pairs(s: dict) -> list[tuple]:
-    """后验里 |ρ|>CORR_STRONG 的参数对（只看标量列）。
+    """后验里 |ρ|>CORR_STRONG 的参数对（**nested 侧**的标量路径）。
 
     `L_ad` 在 series 支路是 `R_L·tau_L` 的 deterministic 派生量，必然与两者
     强相关，属**定义式**不是简并，故显式排除；噪声位点 `s_*` 同样不参与。
+
+    **为什么只给 nested 用**：nested 的参数本来就是标量、有标签
+    （`Rs/R1/Q1/n1/…`），列之间不需要对齐，直接算相关就是对的。voigt 侧
+    不行，两处结构性问题（2026-11-11 用 385 条已落盘后验实测）：
+
+      · **二维列被整列丢掉**：`a.size == n0` 对 `(n_draw, K)` 的
+        `tau/phi/w`（K≥2）必然不成立 → 分量之间、分量与形状参数之间
+        的相关**一次都没看过**。K=2 的 95 条里只有 16 条 triggered，
+        命中的还是 `W–v`（幅值与 stick-breaking 权重，参数化冗余）。
+      · **K=1 时抓的是同量异名**：`(n,1)` 的列 ravel 后长度等于 `n_draw`，
+        于是 `W`/`w`（`w≡W·π`，π=[1]）与 `ln_tau`/`tau`（`tau=exp(ln_tau)`）
+        都被当成两个"参数" —— K=1 的 283 条**全部** triggered，
+        其中 `(W,w)` 283/283、`(ln_tau,tau)` 271/283，而真正的
+        `(R_inf,W)` 只有 43 条。这两对是**定义式**，不是简并。
+
+    voigt 侧改走 `_guard_deg_pairs()`（读 `bm_corr` 已对齐的 `param_corr`）。
     """
     arr, n0 = {}, None
     for k, v in (s or {}).items():
@@ -408,19 +455,133 @@ def _corr_pairs(s: dict) -> list[tuple]:
             if np.isfinite(C[i, j]) and abs(C[i, j]) > CORR_STRONG]
 
 
-def _uniform_bound_frac(s: dict) -> float | None:
-    """`n1/n2`（Uniform(0.5,1)）贴先验边界的样本占比。"""
-    near = total = 0
-    for k, v in (s or {}).items():
-        if not k.startswith("n"):
+#: `param_degenerate`（voigt 侧）**不**参与判定的列名——它们是已知的、
+#: 非“分量简并”来源，混进来只会把真正的分量简并淹掉：
+#:   · `s_re/s_im`：同源噪声位点，不是结构简并；
+#:   · `L`：仪器项，与 `R_inf` 的负相关是电感吸收；
+#:   · `Rw/Rwo/tauD`：扩散支路，可辨识性另有 `bm_diff.diffusion_resolution`。
+_DEG_DENY = {"s_re", "s_im", "ln s_re", "ln s_im", "L", "ln L",
+             "Rw", "ln Rw", "Rwo", "ln Rwo", "tauD", "ln tauD"}
+#: 分量参数（`bm_corr._columns` 的命名：`ln τ_1`、`ln w_1`、`φ_1`、`ζ_1`）
+_DEG_COMP_RE = re.compile(r"^(?:ln )?(?:τ|w)_\d+$|^(?:φ|ζ)_\d+$")
+#: 形状参数（模型级，与分量无关但会与分量互相补偿）
+_DEG_SHAPE = {"R_inf", "ln R_inf", "R_ad", "ln R_ad", "tau_ad", "ln tau_ad"}
+#: K=1 时 `w₁ ≡ W`，这一对就是「总电阻分配」，已由 `bm_corr.degenerate`
+#: 的 `kind="Rinf-Wtot"` 单列，不进本项（否则 K=1 会因参数化结构恒触发）。
+_DEG_TOTAL_K1 = ({"ln R_inf", "ln w_1"}, {"R_inf", "w_1"})
+
+
+def _deg_allowed(name: str | None) -> bool:
+    """该列名是否属于「分量/形状参数」这一类。"""
+    if not name or name in _DEG_DENY:
+        return False
+    return bool(_DEG_COMP_RE.match(name)) or name in _DEG_SHAPE
+
+
+def _guard_deg_pairs(pc: dict | None, k: int | None) -> tuple[list[dict], str]:
+    """**voigt 侧** `param_degenerate` 的唯一实现：从已对齐的相关矩阵取强相关对。
+
+    用 `bm_corr.param_corr()` 的输出而不是自己展平后验，理由有三条：
+    它按 `match_components()` 对齐过（编号不跳变）、按分量拆列、阈值只有一个
+    来源（`param_corr.strong_tol`，来自 `bm_corr.STRONG`，可被 config 覆盖）。
+
+    返回 `(pairs, why)`：
+      · `pairs` 空、`why` 空  → 真的没有强相关（guard 记 `ok`）；
+      · `why` 非空            → `param_corr` 没算出来，guard 记
+        `not_evaluable`（把“没算出来”当 `ok` 是本项目反复踩过的静默放行）。
+    """
+    if not pc:
+        return [], "param_corr 缺失"
+    if not pc.get("names"):
+        return [], (pc.get("note") or "param_corr 未计算")
+    if "strong" not in pc:
+        return [], "param_corr 无 strong 字段"
+    out = []
+    for p in pc.get("strong") or []:
+        a, b = p.get("a"), p.get("b")
+        if not (_deg_allowed(a) and _deg_allowed(b)):
+            continue
+        if k == 1 and {a, b} in _DEG_TOTAL_K1:
+            continue
+        out.append(dict(a=a, b=b, rho=round(float(p["rho"]), 3)))
+    return out, ""
+
+
+def at_bound_frac(s: dict, family: str, *, phi_lo: float | None = None
+                  ) -> tuple[float | None, dict]:
+    """**单参数**贴边比例的最大值 + 明细（`param_at_bound` 的唯一实现）。
+
+    与旧实现 `_uniform_bound_frac` 的三处差别（2026-11-11 审查，均不改阈值）：
+
+    1. **按族取先验边界**（`PRIOR_BOUNDS`）：voigt 看 `phi`/`zeta`，nested 看
+       `n1`/`n2`。旧实现只认 `k.startswith("n")`，而 voigt 的指数叫 `phi`
+       → 实测 168/168 `not_evaluable`，φ 贴 0.5（CPE 退化成 Warburg）
+       与 ζ 贴边从来没被报过。
+    2. **按参数分别统计再取最大**，不再把所有参数混池：一个参数 10% 贴边、
+       另一个 0%，混池后被稀释成 5% 正好卡在阈值上。
+    3. 带宽按**各自区间宽度**归一（`eps_j = BOUND_EPS·(U_j−L_j)`）；固定参数
+       （`zeta_fixed` 时的 `zeta`）不参与，单列进 `fixed`——「不适用」与
+       「通过了」不能混。
+
+    `s` 里样本落在支撑集外（`<lo−1e-6` 或 `>hi+1e-6`）的参数记
+    `out_of_support` 并跳过该参数，不拿它去算比例。
+
+    返回 `(frac_max, detail)`；`frac_max is None` = 一个可判参数都没有
+    （guard 记 `not_evaluable`，不是 `ok`）。
+    """
+    spec = dict(PRIOR_BOUNDS.get(family) or {})
+    if phi_lo is not None and family == "voigt" and "phi" in spec:
+        # 表达力实验会传 `phi_lo=0.3`（`cmd_diff.PHI_LO_WIDE`）；边界跟着走，
+        # 否则会把合法样本判成贴边。
+        spec["phi"] = (float(phi_lo), spec["phi"][1])
+    frac: dict[str, float] = {}
+    fixed, missing, out_sup = [], [], []
+    for name, (lo, hi) in spec.items():
+        v = (s or {}).get(name)
+        if v is None:
+            missing.append(name)
             continue
         a = np.asarray(v, float).ravel()
-        if a.size < 2 or a.min() < 0.5 - 1e-6 or a.max() > 1.0 + 1e-6:
+        a = a[np.isfinite(a)]
+        if a.size < 2:
+            missing.append(name)
             continue
-        total += a.size
-        near += int(np.sum((a < 0.5 + BOUND_EPS * 0.5) |
-                           (a > 1.0 - BOUND_EPS * 0.5)))
-    return near / total if total else None
+        if float(a.max() - a.min()) <= 1e-12 * max(1.0, float(np.abs(a).max())):
+            fixed.append(name)                       # 常数：不采样/被钉死
+            continue
+        if a.min() < lo - 1e-6 or a.max() > hi + 1e-6:
+            out_sup.append(name)                     # 不在支撑集内，不判
+            continue
+        eps = BOUND_EPS * (hi - lo)
+        frac[name] = float(np.mean((a < lo + eps) | (a > hi - eps)))
+    if not frac:
+        return None, dict(frac={}, fixed=fixed, missing=missing,
+                          out_of_support=out_sup, worst=None,
+                          bounds={k: list(v) for k, v in spec.items()})
+    worst = max(frac, key=lambda k: frac[k])
+    return frac[worst], dict(frac=frac, fixed=fixed, missing=missing,
+                             out_of_support=out_sup, worst=worst,
+                             bounds={k: list(v) for k, v in spec.items()})
+
+
+def guard_detail(c: dict) -> dict:
+    """B 类两项（`param_degenerate` / `param_at_bound`）的明细，**只供审计**。
+
+    判据只有 `guard_state()` 一份，这里不另立规则：读的是同一批函数、同一批
+    阈值，只把「为什么是这个状态」落进候选，免得事后要重跑 MCMC 才能解释
+    状态翻转。返回的字段不参与 `GUARD_NAMES`，也不进任何门禁。
+    """
+    raw = c.get("raw") or {}
+    s = raw.get("s") or {}
+    is_v = c.get("family") == "voigt"
+    bf, bdet = at_bound_frac(s, "voigt" if is_v else "nested",
+                             phi_lo=raw.get("phi_lo"))
+    if is_v:
+        dp, dw = _guard_deg_pairs(raw.get("param_corr"), c.get("dof"))
+    else:
+        dp = [dict(a=a, b=b, rho=r) for a, b, r in _corr_pairs(s)]
+        dw = ""
+    return dict(at_bound_frac=bf, at_bound=bdet, deg_pairs=dp, deg_why=dw)
 
 
 def unresolved_components(s: dict, *, amp: float = COMP_UNRES_AMP,
@@ -526,11 +687,20 @@ def guard_state(c: dict, n_draw: int, f_max: float | None = None) -> dict:
             g["bad_k"] = "triggered" if frac > BAD_K_MAX else "ok"
 
     # ---- B 类：结构/参数可辨识性，**只记账** ----
+    # 两项都按**族**取判据（2026-11-11 修）：旧实现在 voigt 侧一个恒
+    # `not_evaluable`（只认 `n*` 键）、一个恒 `triggered`（只剩 `R_inf–W`
+    # 这一对参数化补偿），等于 voigt 族没有可辨识性 guard。
     s = raw.get("s") or {}
-    bf = _uniform_bound_frac(s)
+    fam = "voigt" if is_v else "nested"
+    bf, bdet = at_bound_frac(s, fam, phi_lo=raw.get("phi_lo"))
     g["param_at_bound"] = ("not_evaluable" if bf is None else
-                           "triggered" if bf > 0.05 else "ok")
-    g["param_degenerate"] = ("triggered" if _corr_pairs(s) else "ok")
+                           "triggered" if bf > AT_BOUND_FRAC else "ok")
+    if is_v:
+        dp, dw = _guard_deg_pairs(raw.get("param_corr"), c.get("dof"))
+        g["param_degenerate"] = ("not_evaluable" if dw else
+                                 "triggered" if dp else "ok")
+    else:
+        g["param_degenerate"] = ("triggered" if _corr_pairs(s) else "ok")
 
     if is_v:
         g["loop_amp"] = g["loop_corner"] = "not_applicable"

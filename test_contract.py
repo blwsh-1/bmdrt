@@ -13,7 +13,9 @@
     E  参考 Rwp     —— 与生产解析式对拍、`Rwp = √2·rms_rel`、拓扑不一致必须 skipped
     F  结果/展示   —— 曲线≡逐样本分位、残差≡恒等式、CSV≡图、sha256、判定口径、
                       图形配置可复现、面板载荷与数据层逐值相等、
-                       `least_squares.success=False` 的解不许当参考值
+                      `least_squares.success=False` 的解不许当参考值
+    F8 B 类 guard  —— `param_degenerate` / `param_at_bound` 在**两族**上都真的在判
+                      （voigt 侧旧实现一个恒 triggered、一个恒 not_evaluable）
 
 用法：
     python test_contract.py             # 全跑，约 60-90 s（含 2 次 quick 拟合）
@@ -841,6 +843,119 @@ def case_f7_spec_nested_keys(tmp):
     return "嵌套校验 6 例；配色只改颜色"
 
 
+# ---------------------------------------------------------------------------
+# F8 组：B 类 guard 的「族适配」（2026-11-11 修 `param_degenerate` /
+# `param_at_bound`）。判据本身不在这里测数值，只测**该响的响、该静的静**：
+# 两条正对照同时钉住旧实现的两个相反错误方向，防的是「把一套错标签换成
+# 另一套不完整标签」——比如把 voigt 的 `param_degenerate` 一律改判 `ok`。
+# ---------------------------------------------------------------------------
+
+def _f8_sampler_s(s, k):
+    """把合成后验喂给 `bm_corr.param_corr`（与生产同一条对齐路径）。"""
+    import bm_core as B
+    import bm_corr as CORR
+
+    mm = B.match_components(s)
+    return CORR.param_corr(s, include_L=False, mm=mm)
+
+
+def _f8_cand(s, family, dof):
+    import bm_select as SEL
+
+    raw = dict(s=s)
+    if family == "voigt":
+        raw["param_corr"] = _f8_sampler_s(s, dof)
+    c = dict(family=family, dof=dof, raw=raw, rhat=1.0, div=0, ok=True)
+    n_draw = int(np.asarray(next(iter(raw["s"].values()))).shape[0])
+    return c, SEL.guard_state(c, n_draw=n_draw)
+
+
+def case_f8_guard_semantics():
+    """F8-1…F8-5：voigt 的简并/贴边必须被判到，nested 与 K=1 的对照不许误报。"""
+    import bm_select as SEL
+
+    n = 600
+    rng = np.random.default_rng(3)
+    tot = 100.0
+    r = 60.0 + 5.0 * rng.normal(size=n)
+    w = tot - r                                   # K=1：w₁ ≡ W，总量补偿
+    s_k1 = dict(R_inf=r, W=w, pi=np.ones((n, 1)), w=w[:, None],
+                tau=np.exp(-1.0 + 0.05 * rng.normal(size=n))[:, None],
+                phi=(0.85 + 0.01 * rng.normal(size=n))[:, None],
+                zeta=np.ones((n, 1)))
+    # 旧路径（只看标量列）在这条后验上必然触发——正是要修掉的假阳性
+    old_k1 = SEL._corr_pairs(s_k1)
+    _, g = _f8_cand(s_k1, "voigt", 1)
+    assert old_k1, "F8-1 构造失效：旧路径本应看到 (R_inf, W)，否则对照不成立"
+    assert g["param_degenerate"] == "ok", (
+        f"F8-1 K=1 总量补偿被当成分量简并：{g['param_degenerate']}（旧路径 {old_k1[:1]}）")
+
+    rng = np.random.default_rng(4)
+    x = rng.normal(size=n)
+    w2 = np.stack([np.exp(5.5 + 0.30 * x + 0.02 * rng.normal(size=n)),
+                   np.exp(6.5 + 0.05 * rng.normal(size=n))], 1)
+    s_k2 = dict(R_inf=60.0 + 2.0 * rng.normal(size=n), W=w2.sum(1),
+                pi=w2 / w2.sum(1, keepdims=True),
+                tau=np.stack([np.exp(-2.0 + 0.30 * x + 0.02 * rng.normal(size=n)),
+                              np.exp(2.0 + 0.05 * rng.normal(size=n))], 1),
+                w=w2,
+                phi=np.stack([0.85 + 0.02 * rng.normal(size=n),
+                              0.80 + 0.02 * rng.normal(size=n)], 1),
+                zeta=np.ones((n, 2)))
+    # 旧路径对这条**失明**（二维列被丢），所以旧实现是恒 ok
+    assert SEL._corr_pairs(s_k2) == [], "F8-2 构造失效：旧路径本应对二维列失明"
+    _, g = _f8_cand(s_k2, "voigt", 2)
+    assert g["param_degenerate"] == "triggered", (
+        f"F8-2 K=2 的 w₁–τ₁ 简并被漏报：{g['param_degenerate']}")
+
+    def _one(name, s, fam, dof, key, want):
+        _, gg = _f8_cand(s, fam, dof)
+        assert gg[key] == want, f"{name}：{key}={gg[key]}，期望 {want}"
+        return gg[key]
+
+    rng = np.random.default_rng(5)
+    W = 900.0 + 2.0 * rng.normal(size=n)
+    s_phi = dict(R_inf=60.0 + 2.0 * rng.normal(size=n), W=W, pi=np.ones((n, 1)),
+                 w=W[:, None],
+                 tau=np.exp(-1.0 + 0.05 * rng.normal(size=n))[:, None],
+                 phi=(0.501 + 0.0005 * np.abs(rng.normal(size=n)))[:, None],
+                 zeta=np.ones((n, 1)))
+    _one("F8-3 φ→0.5", s_phi, "voigt", 1, "param_at_bound", "triggered")
+
+    rng = np.random.default_rng(6)
+    W = 900.0 + 2.0 * rng.normal(size=n)
+    s_zeta = dict(R_inf=60.0 + 2.0 * rng.normal(size=n), W=W, pi=np.ones((n, 1)),
+                  w=W[:, None],
+                  tau=np.exp(-1.0 + 0.05 * rng.normal(size=n))[:, None],
+                  phi=(0.85 + 0.01 * rng.normal(size=n))[:, None],
+                  zeta=(0.305 + 0.0005 * np.abs(rng.normal(size=n)))[:, None])
+    _one("F8-4 ζ→0.3", s_zeta, "voigt", 1, "param_at_bound", "triggered")
+
+    def _nested(n1):
+        rr = np.random.default_rng(7)
+        return dict(Rs=10.0 + 0.1 * rr.normal(size=n),
+                    R1=55.0 + 1.0 * rr.normal(size=n),
+                    Q1=200.0 + 2.0 * rr.normal(size=n),
+                    n1=n1 + 0.0005 * rr.normal(size=n),
+                    R2=600.0 + 2.0 * rr.normal(size=n),
+                    Q2=900.0 + 3.0 * rr.normal(size=n),
+                    n2=0.85 + 0.0005 * rr.normal(size=n),
+                    R_ad=3000.0 + 5.0 * rr.normal(size=n),
+                    tau_ad=1.6 + 0.01 * rr.normal(size=n))
+
+    _one("F8-5 nested n1→0.5", _nested(0.502), "nested", 2,
+         "param_at_bound", "triggered")
+    # 对照：nested 原规则不许被这次改动改坏（该静默时静默）
+    _one("F8-5b nested 对照", _nested(0.75), "nested", 2,
+         "param_at_bound", "ok")
+    # 固定参数（zeta_fixed）不参与统计：必须是 fixed，不是 ok 也不是 triggered
+    bf, det = SEL.at_bound_frac(dict(phi=(0.85 + 0.01 * rng.normal(size=n)),
+                                     zeta=np.ones(n)), "voigt")
+    assert bf == 0.0 and det["fixed"] == ["zeta"], (
+        f"F8-6 固定参数口径错：frac={bf} fixed={det['fixed']}")
+    return "F8-1…F8-6 共 6 项：K=1 不误报、K=2 不漏报、φ/ζ/n1 贴边必报、nested 对照、固定参数"
+
+
 CASES = [
     ("A1 合法用法", case_a1_legal_forms, False),
     ("A2 未知开关", case_a2_unknown_flags, False),
@@ -865,6 +980,7 @@ CASES = [
     ("F5 结果包封口", case_f5_bundle_is_finalized, False),
     ("F6 标准化残差半失效", case_f6_norm_sigma_halves, False),
     ("F7 spec 嵌套校验", case_f7_spec_nested_keys, False),
+    ("F8 guard 族适配", case_f8_guard_semantics, False),
 ]
 
 

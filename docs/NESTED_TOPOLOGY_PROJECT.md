@@ -651,6 +651,14 @@ nested 的 `ess_bulk` 用 `numpyro.summary` 的 `n_eff` 近似 voigt 的 `bulk_m
 `triggered`（M3 §19 的 `R1/R2` 共线是真实结构限制），该项属 **B 类，只记账**，
 一次都没有影响族级判定——这正是本节要守住的边界。
 
+> **[2026-11-11 更正]** 上面「`R1/R2` 共线是真实结构限制」的归因是**反的**：
+> 当时 `param_degenerate` 走 `_corr_pairs()`，只收标量列，voigt 的 `tau/phi/w`
+> 是 `(n_draw,K)` 被整列丢掉，`triggered` 实际来自 `W↔w`（`w≡W·π`）、
+> `ln_tau↔tau` 这类**同量异名**的定义式，`R1/R2` 在 K=2 处反而一次没被看到。
+> 已在 2026-11-11 修好（voigt 改读 `bm_corr.param_corr`），详见
+> `docs/round_2026-11-11/guard_semantics.md`。本节的**结论**（B 类只记账、
+> 一次都没影响族级判定）不受影响。
+
 **整批重跑路径：两次实测失败登记（B1 / B1'）**
 
 | 轮次 | 重跑档 | 结果 |
@@ -702,6 +710,11 @@ series 采样失败显形、重跑未救回」属实测，但只覆盖 2/4，**�
    B 类只记账：`param_degenerate` 在多数候选 `triggered`（M3 §19 的
    `R1/R2` 共线是真实结构限制），voigt 无环支路故 `loop_*` 记
    `not_applicable`——**一次都没有影响族级判定**，边界守住了。
+
+   > **[2026-11-11 更正]** 这里的「`R1/R2` 共线」同样是旧实现的误读：触发源
+   > 是 `W↔w` / `ln_tau↔tau` 的同量异名，不是分量简并。见
+   > `docs/round_2026-11-11/guard_semantics.md`；结论（B 类只记账、不影响
+   > 族级判定）不变。
 
 **`--strict-guards` 的离线重放**（`evidence/nested_topology/m4_strict_offline.py`，
 只改可用性判据、不重新采样，不能当独立验证）：把 ESS / Pareto-k 接进门禁会
