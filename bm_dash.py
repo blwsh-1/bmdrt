@@ -405,7 +405,11 @@ function niceTicks(lo, hi, n = 5) {
   const step = [1, 2, 2.5, 5, 10].map(m => m * mag)
     .find(s => (hi - lo) / s <= n * 1.35) || 10 * mag;
   const out = []; let v = Math.ceil(lo / step) * step;
-  for (; v <= hi + step * 1e-9; v += step) out.push(+v.toPrecision(12));
+  // 刻度累加会留下 3.4e-18 这种浮点零：在图上就是"0 刻度写着 3.4e-18"。
+  // 相对跨度小于 1e-9 的一律归零。
+  const zero = Math.max(Math.abs(lo), Math.abs(hi), 1) * 1e-9;
+  for (; v <= hi + step * 1e-9; v += step)
+    out.push(Math.abs(v) < zero ? 0 : +v.toPrecision(12));
   return out;
 }
 function logTicks(lo, hi) {
