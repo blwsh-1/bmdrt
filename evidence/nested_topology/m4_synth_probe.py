@@ -117,9 +117,17 @@ def make_observed(c: dict) -> tuple[np.ndarray, np.ndarray]:
     return c["f"], Z
 
 
-def fit_one(c: dict) -> dict:
-    """单条合成谱：§14 同口径 nested + voigt 基线，报 M-a/M-b/M-c。"""
-    f_all, Z_all = make_observed(c)
+def fit_one(c: dict, Z_override: np.ndarray | None = None) -> dict:
+    """单条合成谱：§14 同口径 nested + voigt 基线，报 M-a/M-b/M-c。
+
+    `Z_override`（§19 新增，硬边界 2）：外部构造好的观测谱。给定时跳过
+    `make_observed`，其余流程逐位不变；**默认 None 时与 §18 完全同一路径**，
+    由 §19 的 `--smoke` 回归验证守着，不许"差不多就行"。
+    """
+    if Z_override is None:
+        f_all, Z_all = make_observed(c)
+    else:
+        f_all, Z_all = c["f"], np.asarray(Z_override, complex)
     cut = cut_top(f_all, Z_all)
     f, Z = f_all[cut["keep"]], Z_all[cut["keep"]]
     sg = SIGMA_PCT / 100.0 * np.abs(Z)            # 拟合 σ 用观测谱（N 组故意不匹配）
