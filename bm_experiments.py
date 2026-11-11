@@ -45,7 +45,10 @@ except ImportError:                     # pragma: no cover
 # 共用诊断
 # --------------------------------------------------------------------------
 
-PARAMS = ("R_inf", "W", "v", "ln_tau", "phi", "zeta", "L")
+# P2-6（二轮审查）：扩散参数（Rw / Rwo+tauD）也是被采样的参数，逐参数
+# R̂/ESS 表必须包含——否则扩散项慢混合会被「逐参数表全绿」掩盖。
+PARAMS = ("R_inf", "W", "v", "ln_tau", "phi", "zeta", "L",
+          "Rw", "Rwo", "tauD")
 
 
 def with_zeta(ch, value: float = 1.0):
@@ -231,6 +234,10 @@ def z_chain_diag(ch, f, n_samp: int = 200):
     Rw = np.asarray(ch["Rw"], float) if has_rw else None
     Rwo = np.asarray(ch["Rwo"], float) if has_rwo else None
     tauD = np.asarray(ch["tauD"], float) if has_rwo else None
+    # P2-6（二轮审查）：链里有 L 就按 include_L=True 重建，否则含电感模型
+    # 的高频跨链诊断失真（高频感抗被硬塞进 HN 分量）。
+    has_L = "L" in ch
+    L = np.asarray(ch["L"], float) if has_L else None
     omega_ref = 2 * np.pi * np.sqrt(np.min(f) * np.max(f))
     idx = np.linspace(0, ns - 1, min(n_samp, ns)).astype(int)
     nf = len(f)
@@ -245,7 +252,9 @@ def z_chain_diag(ch, f, n_samp: int = 200):
             if has_rwo:
                 p["Rwo"] = Rwo[c, i]
                 p["tauD"] = tauD[c, i]
-            Zc = B.model_z(f, p, include_L=False)
+            if has_L:
+                p["L"] = L[c, i]
+            Zc = B.model_z(f, p, include_L=has_L)
             Zr[c, a] = Zc.real
             Zi[c, a] = Zc.imag
     rr, br, tr = _rank3(Zr)

@@ -208,7 +208,12 @@ def component_grade(state, p_peak_out=None):
         return GRADE_A
     if v != v:                       # nan
         return GRADE_A
-    return GRADE_B
+    # P3（二轮审查）：docstring 明写 B 只覆盖 0.05 < p ≤ 0.5，实现却对
+    # 任意有限 p 都给 B。按 docstring 校验：域外（p ≤ 0.05 或 p > 0.5）
+    # 不给 B——0.05 以下说不出"说不清"，>0.5 属 out_of_window 语义。
+    if 0.05 < v <= 0.5:
+        return GRADE_B
+    return GRADE_A
 
 
 # --------------------------------------------------------------------------

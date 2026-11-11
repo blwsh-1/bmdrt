@@ -131,6 +131,7 @@ DEFAULTS = {
 }
 
 # 只有这些键会传给 bm_kk.kk_check()；配置里多写别的键不会让门禁崩。
+# （`strict` 不在此列：它由 bm_real 的 gate 逻辑消费，不进 kk_check。）
 KK_OPT_KEYS = ("c", "max_M", "res_tol", "auto_L", "auto_tail", "auto_cap")
 
 
@@ -263,6 +264,10 @@ def process_one(path: Path, cfg: dict) -> dict:
                 # 结果文件名由 save_out 决定，这里是它的约定，别改一处忘另一处。
                 kkcfg = cfg.get("kk") or {}
                 kk_opts = {k: kkcfg[k] for k in KK_OPT_KEYS if k in kkcfg}
+                if "strict" in kkcfg:
+                    # strict 由 bm_real 的 gate 逻辑消费（unavailable 是否也
+                    # 拒绝），不传给 bm_kk.kk_check —— 单独带过去（P2-2）。
+                    kk_opts["strict"] = bool(kkcfg["strict"])
                 dcfg = cfg.get("diag") or {}
                 drtcfg = cfg.get("drt") or {}
                 R.run(str(path), K_force=None,
@@ -731,14 +736,26 @@ def discover() -> dict:
 # --------------------------------------------------------------------------
 
 def parse_opts(argv: list[str]) -> tuple[list[str], dict]:
-    """手写小解析器：没有子命令时，所有非选项参数都当成输入路径。"""
+    """手写小解析器：没有子命令时，所有非选项参数都当成输入路径。
+
+    审查 P1-2（二轮）：未知开关**必须报错**，不允许"照收进 opt、再被
+    白名单拷贝悄悄丢弃"。旧行为的实际后果：`--multi-model x.csv`（合法
+    开关属于别的入口）会把 `x.csv` 吞成开关取值，`paths=[]`，主命令
+    改扫整个 inbox；`--sigam-floor 0.1`（拼错）静默失效。
+    """
+    # 白名单（post-alias 键名）：
+    _VAL_KEYS = {"krange", "kmax", "ta", "zeta", "out", "inbox", "interval",
+                 "kk", "adsorption", "sigma_floor", "seed", "diffusion"}
+    _KK_MODES = {"gate", "warn", "off"}
+    _AD_VALS = {"rl", "none", "null", ""}
+    _DIFF_VALS = {"none", "Ws", "Wo", "both"}
     opt = {"krange": None, "wide": None, "kmax": None, "quick": None,
            "ta": None, "zeta": None, "L": None, "no_move": False,
            "out": None, "inbox": None, "interval": None, "kk": None,
            "auto_mechanism": None, "auto_mechanism_full": None,
            "adsorption": None, "auto_adsorption": None,
            "sigma_floor": None, "no_deinduce": False,
-           "seed": None,
+           "seed": None, "diffusion": None,
            "fit": False, "fast": False}
     paths, i = [], 0
     while i < len(argv):
@@ -770,9 +787,18 @@ def parse_opts(argv: list[str]) -> tuple[list[str], dict]:
             opt["L"] = False
         elif a.startswith("--") and "=" in a:
             k, v = a[2:].split("=", 1)
-            opt[_alias(k)] = v
+            k = _alias(k)
+            if k not in _VAL_KEYS:
+                sys.exit(f"[bmdrt] 未知开关 --{a[2:].split('=', 1)[0]}=…"
+                         f"（合法取值开关：{', '.join(sorted(_VAL_KEYS))}）")
+            opt[k] = v
         elif a.startswith("--"):
             k = _alias(a[2:])
+            if k not in _VAL_KEYS:
+                # 布尔旗标在上面已逐个处理；走到这里的就是未知开关。
+                sys.exit(f"[bmdrt] 未知开关 {a}（合法取值开关："
+                         f"{', '.join(sorted(_VAL_KEYS))}；"
+                         f"布尔旗标见 --help）")
             i += 1
             if i >= len(argv):
                 sys.exit(f"[bmdrt] {a} 缺少取值")
@@ -790,6 +816,19 @@ def parse_opts(argv: list[str]) -> tuple[list[str], dict]:
     for k in ("ta",):
         if opt[k] is not None:
             opt[k] = float(opt[k])
+    # 枚举值校验（审查 P1-2 二轮）：--kk foo 以前会静默变成第四种状态。
+    if opt["kk"] is not None and opt["kk"] not in _KK_MODES:
+        sys.exit(f"[bmdrt] --kk 只接受 {'/'.join(sorted(_KK_MODES))}，"
+                 f"收到 {opt['kk']!r}")
+    if opt["adsorption"] is not None:
+        _ad = str(opt["adsorption"]).strip().lower()
+        if _ad not in _AD_VALS:
+            sys.exit(f"[bmdrt] --adsorption 只接受 rl/none，收到 "
+                     f"{opt['adsorption']!r}")
+        opt["adsorption"] = _ad
+    if opt["diffusion"] is not None and opt["diffusion"] not in _DIFF_VALS:
+        sys.exit(f"[bmdrt] --diffusion 只接受 {'/'.join(sorted(_DIFF_VALS))}，"
+                 f"收到 {opt['diffusion']!r}")
     return paths, opt
 
 

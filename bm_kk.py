@@ -534,8 +534,14 @@ def diffusion_tail_cut(f, Z, frac: float = 0.25, min_keep: int = 16):
 
 def kk_check(f, Z, include_L=None, c: float = 0.85, max_M: int = 50,
              res_tol: float = 0.05, auto_L: bool = True,
-             auto_tail: bool = True, auto_cap: bool = True) -> dict:
+             auto_tail: bool = True, auto_cap: bool = True,
+             diagnose_L=None) -> dict:
     """对一条谱做 Lin-KK 分级体检。
+
+    diagnose_L：感抗**诊断**开关（估计 L_est / 高频归因）。None（默认）=
+    跟随 include_L（旧行为）；False = 明确关闭诊断——与「不建 L 参数」
+    解耦（审查 P2-7，二轮）：主模型不加 L 参数时，端部感抗诊断反而更
+    需要，不该被同一开关连坐关掉。
 
     返回 dict（全部可 JSON 序列化）：
         status        ok | warn | fail | unavailable
@@ -603,7 +609,10 @@ def kk_check(f, Z, include_L=None, c: float = 0.85, max_M: int = 50,
                 L_fit=raw["L_fit"], rms_raw=rms_raw)
 
     # ---- 端部诊断量（不改写数据）----
-    L_est = estimate_L(f, Z) if (auto_L and include_L is not False) else None
+    # P2-7（二轮审查）：诊断开关 diagnose_L 与建模开关 include_L 解耦——
+    # None（默认）跟随 include_L（逐位兼容旧行为），显式 False 才真正关闭。
+    _diag_L = (include_L if diagnose_L is None else diagnose_L)
+    L_est = estimate_L(f, Z) if (auto_L and _diag_L is not False) else None
     tail = diffusion_tail_candidate(f, Z) if auto_tail else None
     f_cut = (tail or {}).get("f_cut")
     slope = (tail or {}).get("slope_z")
@@ -657,8 +666,8 @@ def kk_check(f, Z, include_L=None, c: float = 0.85, max_M: int = 50,
     elif rms_clean["high"] > res_tol:
         # include_L=False 时 L_est 恒为 None，不能因此断言"无感抗点"——
         # 那是"跳过诊断"，不是"数据没有感抗"（审查 P2-10）。
-        if include_L is False:
-            attr.append("高频段残差超阈：感抗诊断已被 include_L=False 关闭，"
+        if _diag_L is False:
+            attr.append("高频段残差超阈：感抗诊断已被显式关闭，"
                         "未做归因，需人工复核")
         else:
             attr.append("高频段残差超阈，但高频无感抗点可归因，需人工复核")

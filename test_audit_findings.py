@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
-"""test_audit_findings.py —— 代码审查发现的两处缺陷的可复现测试。
+"""test_audit_findings.py —— 代码审查发现的缺陷的可复现测试。
 
 运行：python test_audit_findings.py
 
-断言的是**期望的正确行为**。当前（未修复）状态下用例 1、2 会失败，
-失败本身就是缺陷的证据；用例 3 是对照组，应当一直通过。
+断言的是**期望的正确行为**。两轮审查后全部用例应当通过（2026-11-11 起：
+用例 1 的「固定 σ 路径」契约已按二轮审查 P1-1 修复为**缺失即 raise**，
+本文件同时验证「显式传入的 σ 确实被使用」与「缺参时抛错」两面）。
 
 关于环境桩
 ----------
@@ -14,19 +15,17 @@
 被测试的两条路径（`loglik_matrix`、`compare_models`）本身不画图，
 数值计算仍走真实的 numpy / scipy / arviz 代码，断言不受桩影响。
 
-缺陷 1（bm_real.loglik_matrix:536-537）
+缺陷 1（bm_real.loglik_matrix）
 --------------------------------------
 主流程 `fit_one` 传 `sigma=None`，σ 进采样，样本里一定有 `s_re`/`s_im`。
 但 `bm_core.fit(..., sigma=(s, s))`（固定噪声、不采 σ）时，模型内部
-`s_re` 既不是 `sample` 也不是 `deterministic`，`get_samples()` 里没有这个键，
-`loglik_matrix` 于是**静默回退到硬编码的 1e-3**，而不是调用方真正用的 σ。
+`s_re` 既不是 `sample` 也不是 `deterministic`，`get_samples()` 里没有这个键。
 
-    lr = -0.5*((Zr-zr)/sr)**2 - np.log(sr) - 0.5*log(2π)
-
-残差为 0 时只有归一化项错（每点差 5.3）；残差不为 0 时二次项被
-`(0.2/1e-3)² = 4e4` 倍放大。elpd 绝对值、Pareto 权重、以及
-`docs/cases/.../case2_positive_real.py` 这类「固定噪声消除 σ→0 漏斗」
-的实验结论全部失真，而且不报错。
+历史：第一版实现静默回退硬编码 1e-3（一轮审查 P1-1）；修复时把硬编码值
+改成模块默认 `B.SIGMA=0.2` 并新增 `sigma=` 入参，但调用方不传时仍静默回退，
+且本文件的 `SIGMA_TRUE` 恰好也取 0.2——回归测试变成「0.2 == 0.2」的
+循环论证，假绿灯（二轮审查 P1-1）。现在的契约是**缺失即 raise**，
+用例 1 验证两面：显式传入的 σ 被逐位使用；不传参直接抛 ValueError。
 
 缺陷 2（bm_real.compare_models:576）
 -----------------------------------
@@ -62,11 +61,17 @@ def _patch_sandbox_mkdir():
 
     同一条限制也解释了为什么 `bmdrt.py check` 在这个环境里只跑通 A 组
     数学自检：B 组（采样）同样会撞上这个 import 期报错。
+
+    P3（二轮审查）：patch 只应覆盖 import 期——用全局 monkeypatch 且不
+    恢复会让测试进程里后续所有代码（包括被测路径）都跑在假 mkdir 上。
+    `_restore()` 在模块 import 完成后调用。
     """
     import os
     import pathlib
 
+    _real_mkdir = pathlib.Path.mkdir
     pathlib.Path.mkdir = lambda self, *a, **k: None
+    _patch_sandbox_mkdir._real_mkdir = _real_mkdir   # 供 import 后恢复
     # 顺带把缓存指到项目目录内，避免真实库往用户目录写文件
     os.environ.setdefault("MPLCONFIGDIR", str(ROOT / "out" / "_mplcache"))
 
@@ -76,8 +81,16 @@ _patch_sandbox_mkdir()
 import bm_core as B          # noqa: E402
 import bm_real as R          # noqa: E402
 
-SIGMA_TRUE = 0.2             # 与 bm_core.SIGMA 一致（绝对口径，Ω）
+SIGMA_TRUE = 0.2             # 仅用例 3（σ 进采样路径）；用例 1 用 0.05，
+                             # **刻意不等于** bm_core.SIGMA，锚才不会被回退值撞上
 N_DRAW = 4
+
+# P3（二轮审查）：import 期结束即恢复真实 mkdir，不让假桩泄漏进被测路径。
+def _restore_mkdir():
+    import pathlib
+    pathlib.Path.mkdir = _patch_sandbox_mkdir._real_mkdir  # type: ignore[attr-defined]
+
+_restore_mkdir()
 
 
 def _truth_samples() -> dict:
@@ -107,20 +120,31 @@ def _joint_loglik(f, Z, s: dict, sigma: float) -> np.ndarray:
 
 # ---------------------------------------------------------------- 用例 1
 def case1_fixed_sigma_loo_uses_real_sigma():
-    """固定噪声时 LOO 必须用调用方给的 σ，不能静默回退到 1e-3。"""
+    """固定噪声时 LOO 必须用调用方给的 σ：显式传入逐位生效，缺参即 raise。"""
     f, Z = B.true_spectrum()                  # 无噪声真谱 → 残差恰为 0
     s = _truth_samples()
     assert "s_re" not in s, "用例前提：固定噪声 → 样本里没有 s_re"
 
-    got = R.loglik_matrix(s, f, Z, include_L=False, n_max=N_DRAW)
-    want = _joint_loglik(f, Z, s, SIGMA_TRUE)
-    v_bad = -2 * np.log(1e-3) - np.log(2 * np.pi)
-
+    sig_fix = 0.05                            # **不等于**回退值/B.SIGMA，锚才有效
+    got = R.loglik_matrix(s, f, Z, include_L=False, n_max=N_DRAW,
+                          sigma=sig_fix)
+    want = _joint_loglik(f, Z, s, sig_fix)
     assert np.allclose(got, want, rtol=1e-12), (
-        f"逐点 ll={got[0, 0]:.4f}，按真值 σ={SIGMA_TRUE} 应为 {want[0, 0]:.4f}；"
-        f"硬编码 1e-3 会算出 {v_bad:.4f}。"
-        f"→ 固定噪声路径下 elpd / Pareto-k / 模型比较全部失真，且不报错。")
-    return f"逐点 ll={got[0, 0]:.4f} 与 σ={SIGMA_TRUE} 口径一致"
+        f"逐点 ll={got[0, 0]:.4f}，按调用方 σ={sig_fix} 应为 {want[0, 0]:.4f}；"
+        f"若实现静默回退默认值（0.2），无残差时逐点差 "
+        f"{2 * np.log(0.2 / sig_fix):.4f}。")
+    assert abs(got[0, 0] - want[0, 0]) < 1e-9
+
+    # 缺参必须抛错，而不是静默回退（二轮审查 P1-1 的核心）。
+    try:
+        R.loglik_matrix(s, f, Z, include_L=False, n_max=N_DRAW)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(
+            "固定 σ 路径缺 sigma 时应 raise ValueError，"
+            "实际却静默用了默认值 → elpd/Pareto-k/模型比较口径失真且不报错。")
+    return f"显式 σ={sig_fix} 逐位生效（ll={got[0, 0]:.4f}）；缺参正确抛错"
 
 
 # ---------------------------------------------------------------- 用例 2
@@ -195,10 +219,50 @@ def case4_paired_loo_unpack_arity():
     return f"解包 {n_unpack} ≥ 返回 {n_return}，一致"
 
 
+# ---------------------------------------------------------------- 用例 5
+def case5_ppc_sigma_contract():
+    """PPC 与 loglik_matrix 同一 σ 契约：缺参 raise、显式传入生效（P2-3）。
+
+    旧实现固定 σ 路径用 `np.std(Z-mu)` 当噪声——那是把模型自己的拟合误差
+    当成测量误差，cover_re/cover_im 变成循环论证。
+
+    注意：PPC 的复制数受后验 draw 数上限（`min(n_rep, m)`）约束，
+    `_truth_samples()` 只有 4 条 draw、经验分位数不稳，所以这里单独
+    造 200 条真值 draw 再跑。
+    """
+    f, Z = B.true_spectrum()
+    t = B.truth_dict()
+    m_rep = 200
+    s = {"R_inf": np.full(m_rep, t["R_inf"]),
+         "W": np.full(m_rep, t["W"]),
+         "pi": np.tile(t["pi"], (m_rep, 1)),
+         "tau": np.tile(t["tau"], (m_rep, 1)),
+         "phi": np.tile(t["phi"], (m_rep, 1)),
+         "zeta": np.tile(t["zeta"], (m_rep, 1))}
+    assert "s_re" not in s, "用例前提：固定噪声 → 样本里没有 s_re"
+
+    try:
+        B.posterior_predictive_check(s, f, Z, include_L=False, n_rep=50)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("PPC 缺 sigma 时应 raise ValueError，"
+                             "而不是用残差 std 冒充测量噪声。")
+
+    pp = B.posterior_predictive_check(s, f, Z, include_L=False, n_rep=200,
+                                      sigma=0.05, seed=0)
+    # 观测 = 真值模型（残差 0，居中），200 条 draw 的 90% 区间必含中心。
+    assert pp["cover_re"] >= 0.9 and pp["cover_im"] >= 0.9, \
+        f"σ=0.05 下覆盖应 ≈1.0，实际 {pp['cover_re']:.2f}/{pp['cover_im']:.2f}"
+    return (f"缺参抛错；σ=0.05 覆盖率 "
+            f"{pp['cover_re']:.2f}/{pp['cover_im']:.2f}")
+
+
 CASES = [case1_fixed_sigma_loo_uses_real_sigma,
          case2_compare_models_survives_loo_failure,
          case3_sampled_sigma_path_is_correct,
-         case4_paired_loo_unpack_arity]
+         case4_paired_loo_unpack_arity,
+         case5_ppc_sigma_contract]
 
 if __name__ == "__main__":
     bad = []

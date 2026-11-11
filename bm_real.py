@@ -188,8 +188,31 @@ def load_spectrum(path, fscale: float | None = None, zscale: float = 1.0):
     elif i_mag is not None and i_ph is not None:
         mag = A[:, i_mag].astype(float)
         ph = A[:, i_ph].astype(float)
-        rad = any("rad" in h for h in names)
-        if not rad and np.nanmax(np.abs(ph)) > 7.0:
+        # P2-8（二轮审查）：单位只看**相位列自己**的名字，且判不出来时
+        # 报错而不是猜。旧实现两个坑：
+        #   ① `any("rad" in h for h in names)` 扫全部列名——任何一列含
+        #      "rad"（如 "radius"）就把整个文件当弧度；
+        #   ② 近纯阻谱（相位 ≤7°、度制）不触发转换，度被当弧度。
+        ph_name = names[i_ph] if names else ""
+        if "rad" in ph_name:
+            rad = True
+        elif "deg" in ph_name or "°" in ph_name:
+            rad = False
+        else:
+            # 表头判不出来：只有一条硬规则可用——弧度制 |phase| ≤ π，
+            # 超过 π 只能是度。其余情况（max|phase| ≤ π）度/弧度都可能，
+            # 宁可停下游手，也不猜（猜错会把 3° 变成 172°）。
+            mx = float(np.nanmax(np.abs(ph)))
+            if mx > np.pi:
+                rad = False          # 弧度不可能超过 π → 必是度
+            else:
+                raise SystemExit(
+                    f"相位列 {ph_name!r} 单位判不出来（表头无 deg/rad，"
+                    f"max|phase|={mx:.3g} ≤ π，度/弧度皆可能）："
+                    f"请把表头改成 phase_deg / phase_rad 之一")
+        if not rad:
+            # 度制一律转弧度。旧实现的 ">7 才转"启发式会把近纯阻谱的
+            # 3° 当成 3 rad（172°）——正是 P2-8 的第二个坑。
             ph = np.radians(ph)
         Z = mag * np.exp(1j * ph)
         form = "|Z|/phase" + ("(rad)" if rad else "(deg)")
@@ -644,11 +667,11 @@ def loglik_matrix(s, f, Z, include_L, n_max: int = 800, sigma=None):
     """逐样本、**逐频率点**的对数似然，(n_draw, n_freq)。
 
     sigma：固定噪声路径（`bm_core.fit(sigma=(s_re, s_im))`，σ 不进采样）下
-    必须由调用方显式传入的噪声标准差，标量或 (s_re, s_im) 元组均可。缺省时
-    优先用样本里的 `s_re`/`s_im`（主流程 σ 进采样，样本里一定有）；两者都没有
-    才回退到模块默认噪声 `B.SIGMA`（0.2 Ω），**绝不回退到 1e-3**——1e-3 与
-    真实噪声差两个量级，二次项会被放大 (0.2/1e-3)²≈4e4 倍，使 elpd /
-    Pareto-k / 模型比较全部失真且不报错（审查 P1-1）。
+    **必须**由调用方显式传入的噪声标准差，标量或 (s_re, s_im) 元组均可。
+    缺省时优先用样本里的 `s_re`/`s_im`（主流程 σ 进采样，样本里一定有）；
+    两者都没有时**直接 raise**，绝不回退到任何默认值——回退会把错误口径
+    写进 elpd / Pareto-k / 模型比较且不报错（一轮审查 P1-1 曾回退 1e-3，
+    二轮审查 P1-1 证实 0.2 同样失真且回归测试因锚值撞上回退值而失效）。
 
     每个频率点 j 是一个**联合观测**：同一频率的实部与虚部来自同一次复阻抗
     测量，必须一起留出、一起计入——
@@ -679,8 +702,15 @@ def loglik_matrix(s, f, Z, include_L, n_max: int = 800, sigma=None):
         elif "s_re" in s and "s_im" in s:         # 主流程：σ 进采样
             sr = float(s["s_re"][i])
             si = float(s["s_im"][i])
-        else:                                     # 固定噪声且未传参：模块默认
-            sr = si = float(B.SIGMA)
+        else:
+            # 固定噪声（bm_core.fit(sigma=...)）路径：σ 不在样本里，调用方
+            # 必须显式传入。静默回退默认值会把错误口径写进 elpd / Pareto-k /
+            # select_k 且无任何报错（审查 P1-1，二轮）——宁可拒绝计算，
+            # 也不给一个看似合理的数。
+            raise ValueError(
+                "loglik_matrix：样本里没有 s_re/s_im（固定 σ 路径），且调用方"
+                "未传 sigma。请在调用时显式传入本次拟合实际使用的 σ"
+                "（标量或 (s_re, s_im) 元组）。")
         lr = -0.5 * ((Z.real - z.real) / sr) ** 2 - np.log(sr) - 0.5 * LOG2PI
         li = -0.5 * ((Z.imag - z.imag) / si) ** 2 - np.log(si) - 0.5 * LOG2PI
         ll[a] = lr + li                      # 同一频率的实部+虚部一起算
@@ -727,28 +757,63 @@ def compare_models(res_list):
     ok = [r for r in res_list
           if r.get("idata") is not None and np.isfinite(r.get("elpd", np.nan))]
     ok_ids = {id(r) for r in ok}
+
+    def _cmp_key(r):
+        # P3（二轮审查）：key 原来只含 K —— 同 K 不同 diffusion/adsorption
+        # 的候选会在 pack 里互相覆盖。当前主链路 K 唯一，属公开 API 风险。
+        k = f"K={r['K']}"
+        if r.get("diffusion"):
+            k += f"+{r['diffusion']}"
+        if r.get("adsorption") == "RL":
+            k += "+ad"
+        return k
+
     for r in res_list:
         if id(r) in ok_ids:
             continue
-        r["elpd_diff"] = float("nan")
-        r["dse"] = float("nan")
-        r["weight"] = float("nan")
-        r["rank"] = float("nan")
+        # P2-1（二轮审查）：未参与比较的候选写 None，不写 NaN/0 冒充真值。
+        r["elpd_diff"] = None
+        r["dse"] = None
+        r["weight"] = None
+        r["rank"] = None
+        r["comparison_performed"] = False
         r["compare_note"] = "LOO 不可用，未参与 az.compare"
     if not ok:                                    # 全部 LOO 失败：返回空表
         import pandas as pd
         return pd.DataFrame()
-    pack = {f"K={r['K']}": r["idata"] for r in ok}
+    pack = {_cmp_key(r): r["idata"] for r in ok}
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         df = az.compare(pack, ic="loo", method="stacking", scale="log")
     for r in ok:
-        key = f"K={r['K']}"
+        key = _cmp_key(r)
         r["elpd_diff"] = float(df.loc[key, "elpd_diff"])
         r["dse"] = float(df.loc[key, "dse"])
         r["weight"] = float(df.loc[key, "weight"])
         r["rank"] = int(df.loc[key, "rank"])
+        r["comparison_performed"] = True
     return df
+
+# ---- 采用补跑家族结果时的字段保留（审查 P2-5，二轮） ----
+def _adopt_family_result(best, cand, note_cand, note_prev):
+    """Ws / ad 补跑家族被采用时，**只替换模型结果字段**，K 选择状态与 note
+    必须继承 none 家族的完整 K 扫描。
+
+    旧实现 `best, note = cand, note_cand` 整体替换：补跑只固定 K 跑了
+    一个模型，其 `selection_status` 是 "not_compared"、elpd_diff/rank 是
+    未比较默认值——证据卡 `K_STATUS_CLASS`（bm_evidence.py）据此把一条
+    完整扫描过的谱误判成「只拟合了一个 K」，none 家族的判读理由也全部丢失。
+    """
+    saved_status = best.get("selection_status")
+    best = cand
+    if saved_status is not None:
+        best["selection_status"] = saved_status
+    best["comparison_performed"] = False
+    best["k_compare_note"] = ("K 选择与跨 K 配对比较在 none 家族完成；本结果"
+                              "是固定 K 补跑，elpd_diff/rank 不适用（None）。"
+                              "与 none 家族的配对差见 auto_mechanism/ad_selection")
+    return best, list(note_cand) + list(note_prev)
+
 
 # ---- 初值：把 DRT 的峰列表调成恰好 K 个 ----
 def null_thresholds(f, n_rep: int = 2000, deg: int = 2, seed: int = 0):
@@ -973,7 +1038,10 @@ def fit_one(f, Z, K, include_L, zeta, init=None, seed=None, kw=None, diffusion=N
     # 无 R-τ 简并，looks_like_warburg() 判 no。这时模型是用「多个 φ≈0.5
     # 的分量拼出 45° 段」来逼近扩散尾，逐分量判据的前提不成立。
     # 补一条查**合成阻抗斜率**的弱识别，只提示、不改 K 选择。
-    wmul = dict(level="no", why=[], band=None)
+    # P2-9（二轮审查）：「检查没跑成」用 not_evaluable，不用 "no"——
+    # "no" 是阴性结论（检查跑了、没发现），失败伪装成阴性会误导判读。
+    wmul = dict(level="not_evaluable", why=["多分量扩散检查未运行（前置条件不满足）"],
+                band=None)
     if DIFF is not None and K >= 2:
         try:
             n_s = len(s["R_inf"])
@@ -984,7 +1052,8 @@ def fit_one(f, Z, K, include_L, zeta, init=None, seed=None, kw=None, diffusion=N
             lvl, why = DIFF.warburg_multicomponent(sig, band)
             wmul = dict(level=lvl, why=list(why), band=band)
         except Exception as e:              # noqa: BLE001  诊断不该让主流程崩
-            wmul = dict(level="no", why=[f"多分量扩散检查失败：{type(e).__name__}"],
+            wmul = dict(level="not_evaluable",
+                        why=[f"多分量扩散检查失败：{type(e).__name__}"],
                         band=None)
 
     # ---- 模型选择用哪个口径：**物理峰位** ----
@@ -1054,16 +1123,21 @@ def fit_one(f, Z, K, include_L, zeta, init=None, seed=None, kw=None, diffusion=N
 
     # ---- 模型比较 ----
     ll = loglik_matrix(s, f, Z, include_L)
+    _loo_error = None
     try:
         idata, elpd, elpd_se, bad_k, pt, pk = loo_pointwise(ll)
     except Exception as e:
         idata, elpd, elpd_se, bad_k, pt, pk = (None, float("nan"),
                                                float("nan"), float("nan"),
                                                None, None)
-        print(f"    （LOO 失败：{type(e).__name__}: {e}）")
+        # P3（二轮审查）：失败原因只 print 不落盘，事后只见 elpd=NaN
+        # 无从追查。写进结果 dict，随 JSON 落盘。
+        _loo_error = f"{type(e).__name__}: {e}"
+        print(f"    （LOO 失败：{_loo_error}）")
 
     r = dict(
         K=K, s=s, mc=mc, rows=rows, zd=zd, ndiv=ndiv, tds=tds, t=dt,
+        loo_error=_loo_error,
         n_draw=kw["num_chains"] * kw["n_samples"],
         band=band, f0=f0, w=w, phi=ph, f0lo=f0lo, f0hi=f0hi, wlo=wlo, whi=whi,
         p_out=p_out, p_out_max=float(np.nanmax(p_out)),
@@ -1084,7 +1158,8 @@ def fit_one(f, Z, K, include_L, zeta, init=None, seed=None, kw=None, diffusion=N
         zmax_obs=zmax_obs, p_diff_small=p_diff_small, diff_amp_key=diff_amp_key,
         idata=idata, elpd=elpd, elpd_se=elpd_se, bad_k=bad_k,
         pointwise_elpd=pt, pareto_k=pk,
-        elpd_diff=0.0, dse=float("nan"), weight=float("nan"), rank=1,
+        elpd_diff=None, dse=None, weight=None, rank=None,
+        comparison_performed=False,
         rhat_max=max(x["rhat"] for x in rows),
         tail_min=min(x["tail"] for x in rows),
         bulk_min=min(x["bulk"] for x in rows),
@@ -1225,10 +1300,13 @@ def select_k(res_list, exploratory: bool = False):
     # 注意：arviz 的 elpd_diff 是**正数表示更差**（deficit），且以全局最好者为基准。
     # 用 abs 与之解耦，无论 arviz 将来改符号约定都不会错。
     def deficit(r):
-        return abs(r["elpd_diff"]) if np.isfinite(r["elpd_diff"]) else np.inf
+        # P2-1（二轮审查）：未比较的候选 elpd_diff=None（不再伪装成 0.0）。
+        _ed = r.get("elpd_diff")
+        return abs(_ed) if _ed is not None and np.isfinite(_ed) else np.inf
 
     close = [r for r in pool
-             if r["K"] < best["K"] and deficit(r) < max(2.0, r["dse"])]
+             if r["K"] < best["K"] and r.get("comparison_performed")
+             and deficit(r) < max(2.0, r["dse"])]
     if close:
         small = min(close, key=lambda r: r["K"])
         note.append(f"K={best['K']} 与 K={small['K']} 的 elpd 差 "
@@ -1509,6 +1587,13 @@ def _select_mechanism_impl(none_res, ws_res, gate, exploratory=False, share=None
                    reason=f"Δelpd(Ws−none)={cmp['delta']:.2f} ≥ "
                           f"max(2, 1.5·dse)={thr:.2f}（dse={cmp['dse']:.2f}），"
                           f"切换到 Ws")
+        # P3（二轮审查）：exploratory 入参此前从未使用——quick 档的采样
+        # 预算（800/400）不足以支撑正式的机制切换结论，与吸附支路
+        # （select_k 的 exploratory 标注）不对称。补上。
+        if exploratory:
+            out["note"].append(
+                "**quick 档**：本切换基于 quick 预算的 LOO，需正式档复核后"
+                "才能作为机制结论引用（exploratory）")
         return out
     out.update(choice="none", status="uncertain",
                reason=f"Δelpd(Ws−none)={cmp['delta']:.2f} 为正但未达 "
@@ -1926,8 +2011,11 @@ def report(res, include_L, zeta, f):
         print(f"    未过严格线：{'；'.join(r['grade_bad'])}")
     if r["grade"] == 0:
         print(f"    不可用原因：{'；'.join(r['grade_loose'])}")
-    extra = (f"   落后最好者 {abs(r['elpd_diff']):.1f} ± {r['dse']:.1f}"
-             if r["rank"] > 0 else "")
+    extra = ""
+    _ed, _rk = r.get("elpd_diff"), r.get("rank")
+    if _rk is not None and np.isfinite(_rk) and _rk > 0 \
+            and _ed is not None and np.isfinite(_ed):
+        extra = f"   落后最好者 {abs(_ed):.1f} ± {r['dse']:.1f}"
     print(f"  elpd_loo {r['elpd']:.1f} ± {r['elpd_se']:.1f}{extra}")
     if r["frac_neg"] > 0:
         _tol = (getattr(DIFF, "NONPHYS_TOL", 0.01) * 100) if DIFF is not None else 1.0
@@ -1958,8 +2046,10 @@ def report(res, include_L, zeta, f):
     print(f"  Σw={r['w'].sum():.4g} Ω   R_inf={r['R_inf']:.4g} Ω"
           + (f"   L={r['L'] * 1e6:.3g} µH" if include_L else ""))
     print("  f_τ=1/(2πτ) 是参数特征频率；P(峰出窗) 用 DRT 实际峰位，"
-          "**模型选择的硬筛选只认它**。φζ>1 时峰位无意义 → 标 — 并按"
-          "「峰位诊断不可用」淘汰，**不退回 τ 口径充数**。")
+          "**模型选择的硬筛选优先看它**。φζ>1 时峰位无意义 → 标 —，"
+          "退回参数口径 P(τ出窗)（p_tau_out）作降级判据并标注 nonphysical"
+          "——峰位**不再单独淘汰 K**（P(峰位出窗) 已移到组分可辨识性审查，"
+          "见 ③b；2026-11-10 起）。")
     if r.get("diffusion"):
         print("  扩散项：" + _diff_line(r))
         if np.isfinite(r.get("p_diff_small", np.nan)):
@@ -2362,6 +2452,29 @@ def prescreen_stage(f, Z, deind=None):
     return pres, pk, pk_all, dt
 
 
+def _json_safe(o):
+    """递归把 NaN/±Inf 换成 None，其余原样（审查 P2-4，二轮）。
+
+    `json.dumps` 默认 `allow_nan=True` 会把 NaN/Infinity 写成字面量——
+    那不是合法 JSON，严格解析器（`json.loads(..., parse_constant=抛错)`）
+    直接报错，事后难排查。配合 `allow_nan=False` 使用：漏网的 NaN 会
+    raise 而不是静默落盘。
+    """
+    if isinstance(o, dict):
+        return {k: _json_safe(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [_json_safe(v) for v in o]
+    if isinstance(o, (np.floating, float)) and not np.isfinite(float(o)):
+        return None
+    if isinstance(o, np.integer):
+        return int(o)
+    if isinstance(o, np.bool_):
+        return bool(o)
+    if isinstance(o, np.ndarray):
+        return _json_safe(o.tolist())
+    return o
+
+
 def _write_kk_reject(path, f, Z, kk, kk_mode, seed=None):
     """gate 模式且 K-K 判 fail：跳过整条拟合链，只落一份可机读的拒绝记录。
 
@@ -2386,7 +2499,8 @@ def _write_kk_reject(path, f, Z, kk, kk_mode, seed=None):
         warnings=["**KK 门禁拒绝**：数据不自洽，本次未拟合，不输出最优 K。"],
         k_selection=["**不输出最优 K 的结论**：拟合前 K-K 门禁判 fail。"],
     )
-    js.write_text(json.dumps(rec, ensure_ascii=False, indent=2, default=float),
+    js.write_text(json.dumps(_json_safe(rec), ensure_ascii=False, indent=2,
+                             default=float, allow_nan=False),
                   encoding="utf-8")
     return js
 
@@ -2394,6 +2508,11 @@ def _write_kk_reject(path, f, Z, kk, kk_mode, seed=None):
 def save_out(stem, f, Z, res, pres, include_L, zeta, tips, K_sel_note):
     OUT.mkdir(exist_ok=True)
     js = OUT / f"real_{stem}.json"
+    # P3（二轮审查）：结果按 stem 命名，同名谱/重跑会静默覆盖——至少让
+    # 覆盖在输出里可见。（相对 CWD 的 OUT 行为不动：主链路已显式
+    # resolve，直接调 run() 的外部脚本自行负责。）
+    if js.exists():
+        print(f"  [注意] {js} 已存在，本次运行将覆盖它（stem 同名复跑）")
     summary = dict(
         file=stem, n=int(f.size), f_min=float(f.min()), f_max=float(f.max()),
         K=int(res["K"]), include_L=bool(include_L),
@@ -2408,6 +2527,8 @@ def save_out(stem, f, Z, res, pres, include_L, zeta, tips, K_sel_note):
         sample_grade=int(res["grade"]), grade_fail=res["grade_bad"],
         elpd_loo=res["elpd"], elpd_se=res["elpd_se"],
         elpd_diff=res["elpd_diff"], dse=res["dse"],
+        loo_error=res.get("loo_error"),
+        comparison_performed=bool(res.get("comparison_performed")),
         rms_re=res["rms_re"], rms_im=res["rms_im"],
         sigma_re=res["s_re"], sigma_im=res["s_im"],
         acf=float(res["acf"]), trend_re=res["trend"]["re"],
@@ -2483,8 +2604,9 @@ def save_out(stem, f, Z, res, pres, include_L, zeta, tips, K_sel_note):
                           for k, v in res["s"].items()
                           if k in ("Rw", "Aw", "Rwo", "tauD")},
     )
-    js.write_text(json.dumps(summary, ensure_ascii=False, indent=2,
-                             default=float), encoding="utf-8")
+    js.write_text(json.dumps(_json_safe(summary), ensure_ascii=False, indent=2,
+                             default=float, allow_nan=False),
+                  encoding="utf-8")
     np.savez_compressed(OUT / f"real_{stem}_samples.npz",
                         f=f, Zre=Z.real, Zim=Z.imag,
                         **{k: v for k, v in res["s"].items()
@@ -2536,20 +2658,35 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
     # ---- ⓪ K-K 事前门禁：读数据之后、DRT 预判之前 ------------------
     # PSIS-LOO 只能在「似然假设成立」的前提下比较模型，检验不了假设本身。
     # 所以这一步必须在任何拟合之前，且 fail 时直接拒绝定 K。
+    # P2-2（二轮审查）：门禁**不能静默 fail-open**——异常/依赖缺失导致的
+    # "unavailable" 过去照常拟合，读起来却像门禁通过。现在：
+    #   ① 恒写 `kk_performed`（True=门禁真的跑了 / False=没跑成）；
+    #   ② gate 模式遇 unavailable 打显著警告；
+    #   ③ config kk 段 `strict: true` 时，gate 模式下 unavailable 也拒绝
+    #      （默认 false = 保持旧行为，但警告与字段照写）。
     kk = None
     if kk_mode != "off" and _kk_check is not None:
+        _strict = bool((kk_opts or {}).get("strict", False))
+        _kk_kw = {k: v for k, v in (kk_opts or {}).items() if k != "strict"}
         try:
-            kk = _kk_check(f, Z, include_L=include_L, **(kk_opts or {}))
+            kk = _kk_check(f, Z, include_L=include_L, **_kk_kw)
+            kk["kk_performed"] = True
         except Exception as e:             # 门禁绝不能让主流程崩
             kk = {"status": "unavailable",
                   "reason": f"K-K 门禁异常，已跳过：{type(e).__name__}: {e}",
                   "attribution": [], "n": int(f.size),
+                  "kk_performed": False,
                   "f_min": float(f.min()), "f_max": float(f.max())}
         print("\n=== ⓪ K-K 事前门禁（拟合前） ===")
         print(_kk_format_report(kk) if _kk_format_report is not None
               else f"  {kk['status']}: {kk['reason']}")
-        if kk_mode == "gate" and kk.get("status") == "fail":
-            print("\n  ** 数据不自洽，拒绝定 K；本次不做拟合 **")
+        if kk.get("status") == "unavailable":
+            print("  ** 注意：本次 K-K 门禁没有跑成（异常/依赖缺失），"
+                  f"kk_performed=false —— 数据自洽性未经验证，"
+                  f"{'strict 模式：拒绝拟合' if (kk_mode == 'gate' and _strict) else '本次仍继续拟合（fail-open，已如实披露）'} **")
+        if kk_mode == "gate" and kk.get("status") in ("fail", "unavailable") \
+                and (kk.get("status") == "fail" or _strict):
+            print("\n  ** 数据不自洽（或门禁不可用且 strict），拒绝定 K；本次不做拟合 **")
             js = _write_kk_reject(path, f, Z, kk, kk_mode, seed=seed)
             print(f"  结果：{js}")
             return None
@@ -2757,7 +2894,7 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
                 print(f"    · {t}")
             if auto_mech["choice"] == "Ws":
                 print("  → 采用 Ws 家族结果（K 固定为 none 选出的 K）")
-                best, note = best_ws, note_ws
+                best, note = _adopt_family_result(best, best_ws, note_ws, note)
     best["auto_mechanism"] = auto_mech
 
     # ---- ③d 吸附判定：none vs ad(RL)（M4，独立于 select_k，§6.3 一期屏蔽 both）----
@@ -2798,7 +2935,7 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
                     print(f"    · {t}")
                 if ad_sel["choice"] == "ad":
                     print("  → 采用 ad(RL) 家族结果（K 固定为 none 选出的 K）")
-                    best, note = best_ad, note_ad
+                    best, note = _adopt_family_result(best, best_ad, note_ad, note)
     best["ad_gate"] = ad_gate
     best["ad_selection"] = ad_sel
 

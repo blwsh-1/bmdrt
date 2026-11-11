@@ -1256,7 +1256,11 @@ def real_diagnose(paths, *, include_L=None, adsorption=_UNSET,
             # `load_spectrum` 会往 stdout 打「读入 N 点」，表格里不需要
             with contextlib.redirect_stdout(io.StringIO()):
                 f, Z = R.load_spectrum(path)
-        except BaseException as e:                       # noqa: BLE001
+        except (Exception, SystemExit) as e:          # noqa: BLE001
+            # P2-14（二轮审查）：原来是 except BaseException——把 Ctrl-C /
+            # SystemExit 一起吞成"读取失败"继续循环，批量诊断无法中止。
+            # SystemExit（load_spectrum 的文件级报错）按主链路约定记失败
+            # 继续；KeyboardInterrupt 仍向上传播。
             rows.append(dict(path=path, name=os.path.basename(path),
                              ok=False, why=f"读取失败：{type(e).__name__}: {e}",
                              n=0, f_min=float("nan"), f_max=float("nan"),

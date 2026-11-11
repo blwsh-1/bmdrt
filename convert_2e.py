@@ -103,10 +103,14 @@ def read_sheet(ws) -> dict:
         raise ValueError(f"只有 {len(rec)} 行有效数据")
 
     # ---- 虚部符号自检：用仪器自己给的 |Z| 和相位反算 ----
+    # P3（二轮审查）：相位差必须做 ±180° 缠绕归一（convert_3e._wrap180 同款
+    # 已有），否则 ±180° 附近的点会产生 ~360° 的假大残差。
+    def _wrap180(a: float) -> float:
+        return (a + 180.0) % 360.0 - 180.0
     err_same = err_flip = err_mod = 0.0
     for f, zr, zi, zm, zp in rec:
-        err_same += abs(math.degrees(math.atan2(zi, zr)) - zp)
-        err_flip += abs(math.degrees(math.atan2(-zi, zr)) - zp)
+        err_same += abs(_wrap180(math.degrees(math.atan2(zi, zr)) - zp))
+        err_flip += abs(_wrap180(math.degrees(math.atan2(-zi, zr)) - zp))
         err_mod += abs(math.hypot(zr, zi) - zm) / max(zm, 1e-12)
     n = len(rec)
     err_same, err_flip, err_mod = err_same / n, err_flip / n, err_mod / n
@@ -185,7 +189,8 @@ def main() -> int:
         for x in problems:
             print("   ", x)
     if check_only:
-        return 0
+        # P2-11（二轮审查）：预检发现 problems 必须红灯，与正常模式同口径。
+        return 1 if problems else 0
 
     keys = list(manifest[0])
     with (DST / "manifest.csv").open("w", newline="", encoding="utf-8-sig") as fh:

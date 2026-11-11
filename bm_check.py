@@ -333,6 +333,9 @@ def summary():
         print(f"\n{npass} 通过 / {len(_rows)-npass-nskip} 失败 / {nskip} 跳过（冒烟模式）")
     else:
         print(f"\n{npass}/{len(_rows)} 通过")
+    # P3（二轮审查）：直接单跑（python bm_check.py）恒退出 0 —— 失败也绿灯。
+    # summary() 返回失败数（跳过不算失败），入口按它定退出码。
+    return len(_rows) - npass - nskip
 
 
 if __name__ == "__main__":
@@ -340,7 +343,8 @@ if __name__ == "__main__":
     _FAST = (cmd == "fast")
     part_a()
     if cmd == "nofit":
-        summary()
+        _nfail = summary()
     else:
         part_b(fast=_FAST)
-        summary()
+        _nfail = summary()
+    raise SystemExit(1 if _nfail else 0)

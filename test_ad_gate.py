@@ -293,6 +293,10 @@ def main():
             print(f"[ERROR] {fn.__name__}  {type(e).__name__}: {e}")
     print(f"\n{len(CASES) - len(bad) - len(skip)}/{len(CASES)} 通过"
           f"；跳过 {len(skip)}；未通过：{bad}")
+    # P3（二轮审查）：全 SKIP 等于什么都没验证，不能绿灯。
+    if not bad and len(skip) == len(CASES) and CASES:
+        print("[FAIL] 全部用例被 SKIP：本机环境什么都没验证到，不能算通过")
+        raise SystemExit(1)
     raise SystemExit(1 if bad else 0)
 
 

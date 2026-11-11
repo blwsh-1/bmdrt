@@ -141,10 +141,22 @@ def _report(rows, path: Path) -> Path:
             L.append(f"| {r['idx']} | {r['L']} | {r['floor']:.0e} | 未拟合 | | | | | | |")
             continue
         z = m["zmax"] or 1.0
-        L.append(f"| {r['idx']} | {m['include_L']} | {r['floor']:.0e} "
-                 f"| {m['sigma_re'] / z:.2e} | {m['sigma_im'] / z:.2e} "
-                 f"| {m['rms_re']:.2e} | {m['rms_im']:.2e} "
-                 f"| {m['tree_cap']:.1%} | {m['div']} | {m['grade']} |")
+        # P2-14（二轮审查）：与主打印（:112-126）同一套 None 安全格式化——
+        # KK 拒绝谱 ok=True 但 tree_cap/div/grade/sigma_* 为 None，
+        # 直接 f-string 格式化抛 TypeError 崩掉整个脚本。
+        _na = "n/a"
+        def _f(v, fmt):
+            return format(v, fmt) if isinstance(v, (int, float)) else _na
+        sre, sim = m.get("sigma_re"), m.get("sigma_im")
+        rre, rim = m.get("rms_re"), m.get("rms_im")
+        tc, dv, gr = m.get("tree_cap"), m.get("div"), m.get("grade")
+        L.append(f"| {r['idx']} | {m.get('include_L')} | {r['floor']:.0e} "
+                 f"| {_f(sre / z if sre is not None else None, '.2e')} "
+                 f"| {_f(sim / z if sim is not None else None, '.2e')} "
+                 f"| {_f(rre, '.2e')} | {_f(rim, '.2e')} "
+                 f"| {_f(tc, '.1%') if isinstance(tc, (int, float)) else _na} "
+                 f"| {_f(dv, 'd') if isinstance(dv, int) else _na} "
+                 f"| {_f(gr, 'd') if isinstance(gr, int) else _na} |")
     L.append("")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(L) + "\n", encoding="utf-8")

@@ -32,7 +32,7 @@
     python batch_2e.py --quick --jobs 3          # 全量 117 条，粗筛
     python batch_2e.py --full  --jobs 3 --only 2EMC1-1   # 只重跑某个源文件的 9 条
     python batch_2e.py --report --quick          # 只重建汇总/图片/zip，不重跑
-    python batch_2e.py --full  --jobs 3 --every 9        # 每个源文件抽 1 条严格复跑
+    python batch_2e.py --full  --jobs 3 --every          # 每个源文件抽 1 条严格复跑（旗标，不带数值）
 """
 
 from __future__ import annotations
@@ -139,9 +139,14 @@ def _run_one(args) -> dict:
         rc = -9
         with log.open("a", encoding="utf-8") as fh:
             fh.write(f"\n[TIMEOUT] {timeout} s\n")
-    if js.exists() and png.exists():
+    # P2-13（二轮审查）：不能只凭产物存在判 ok——残留旧产物或子进程
+    # rc!=0（拟合失败但旧 json 未被清掉）都会被记成成功。先看 rc。
+    is_reject = js.exists() and _is_kk_reject(js)
+    if rc != 0 and not is_reject:
+        status = f"fail(rc={rc})"
+    elif js.exists() and png.exists():
         status = "ok"
-    elif js.exists() and _is_kk_reject(js):
+    elif is_reject:
         status = "kk_reject"          # 正常拒绝：不算失败，不计入成功拟合
     else:
         status = f"fail(rc={rc})"

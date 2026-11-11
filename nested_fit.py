@@ -77,7 +77,9 @@ WARNING = (
 FIT_KEYS = ("n_warmup", "n_samples", "num_chains",
             "target_accept", "max_tree_depth")
 SUFFIXES = (".csv", ".txt", ".tsv", ".z", ".dat")
-DEFAULT_OUT = os.path.join("out", "nested_fit")
+# 输出目录默认锚在**脚本所在项目**下，不随调用者的 CWD 漂移
+# （审查 P3 二轮：从项目外调用时产物曾散落到调用者目录）。
+DEFAULT_OUT = str(_ROOT / "out" / "nested_fit")
 
 # §13/§14 的 `standard` 是 2000/1000/2 + **target_accept=0.98**
 # （`evidence/nested_topology/m4_holdout2.py::BUDGET`，预注册口径）；
@@ -480,13 +482,23 @@ def main(argv=None) -> int:
                 with_voigt=a.with_voigt, voigt_K=a.voigt_K,
                 progress=a.progress)
             ok += 1
-        except Exception as exc:
+        except KeyboardInterrupt:
+            # Ctrl-C 就是想停：如实中断，不伪装成"这条谱失败"继续跑下一条。
+            raise
+        except (Exception, SystemExit) as exc:
+            # `bm_real.load_spectrum` 的错误分支用 `raise SystemExit` 报错
+            # （如"找不到文件"/"有效数据行太少"）。SystemExit 继承
+            # BaseException，`except Exception` 接不住——审查 P1-3（二轮）
+            # 实测一条坏谱中断整批。与主链路 `bmdrt.py` 的约定一致：
+            # 一个文件的问题，不能让整批死在这儿。
             bad.append((path, f"{type(exc).__name__}: {exc}"))
             print(f"  [失败] {path}: {type(exc).__name__}: {exc}", flush=True)
     print(f"\n完成 {ok}/{len(files)}")
     for p, e in bad:
         print(f"  失败：{p}  {e}")
-    return 0 if ok else 1
+    # 审查 P1-3（二轮）：部分失败必须红灯。旧口径 `0 if ok else 1` 会让
+    # "9 成功 + 1 失败"退出码为 0，批处理上层无从感知。
+    return 1 if bad else 0
 
 
 if __name__ == "__main__":

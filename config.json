@@ -37,8 +37,9 @@
   },
 
   "kk": {
-    "_说明": "拟合前 Lin-KK 门禁。mode: gate=判 fail 就拒绝定 K / warn=只报告仍拟合 / off=跳过。RC 阶数 M 由残差肘部自动选，max_M 只是扫描上限（实际还受点数一半限制）；c 仅用于 μ 诊断标签，μ 不再参与选阶和分级；res_tol 是分频段相对残差 RMS 阈值。auto_L 只做电感诊断不扣 jωL（Lin-KK 已含自由 L）；auto_tail 识别 -45 度扩散尾；auto_cap 用串联电容在同一频率网格复验，不丢数据点。",
+    "_说明": "拟合前 Lin-KK 门禁。mode: gate=判 fail 就拒绝定 K / warn=只报告仍拟合 / off=跳过。RC 阶数 M 由残差肘部自动选，max_M 只是扫描上限（实际还受点数一半限制）；c 仅用于 μ 诊断标签，μ 不再参与选阶和分级；res_tol 是分频段相对残差 RMS 阈值。auto_L 只做电感诊断不扣 jωL（Lin-KK 已含自由 L）；auto_tail 识别 -45 度扩散尾；auto_cap 用串联电容在同一频率网格复验，不丢数据点。strict: gate 模式下门禁不可用（异常/依赖缺失）时是否也拒绝拟合；false=仍拟合但在报告与 JSON 里如实标注 kk_performed=false（审查 P2-2）。",
     "mode": "gate",
+    "strict": false,
     "c": 0.85,
     "max_M": 50,
     "res_tol": 0.05,

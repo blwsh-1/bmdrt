@@ -313,7 +313,9 @@ def main(argv=None) -> int:
 
     md = _write_report(rows, idx, floors, a, base / "SIGMA_SWEEP.md")
     print(f"\n[sweep] 报告：{md}")
-    return 0
+    # P3（二轮审查）：全部拟合失败仍 return 0 —— 上层按退出码门控会绿灯。
+    _n_ok = sum(1 for r in rows if (r.get("m") or {}).get("ok"))
+    return 0 if _n_ok else 1
 
 
 def _write_report(rows, idx, floors, a, path: Path) -> Path:
@@ -361,8 +363,11 @@ def _write_report(rows, idx, floors, a, path: Path) -> Path:
          "> 判读顺序：先看「树深触顶」是否消失，再看「参数/K」是否稳定，",
          "> 最后才看「rms/σ 与 PPC」有没有变差。**不要以 R̂ 最漂亮为标准选地板。**", "",
          "> 解锁门槛（写死在 `sweep_sigma_floor.py`）：`R̂≤1.01`、`bulk/tail ESS≥400`、",
-         "> `div=0`、`触顶<1%`、`σ 后验不贴地板`、`无 |ρ|>0.9 强相关`。",
-         "> **COND** = 贴地板但已明确识别为数值正则化，或强相关需人工解释。",
+         "> `div=0`、`触顶<1%`、`无 |ρ|>0.9 的**不可解释**强相关`。",
+         "> **COND**（与代码 `:135-159` 的判定逐字对应）：σ 项 = `stack_max ≥ 0.10`"
+         "（floor 占有效 σ 的份额超过 10%，即「贴地板」，不是「已明确识别为数值正则化」）；",
+         "> corr 项 = 存在**无法用已知机制解释**的强相关（`n_unexplained > 0`；"
+         "有已知机制解释的强相关不压成 COND）。任一项 COND → 总判定 CONDITIONAL。",
          "> `floor 占 σ_eff` = median(floor/(floor+base))，取 re/im 两路较大者；",
          "> 越接近 1 说明有效 σ 越由人为地板决定，而非由数据约束（与严格 stack 阈值互补）。",
          "> 保守解读：即使严格 stack 阈值判 PASS，只要 `floor 占 σ_eff` 明显偏高（>50%），",

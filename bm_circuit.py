@@ -178,10 +178,21 @@ def component_params(res: dict) -> list[dict]:
         tau = np.median(mm["tau"][:, o], axis=0)
         phi = np.median(mm["phi"][:, o], axis=0)
         zeta = np.median(mm["zeta"][:, o], axis=0)
-    except Exception:                       # 兜底：用已排好序的 phi + 反推 tau
+    except Exception as e:                  # 兜底：用已排好序的 phi + 反推 tau
+        # P2-10（二轮审查）：兜底曾把所有 ζ 置 1——ζ≠1 的 HN 分量会被画成
+        # R‖CPE、峰位标错，且因为异常被吞，图"看似成功"。缩窄为可解释的
+        # 处理：ζ 从结果 dict 里取中位数（真实采样值），取不到才置 1 并
+        # 记警告，不再无声降级。
         tau = 1.0 / (2 * np.pi * np.asarray(res["f0"], float))
         phi = np.asarray(res["phi"], float)
-        zeta = np.ones(K)
+        _zs = (s or {}).get("zeta")
+        zeta = (np.median(np.asarray(_zs, float), axis=0)
+                if _zs is not None else np.ones(K))
+        print(f"  [警告] component_params 兜底（{type(e).__name__}: {e}）："
+              f"τ/φ 用 f0 反推，ζ={'取样本中位' if _zs is not None else '置 1'}"
+              f"（中位按模型内部分量顺序取，若各分量 ζ 差异大，"
+              f"与按 f0 排序的报告顺序可能不对应，以报告为准）"
+              f"——电路图上的峰位/元件类型可能与报告略有出入")
 
     out = []
     for k in range(K):

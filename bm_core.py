@@ -387,12 +387,15 @@ def n_eff(s: dict) -> np.ndarray:
     return np.exp(-(pi * np.log(pi)).sum(axis=1))
 
 
-def comp_table(s: dict, tol: float = 0.01, sort_by: str = "w"):
+def comp_table(s: dict, tol: float = 0.01):
     """按权重从大到小排（**不是**按编号——编号在样本间会乱跳）。
 
     报 tol 以上的分量；每个分量的 τ / 面积 / φ / ζ 都给 5-95% 区间。
     注意：这是"边际"汇总，不是"同一个分量在每张样本里都是第 k 大"的严格匹配。
     权重差异明显时两者一致；差异接近 tol 时区间会偏宽（保守，可接受）。
+
+    （P3 二轮审查：删掉从未被使用的 `sort_by` 死参数——排序固定按平均
+    权重，参数挂在签名上会误导调用方以为可以换口径。）
 
     **"area" 字段的前提**：它是 w_k = ∫γ_k dlnτ（也是 ω→0 时的电阻贡献），
     只有当 φ_k·ζ_k ≤ 1 时 DRT 非负、它才是一个物理意义上的"峰面积"。
@@ -630,11 +633,17 @@ residual_stats = fit_residual_stats
 
 
 def posterior_predictive_check(s: dict, f, Z, include_L=True, n_rep: int = 400,
-                               level: float = 0.90, seed: int = 0):
+                               level: float = 0.90, seed: int = 0, sigma=None):
     """真正的后验预测检验：Z_rep⁽ˢ⁾ = Z_model(θ⁽ˢ⁾) + ε⁽ˢ⁾。
 
     逐样本：用该样本的参数算阻抗，再从观测模型抽一次噪声，得到"复制数据"。
     然后检查实测点是否落在复制数据的区间内。
+
+    sigma：固定噪声路径（σ 不进采样、样本里没有 s_re/s_im）下**必须**显式
+    传入的噪声标准差（标量或 (s_re, s_im)）。缺省时优先用样本里的
+    `s_re`/`s_im`；两者都没有时**直接 raise**——用残差 std 冒充噪声会把
+    cover_re/cover_im 变成"把模型自己的拟合误差当成测量误差"的循环论证
+    （审查 P2-3）。
 
     返回
     ----
@@ -650,16 +659,29 @@ def posterior_predictive_check(s: dict, f, Z, include_L=True, n_rep: int = 400,
     nf = len(f)
     Zr = np.empty((len(idx), nf))
     Zi = np.empty((len(idx), nf))
+    # σ 口径：显式入参 > 样本里的 s_re/s_im > 报错（审查 P1-1/P2-3：
+    # 不允许用残差 std 等任何"看似合理"的默认值顶替）。
+    if sigma is not None:
+        if np.ndim(sigma) == 0:
+            _sr_fix = _si_fix = float(sigma)
+        else:
+            _sr_fix, _si_fix = float(sigma[0]), float(sigma[1])
+    else:
+        _sr_fix = None
     has_sig = "s_re" in s and "s_im" in s
+    if _sr_fix is None and not has_sig:
+        raise ValueError(
+            "posterior_predictive_check：样本里没有 s_re/s_im（固定 σ 路径），"
+            "且调用方未传 sigma。请显式传入本次拟合实际使用的 σ。")
     for a, i in enumerate(idx):
         p = sample_params(s, i, include_L)
         mu = model_z(f, p, include_L=include_L)
-        if has_sig:
+        if _sr_fix is not None:
+            sr, si = _sr_fix, _si_fix
+        elif has_sig:
             sr, si = float(s["s_re"][i]), float(s["s_im"][i])
-        else:
-            # σ 被固定时用拟合残差估计（同一量纲的近似）
-            r = Z - mu
-            sr, si = float(np.std(r.real)), float(np.std(r.imag))
+        else:  # 不可达（上方已拦截），防御性保底
+            raise ValueError("posterior_predictive_check：σ 口径缺失")
         Zr[a] = mu.real + sr * rng.standard_normal(nf)
         Zi[a] = mu.imag + si * rng.standard_normal(nf)
 
