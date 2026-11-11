@@ -19,7 +19,9 @@ function mkEl(tag) {
     querySelector() { return mkEl("div"); },
     querySelectorAll() { return []; },
     getBoundingClientRect() { return { left: 0, top: 0, width: 640, height: 300 }; },
-    classList: { add() {}, remove() {}, contains() { return false; } },
+    classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
+    // offsetHeight 给左栏 sticky 定位用（syncHdr 读它算 --hdrtop）
+    offsetHeight: 96, offsetWidth: 640,
     cloneNode() { return mkEl(tag); },
     setPointerCapture() {}, focus() {}, click() {},
   };
@@ -68,6 +70,7 @@ const cases = [
   ["renderDrt", () => renderDrt(520, 268), "<path"],
   ["renderResid", () => renderResid(640, 268), "<circle"],
   ["renderBode", () => renderBode(700, 340), "<circle"],
+  ["renderReIm", () => renderReIm(700, 340), "<circle"],
 ];
 for (const [name, fn, must] of cases) {
   try {
@@ -118,10 +121,10 @@ try {
   for (const [st, cls] of Object.entries(want)) {
     const keep = D.kk;
     D.kk = { status: st, reason: "测试" };
-    const box = mkEl("div");
-    drawNotes(box);
-    if (!box.innerHTML.includes(`chk ${cls}`)) throw new Error(`${st} 没映射到 ${cls}`);
-    if (!box.innerHTML.includes(txt[st])) throw new Error(`${st} 文案缺 ${txt[st]}`);
+    renderSide();                            // 判定块现在在左控制台，不在卡片里
+    const h = node("#side").innerHTML;
+    if (!h.includes(`chk ${cls}`)) throw new Error(`${st} 没映射到 ${cls}`);
+    if (!h.includes(txt[st])) throw new Error(`${st} 文案缺 ${txt[st]}`);
     D.kk = keep;
   }
   pass("kk-state", "ok/warn/fail/unavailable → pass/warn/fail/na");
@@ -143,17 +146,19 @@ try {
   const nOv = node("#grid").children.length;
   setPage("md");
   const nMd = node("#grid").children.length;
-  if (nOv < 3) throw new Error(`总览页只有 ${nOv} 张卡`);
-  if (nMd < 2) throw new Error(`判定页只有 ${nMd} 张卡`);
+  if (nOv !== 3) throw new Error(`分析页应 3 张图卡，实际 ${nOv}`);
+  if (nMd !== 1) throw new Error(`数据表页应只有 model 一张卡，实际 ${nMd}`);
   if (node("#kpis").style.display !== "none") throw new Error("表格页没收起指标条");
   setPage("ov");
-  pass("pages", `ov ${nOv} 卡 / md ${nMd} 卡`);
+  // 主图卡必须带投影 tab，否则"同一份 Z(f) 三种画法"这个入口就丢了
+  const fitCard = node("#grid").children.find(c => c["data-id"] === "fit");
+  if (!fitCard || !fitCard.innerHTML.includes('data-mtab="bode"'))
+    throw new Error("主图缺 Bode / Re&Im 投影 tab");
+  pass("pages", `ov ${nOv} 图卡 / md ${nMd} 表卡`);
 } catch (e) { fail("pages", e.message); }
 
 /* ---------- ⑥ 表格面板与 spec ---------- */
 try {
-  const box = mkEl("div");
-  drawNotes(box);
   const box2 = mkEl("div");
   drawModel(box2);
   const h = box2.innerHTML;

@@ -75,21 +75,24 @@ THEMES = {
 # 判定不放总览、也不藏进抽屉——它常驻顶栏 chip（每页都能看到），
 # 逐条判据在「判定与模型」页。漂亮拟合与「参数不可辨识」都必须能一眼看到。
 PAGES = [
-    dict(id="ov", label="总览", hint="先看图：拟合轨迹、DRT、残差是否过关"),
-    dict(id="md", label="判定与模型", hint="逐条判据、K 候选、参数后验与相关性"),
+    dict(id="ov", label="分析", hint="左：判定与读数 · 右：Nyquist / DRT / 残差（主图可切 Bode、Re&Im）"),
+    dict(id="md", label="数据表", hint="K 候选、参数后验、相关矩阵的完整表"),
 ]
 
 # 默认布局：Nyquist 占最大面积（第一眼判拟合好坏的就是它），
 # DRT 与残差在右列上下对齐（共用频率轴，可以竖着对照）；
 # 判定与模型另起一页，不跟图抢纵向空间。
 DEFAULT_PANELS = [
-    # Nyquist 跨两行：它是第一眼判「拟合好不好」的图，等比例坐标下必须有
-    # 近方的画布，否则要么字太小、要么四周留白。
-    dict(id="fit", span=6, rows=2, visible=True, page="ov"),
-    dict(id="drt", span=6, rows=1, visible=True, page="ov"),
-    dict(id="resid", span=6, rows=1, visible=True, page="ov"),
-    dict(id="notes", span=12, rows=1, visible=True, page="md"),
-    dict(id="model", span=12, rows=1, visible=True, page="md"),
+    # 布局照专业 EIS 软件（Zahner THALES / EIS Analysis Box）的做法：
+    # 左栏是「读数与设置」，右区是图。判定不许挤进图区、更不许藏到第二页，
+    # 所以 notes 不再是一张卡片，而是左栏的固定区块（见 JS renderSide）。
+    # Nyquist 跨两行：等比例坐标要求近方画布，一行装不下会压扁圆弧。
+    dict(id="fit", span=7, rows=2, visible=True, page="ov", zone="plot"),
+    dict(id="drt", span=5, rows=1, visible=True, page="ov", zone="plot"),
+    dict(id="resid", span=5, rows=1, visible=True, page="ov", zone="plot"),
+    # 完整表格（K 候选 / 参数 / 相关矩阵）单独一页：322px 左栏塞不下 n×n 矩阵，
+    # 硬塞的结果是每个格子 12px、字号 8pt，谁都读不出来。
+    dict(id="model", span=12, rows=1, visible=True, page="md", zone="table"),
 ]
 
 # 默认布局也导出成模块常量：面板生成、契约测试、以及"另存为模板"都读它，
@@ -98,14 +101,12 @@ DEFAULT_LAYOUT = dict(theme="minimal", panels=DEFAULT_PANELS,
                       colors={}, version=R.SPEC_VERSION)
 
 PANEL_META = {
-    "fit": dict(title="阻抗拟合", sub="Nyquist · 数据 / 后验中位 / 区间",
-                detail="Bode", page="ov"),
+    "fit": dict(title="阻抗拟合", sub="主图·可切 Nyquist / Bode / Re&Im",
+                detail="放大", page="ov"),
     "drt": dict(title="DRT 分布", sub="后验 γ(τ) 与峰位", detail="峰参数",
                 page="ov"),
     "resid": dict(title="残差诊断", sub="标准化残差 · ±1σ / ±2σ",
                   detail="ACF / 分段", page="ov"),
-    "notes": dict(title="判定与警告", sub="§14 判据逐条 · 数据自洽性",
-                  detail=None, page="md"),
     "model": dict(title="模型与参数", sub="K 候选 · 参数后验 · 相关性",
                   detail="相关矩阵", page="md"),
 }
@@ -257,9 +258,65 @@ button.primary:hover{background:#000}
 .kpi.fail .v{color:var(--bad)} .kpi.pass .v{color:var(--ok)}
 .kpi.warn .v{color:var(--warn)}
 
+/* ---------- 工作区：左控制台 + 右图区 ---------- */
+/* 照专业 EIS 软件的骨架（左参数、右图、图上方切投影），但不用它的暗色密集表单：
+   那些界面把一半宽度花在输数字上，而且字号小到要靠猜。这里左栏只放
+   「已经算好的读数 + 几个开关」，不放可编辑的拟合参数（那属于拟合器，不属结果查看器）。 */
+.workspace{display:grid;grid-template-columns:320px minmax(0,1fr);
+  gap:var(--gap);align-items:start}
+aside.side{display:flex;flex-direction:column;gap:10px;position:sticky;
+  top:var(--hdrtop,96px);max-height:calc(100vh - var(--hdrtop,96px) - 16px);
+  overflow:auto;padding-right:2px;scrollbar-width:thin}
+aside.side::-webkit-scrollbar{width:6px}
+aside.side::-webkit-scrollbar-thumb{background:#ddd;border-radius:3px}
+.sec{border:1px solid var(--line);border-radius:var(--radius);background:var(--panel)}
+.sec>h2{font-size:10.5px;text-transform:uppercase;letter-spacing:.45px;
+  color:var(--sub);margin:0;padding:8px 11px 7px;font-weight:600;
+  border-bottom:1px solid var(--line);display:flex;align-items:center;gap:6px;
+  background:#fafafa;border-radius:var(--radius) var(--radius) 0 0}
+.sec>h2 .n{margin-left:auto;font-size:10.5px;color:var(--sub);
+  font-weight:400;text-transform:none;letter-spacing:0}
+.sec .sb{padding:9px 11px 11px}
+.kv{display:flex;justify-content:space-between;gap:8px;font-size:12px;
+  padding:3px 0;font-variant-numeric:tabular-nums}
+.kv .k{color:var(--sub);flex:0 0 auto}
+.kv .v{font-family:ui-monospace,Consolas,monospace;text-align:right;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sec .checks .chk{font-size:12px;padding:5px 7px;gap:6px}
+.sec .checks .chk .val{font-size:11.5px}
+.sec .notes-list{font-size:11.5px}
+.swatches{display:grid;grid-template-columns:repeat(2,1fr);gap:6px 8px}
+.sw{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--sub)}
+.sw input[type=color]{width:20px;height:20px;padding:0;border:1px solid var(--line);
+  border-radius:5px;background:#fff;cursor:pointer;flex:0 0 auto}
+
+/* 主图内的投影切换（Nyquist / Bode / Re&Im）：同一份数据的三种画法，
+   放 tab 比并排三张省一半面积，也不会让人以为它们是三个不同的结果。 */
+.ptabs{display:flex;align-items:center;gap:2px;padding:0 8px;
+  border-bottom:1px solid var(--line);background:#fbfbfb}
+.ptab{font-size:11.5px;padding:5px 9px 4px;border:0;
+  border-bottom:2px solid transparent;border-radius:0;background:none;
+  color:var(--sub);cursor:pointer;white-space:nowrap}
+.ptab:hover{color:var(--fg);background:#f2f2f2}
+.ptab.on{color:var(--fg);font-weight:600;border-bottom-color:var(--accent);
+  background:#fff}
+.ptabs .r{margin-left:auto;font-size:11px;color:var(--sub);padding-right:2px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+@media(max-width:1240px){
+  .workspace{grid-template-columns:1fr}
+  aside.side{position:static;max-height:none;overflow:visible;
+    display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+  /* 左栏折上去以后，右区变窄，7/5 会把 Nyquist 压到 548px，等比例下弧被挤小。
+     改成主图通栏、DRT 与残差各半：总高仍是 2 行，一行不多。 */
+  .card[data-id="fit"]{grid-column:span 12 !important}
+  .card[data-id="drt"],.card[data-id="resid"]{grid-column:span 6 !important}
+}
+
 /* ---------- 网格 ---------- */
 main.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:var(--gap);
   align-items:start}
+main.grid.wide{grid-template-columns:1fr}
 .card{grid-column:span 7;border:1px solid var(--line);border-radius:var(--radius);
   background:var(--panel);overflow:hidden;transition:box-shadow .15s;
   display:flex;flex-direction:column}
@@ -360,7 +417,7 @@ footer code{font-family:ui-monospace,Consolas,monospace;font-size:11px;
 </style>
 </head>
 <body>
-<header>
+<header id="hdr">
   <div class="wrap tb">
     <div class="tb-l">
       <h1 id="ttl">__TITLE__</h1>
@@ -380,9 +437,12 @@ footer code{font-family:ui-monospace,Consolas,monospace;font-size:11px;
   <section class="kpis" id="kpis"></section>
   <div class="hint" id="opshint">
     滚轮缩放 · 拖动平移 · 双击复位 · 点击固定读数 ·
-    <kbd>Shift</kbd>+滚轮只缩横轴 · 拖卡片标题可重排
+    <kbd>Shift</kbd>+滚轮只缩横轴 · 主图上方切 Nyquist / Bode / Re&amp;Im
   </div>
-  <main class="grid" id="grid"></main>
+  <div class="workspace">
+    <aside class="side" id="side"></aside>
+    <main class="grid" id="grid"></main>
+  </div>
   <footer id="foot"></footer>
 </div>
 
@@ -419,6 +479,9 @@ let PAGE = PAGES[0].id;         // 当前页
 let DEEP = null;                // 抽屉深链（#detail=…），与页签一起维护 hash
 let ZOOM = {};                  // panelId -> {x0,x1,y0,y1}
 let OPEN = null;                // 抽屉里正在看的面板
+// 主图区当前投影。三者是**同一份 Z(f) 的三种画法**，不是三个结果：
+// Nyquist 判形状、Bode 判量级与相位、Re&Im 判有没有单分量抢戏。
+let MAINTAB = "nyq";
 
 /* ---------------- 小工具 ---------------- */
 const $ = s => document.querySelector(s);
@@ -586,18 +649,38 @@ function domain(panel, w, h) {
     const dx = (x1 - x0) * 0.06 || 0.1, dy = (y1 - y0) * 0.06 || 0.1;
     x0 -= dx; x1 += dx; y0 -= dy; y1 += dy;
     // Nyquist 必须等比例（1 Ω 横 = 1 Ω 纵），否则圆弧会被压成椭圆。
-    // 等比例 + 宽画布 = 四周留白，所以改**扩数据域**去贴合画布比例，
-    // 而不是把图缩到中间（matplotlib 的 adjustable='datalim' 同理）。
-    const bw = Math.max(80, (w || 600) - 66), bh = Math.max(80, (h || 400) - 52);
-    const tgt = bw / bh, xspan = x1 - x0, yspan = y1 - y0;
-    if (xspan / yspan < tgt) {
-      const need = yspan * tgt, cx = (x0 + x1) / 2;
-      x0 = cx - need / 2; x1 = cx + need / 2;
-    } else {
-      const need = xspan / tgt, cy = (y0 + y1) / 2;
+    // 宽画布下有两种贴合方式，选后者：
+    //   ① 扩数据域（matplotlib datalim）——域越扩越大，弧越缩越小，
+    //      1560 宽时要扩到数据的 1.4 倍，980 窄屏通栏时要扩到 2 倍，弧只剩中间一截；
+    //   ② 缩绘图区（matplotlib adjustable='box'）——把多余的宽度变成左右 padding，
+    //      弧按真实比例铺满高度。单位长度的像素数不变，读数是准的。
+    const bh = Math.max(80, (h || 400) - 52);
+    const bw = Math.max(80, (w || 600) - 66);
+    const ratio = (x1 - x0) / (y1 - y0);
+    let padL = 52, padR = 14;
+    if (bw / bh <= ratio) {
+      // 画布比数据"瘦"：扩 y，不压 x（压 x 会让单位横纵不等长）
+      const need = (x1 - x0) * bh / bw, cy = (y0 + y1) / 2;
       y0 = cy - need / 2; y1 = cy + need / 2;
+    } else {
+      // 画布比数据"胖"：先扩域，再留白。
+      // 纯扩域会把弧越缩越小（980 通栏时要扩到 2 倍）；纯留白会浪费半屏。
+      // 限一个 1.45 倍的扩域上限，剩下的宽度变成左右 padding。
+      const cap = ratio * 1.45;
+      if (bw / bh < cap) {
+        const need = (y1 - y0) * (bw / bh), cx = (x0 + x1) / 2;
+        x0 = cx - need / 2; x1 = cx + need / 2;
+      } else {
+        const need = (y1 - y0) * cap, cx = (x0 + x1) / 2;
+        x0 = cx - need / 2; x1 = cx + need / 2;
+      }
+      const needW = (x1 - x0) / (y1 - y0) * bh;
+      if (needW < bw) {
+        const extra = bw - needW;
+        padL += extra * 0.5; padR += extra * 0.5;
+      }
     }
-    return { x0, x1, y0, y1 };
+    return { x0, x1, y0, y1, padL, padR };
   }
   if (panel === "drt") {
     if (!D.drt) return null;
@@ -616,7 +699,7 @@ function domain(panel, w, h) {
 function renderFit(w, h) {
   const c = D.curves, o = domain("fit", w, h);
   const fr = frame(null, w, h, { xdom: [o.x0, o.x1], ydom: [o.y0, o.y1],
-    xlabel: "Z′ / Ω", ylabel: "−Z″ / Ω" });
+    padL: o.padL, padR: o.padR, xlabel: "Z′ / Ω", ylabel: "−Z″ / Ω" });
   const { x, y, F, rngX, rngY } = fr;
   // 区间的 Re/Im 是**分别**取的边缘分位，复平面上是个矩形包络，
   // 不是一条可以连成多边形的"带"。早先按 re_lo→re_hi→im_hi 连成封闭路径，
@@ -713,6 +796,39 @@ function renderResid(w, h) {
   return { body: F.join("") + mark, fr, kind: "resid" };
 }
 
+// Z′ 与 −Z″ 对频率：和 Nyquist 同一份数据、同一套符号约定，只是把
+// 「圆弧」摊成两条 f 曲线——拟合在某个频段偷偷偏移，Nyquist 上看不出来，这里是一条直线偏。
+function renderReIm(w, h) {
+  const c = D.curves;
+  const re = c.f.map((_, i) => c.zre[i]), ref = c.f.map((_, i) => c.fre[i]);
+  const im = c.f.map((_, i) => -c.zim[i]), imf = c.f.map((_, i) => -c.fim[i]);
+  const all = re.concat(ref, im, imf);
+  let lo = Math.min(...all), hi = Math.max(...all);
+  const pd = (hi - lo) * 0.08 || 0.1;
+  const fr = frame(null, w, h, { xdom: [Math.min(...c.f), Math.max(...c.f)],
+    ydom: [lo - pd, hi + pd], xlog: true, xlabel: "f / Hz", ylabel: "Ω" });
+  const { x, y, F, rngX, rngY } = fr;
+  const fs = TH.fontSize - 1.5;
+  c.f.forEach((v, i) => {
+    F.push(`<circle cx="${x(v).toFixed(1)}" cy="${y(re[i]).toFixed(1)}" r="2.6" fill="none" stroke="${TH.data}" stroke-width="1"/>`);
+    F.push(`<rect x="${(x(v) - 2.4).toFixed(1)}" y="${(y(im[i]) - 2.4).toFixed(1)}" width="4.8" height="4.8" fill="none" stroke="${TH.imC}" stroke-width="1.1"/>`);
+  });
+  F.push(`<path d="${path(c.f.map((v, i) => [v, ref[i]]), x, y)}" fill="none" stroke="${TH.fit}" stroke-width="1.4"/>`);
+  F.push(`<path d="${path(c.f.map((v, i) => [v, imf[i]]), x, y)}" fill="none" stroke="${TH.imC}" stroke-width="1.2" stroke-dasharray="4 3"/>`);
+  const lx = rngX[0] + 8, ly = rngY[1] + 12;
+  F.push(`<circle cx="${lx + 3}" cy="${ly}" r="2.6" fill="none" stroke="${TH.data}" stroke-width="1"/><text x="${lx + 10}" y="${ly + 3.5}" font-size="${fs}" fill="${TH.sub}">Z′ obs</text>`);
+  F.push(`<line x1="${lx + 58}" y1="${ly}" x2="${lx + 76}" y2="${ly}" stroke="${TH.fit}" stroke-width="1.4"/><text x="${lx + 81}" y="${ly + 3.5}" font-size="${fs}" fill="${TH.sub}">Z′ fit</text>`);
+  F.push(`<rect x="${lx + 124}" y="${ly - 2.4}" width="4.8" height="4.8" fill="none" stroke="${TH.imC}" stroke-width="1.1"/><text x="${lx + 133}" y="${ly + 3.5}" font-size="${fs}" fill="${TH.sub}">−Z″ obs</text>`);
+  F.push(`<line x1="${lx + 190}" y1="${ly}" x2="${lx + 208}" y2="${ly}" stroke="${TH.imC}" stroke-width="1.2" stroke-dasharray="4 3"/><text x="${lx + 213}" y="${ly + 3.5}" font-size="${fs}" fill="${TH.sub}">−Z″ fit</text>`);
+  const pi = pinIdx("fit");
+  let mark = "";
+  if (pi >= 0) {
+    const px = x(c.f[pi]);
+    mark = `<line x1="${px}" y1="${rngY[1]}" x2="${px}" y2="${rngY[0]}" stroke="${TH.fg}" stroke-opacity=".25" stroke-dasharray="3 3"/>`;
+  }
+  return { body: F.join("") + mark, fr, kind: "reim" };
+}
+
 function renderBode(w, h) {
   const c = D.curves;
   const mag = c.f.map((_, i) => Math.hypot(c.zre[i], c.zim[i]));
@@ -747,6 +863,9 @@ function panelOrder(id) {
 function buildCards() {
   const grid = $("#grid");
   grid.innerHTML = "";
+  // 数据表页只有一张通栏表：12 栅格里放一张 span=12 的卡会多余，
+  // 直接切单列，表格可以占满宽度（相关矩阵才不至于挤成 8pt）。
+  grid.classList.toggle("wide", PAGE === "md");
   LAYOUT.panels.filter(p => pageOf(p) === PAGE).forEach(p => {
     const m = META[p.id] || { title: p.id, sub: "" };
     const card = el("section", { class: "card", "data-id": p.id, draggable: "true" });
@@ -757,6 +876,13 @@ function buildCards() {
       const rows = p.rows || 1;
       card.style.height = (rows * ROW + (rows - 1) * GAP) + "px";
     }
+    // 主图上方挂投影切换条：同一份 Z(f) 的三种画法，放 tab 比并排三张省一半面积，
+    // 也不会让人误以为它们是三个不同的结果。
+    const ptabs = p.id === "fit" ? `<div class="ptabs">
+        ${[["nyq", "Nyquist"], ["bode", "Bode"], ["reim", "Re &amp; Im"]]
+          .map(([k, l]) => `<button class="ptab${MAINTAB === k ? " on" : ""}"
+            data-mtab="${k}">${l}</button>`).join("")}
+        <span class="r">同一份 Z(f)</span></div>` : "";
     card.innerHTML = `
       <div class="ch">
         <span class="drag">⋮⋮</span>
@@ -768,7 +894,7 @@ function buildCards() {
             ? `<button data-act="svg">SVG</button>` : ""}
           <button data-act="hide">隐藏</button>
         </div>
-      </div>
+      </div>${ptabs}
       <div class="cb"></div><div class="readout"></div>`;
     grid.appendChild(card);
     card.addEventListener("dragstart", e => {
@@ -796,6 +922,15 @@ function buildCards() {
       if (act === "svg" && ["fit", "drt", "resid"].includes(p.id))
         exportPanelSvg(p.id, m.title);
     });
+    const pt = card.querySelector(".ptabs");
+    if (pt) pt.addEventListener("click", e => {
+      const k = e.target.dataset.mtab;
+      if (!k || k === MAINTAB) return;
+      MAINTAB = k;
+      card.querySelectorAll(".ptab").forEach(b =>
+        b.classList.toggle("on", b.dataset.mtab === k));
+      drawCard("fit");
+    });
   });
   // 「已隐藏」恢复条
   const hid = LAYOUT.panels.filter(p => !p.visible);
@@ -818,14 +953,20 @@ function drawCard(id) {
   const card = document.querySelector(`.card[data-id="${id}"]`);
   if (!card || card.style.display === "none") return;
   const box = card.querySelector(".cb");
+  if (!box) return;
   if (id === "model") return drawModel(box);
-  if (id === "notes") return drawNotes(box);
-  const w = Math.max(320, box.clientWidth || 520);
+  const w = Math.max(280, box.clientWidth || 520);
   const rows = (LAYOUT.panels.find(q => q.id === id) || {}).rows || 1;
-  const h = Math.max(180, rows * ROW + (rows - 1) * GAP - HDR - RO - PADV);
+  // 主图多一条投影 tab（PT），不算进绘图区高度，否则 svg 会撑出卡片压住读数行。
+  const PT = id === "fit" ? 28 : 0;
+  const h = Math.max(160, rows * ROW + (rows - 1) * GAP - HDR - RO - PADV - PT);
   let r;
   try {
-    r = id === "fit" ? renderFit(w, h) : id === "drt" ? renderDrt(w, h) : renderResid(w, h);
+    r = id === "drt" ? renderDrt(w, h)
+      : id === "resid" ? renderResid(w, h)
+      : MAINTAB === "bode" ? renderBode(w, h)
+      : MAINTAB === "reim" ? renderReIm(w, h)
+      : renderFit(w, h);
   } catch (err) {
     box.innerHTML = `<div style="color:#c0392b;font-size:12px">渲染失败：${err.message}</div>`;
     return;
@@ -834,7 +975,10 @@ function drawCard(id) {
     "data-panel": id, style: `height:${h}px;width:100%` });
   svg.innerHTML = r.body;
   box.innerHTML = ""; box.appendChild(svg);
-  if (!r.skip) bindInteract(svg, id, r.fr, w, h);
+  // Bode / Re&Im 的横轴是频率，与 Nyquist 的阻抗域不是一套，缩放不能共用 ZOOM；
+  // 这两个 tab 只保留悬停与固定读数，缩放交给 Nyquist（它才是判形状的那张）。
+  const canZoom = !(id === "fit" && MAINTAB !== "nyq");
+  if (!r.skip) bindInteract(svg, id, r.fr, w, h, canZoom, r.kind);
   else card.querySelector(".readout").textContent = "";
 }
 
@@ -843,11 +987,13 @@ function drawAll() {
   renderReadout();
 }
 
+
 /* ---------------- 交互：缩放 / 平移 / 悬停 ---------------- */
-function bindInteract(svg, id, fr, w, h) {
+function bindInteract(svg, id, fr, w, h, zoom = true, kind = null) {
   const { xi, yi, rngX, rngY } = fr;
   let drag = null;
   svg.addEventListener("wheel", e => {
+    if (!zoom) return;
     e.preventDefault();
     const rect = svg.getBoundingClientRect();
     const px = (e.clientX - rect.left) * (w / rect.width);
@@ -859,10 +1005,12 @@ function bindInteract(svg, id, fr, w, h) {
     const nx0 = xAt + (o.x0 - xAt) * (e.shiftKey ? 1 : k);
     const nx1 = xAt + (o.x1 - xAt) * (e.shiftKey ? 1 : k);
     const ny0 = yAt + (o.y0 - yAt) * k, ny1 = yAt + (o.y1 - yAt) * k;
-    ZOOM[id] = { x0: nx0, x1: nx1, y0: ny0, y1: ny1 };
+    ZOOM[id] = { x0: nx0, x1: nx1, y0: ny0, y1: ny1,
+                 padL: o.padL, padR: o.padR };
     drawCard(id);
   }, { passive: false });
   svg.addEventListener("pointerdown", e => {
+    if (!zoom) return;
     drag = { x: e.clientX, y: e.clientY, o: { ...domain(id) } };
     svg.setPointerCapture(e.pointerId);
   });
@@ -875,18 +1023,19 @@ function bindInteract(svg, id, fr, w, h) {
         dy = (e.clientY - drag.y) * (h / rect.height);
       const x0 = xi(rngX[0] - dx), x1 = xi(rngX[1] - dx);
       const y0 = yi(rngY[0] - dy), y1 = yi(rngY[1] - dy);
-      ZOOM[id] = { x0, x1, y0, y1 }; drawCard(id); return;
+      ZOOM[id] = { x0, x1, y0, y1, padL: o.padL, padR: o.padR };
+      drawCard(id); return;
     }
-    hoverAt(id, fr, px, py, w, h, e.clientX, e.clientY);
+    hoverAt(id, fr, px, py, w, h, e.clientX, e.clientY, kind);
   });
   svg.addEventListener("pointerup", () => { drag = null; });
   svg.addEventListener("pointerleave", () => { $("#tip").classList.remove("on"); });
-  svg.addEventListener("dblclick", () => { delete ZOOM[id]; drawCard(id); });
+  svg.addEventListener("dblclick", () => { if (!zoom) return; delete ZOOM[id]; drawCard(id); });
   svg.addEventListener("click", () => { if (hoverF !== null) togglePin(hoverF); });
 }
 
 let hoverF = null;              // 悬停到的频点（Hz），跨面板共用频率值
-function hoverAt(id, fr, px, py, w, h, cx, cy) {
+function hoverAt(id, fr, px, py, w, h, cx, cy, kind = null) {
   const c = D.curves;
   const { x, y } = fr;
   let best = null, bd = 1e9;
@@ -897,7 +1046,10 @@ function hoverAt(id, fr, px, py, w, h, cx, cy) {
   } else {
     const norm = normAvail();
     c.f.forEach((v, i) => {
-      const yy = id === "fit" ? y(-c.zim[i])
+      // 吸附点必须落在当前这张图的曲线上，否则 Bode / Re&Im 下会吸到画面外
+      const yy = kind === "bode" ? y(Math.hypot(c.zre[i], c.zim[i]))
+        : kind === "reim" ? y(-c.zim[i])
+        : id === "fit" ? y(-c.zim[i])
         : y(norm ? c.nre[i] : c.rre[i]);
       const d = Math.hypot(x(v) - px, yy - py);
       if (d < bd) { bd = d; best = i; }
@@ -952,37 +1104,65 @@ function renderReadout(f = PIN) {
 const KK_STATE = {ok: ["pass", "通过"], warn: ["warn", "警告"],
                   fail: ["fail", "未通过"], unavailable: ["na", "不可评价"]};
 
-function drawNotes(box) {
-  const chips = D.checks.map(c => {
+/* ---------------- 左控制台 ---------------- */
+// 骨架照专业 EIS 软件（左读数、右图、图上方切投影），但**不照抄它的密集表单**：
+// 左栏只放已经算好的读数与几个开关。可编辑的拟合参数属于拟合器，
+// 放进结果查看器只会让人以为"改这里能重算"。
+function renderSide() {
+  const box = $("#side");
+  if (!box) return;
+  const v = D.verdict;
+  const lv = v.level === "ok" ? "ok" : v.level === "bad" ? "bad" : "warn";
+  const nPass = (D.checks || []).filter(c => c.state === "pass").length;
+  const nAll = (D.checks || []).length;
+  const kkRaw = (D.kk && D.kk.status) ? String(D.kk.status) : null;
+  const ks = kkRaw ? (KK_STATE[kkRaw] || ["na", kkRaw]) : null;
+  const nWarn = (D.warnings || []).length;
+
+  const chkHtml = (D.checks || []).map(c => {
     const icon = c.state === "pass" ? "✓" : c.state === "fail" ? "✕" : "–";
-    return `<div class="chk ${c.state}" style="flex:1 1 200px">
+    const th = D.thresholds[c.key];
+    return `<div class="chk ${c.state}" title="阈值 ${th === undefined ? "—" : th}">
       <span class="dot"></span><span>${c.name}</span>
       <span class="val">${icon} ${c.value === null ? "不可用" : fmt(c.value, 3)}</span></div>`;
   }).join("");
-  const kkRaw = (D.kk && D.kk.status) ? String(D.kk.status) : null;
-  const ks = kkRaw ? (KK_STATE[kkRaw] || ["na", kkRaw]) : null;
-  const kk = ks ? `<div class="chk ${ks[0]}"
-      style="flex:1 1 200px" title="${md(D.kk.reason || "")}">
+
+  const kkHtml = ks ? `<div class="chk ${ks[0]}" title="${esc(D.kk.reason || "")}">
       <span class="dot"></span><span>Lin-KK 门禁</span>
-      <span class="val">${ks[1]}${ks[1] === kkRaw ? "" : ` · ${kkRaw}`}</span></div>` : "";
-  const warn = (D.warnings || []).map(w => `<li>${md(w)}</li>`).join("");
-  const layer = (D.layer_notes || []).map(w => `<li class="info">${md(w)}</li>`).join("");
-  const strong = ((D.corr && D.corr.strong) || []).map(x =>
-    `<li><b>${esc(x.a)} ↔ ${esc(x.b)}</b> ρ=${fmt(x.rho, 2)}</li>`).join("");
-  const v = D.verdict;
-  const lv = v.level === "ok" ? "ok" : v.level === "bad" ? "bad" : "warn";
+      <span class="val">${ks[1]}</span></div>` : "";
+
+  const warnHtml = (D.warnings || []).map(w => `<li>${md(w)}</li>`).join("")
+    || '<li class="info">无</li>';
+
+  // Rwp 不上色：它没有预注册阈值，染色等于凭空造一条验收线。
   box.innerHTML = `
-    <div class="checks" style="flex-direction:row;flex-wrap:wrap;gap:8px">${chips}${kk}</div>
-    <div style="font-size:11px;color:var(--sub);margin:8px 2px 10px">
-      <span class="chip ${lv}" style="font-size:11px">${v.label}</span>
-      阈值：acf ≤ ${D.thresholds.acf} · R̂ ≤ ${D.thresholds.rhat} · div = ${D.thresholds.div}
-      —— 这三项是结构与采样判据，与「K 的采样分级」不是同一件事：
-      分级 2 只说明采样达标，不代表残差结构过关。
+  <div class="sec"><h2>数据<span class="n">${D.n} 点</span></h2><div class="sb">
+    <div class="kv"><span class="k">频段</span><span class="v">${sci(D.f_min)}–${sci(D.f_max)} Hz</span></div>
+    <div class="kv"><span class="k">模型</span><span class="v">K=${D.K}${D.include_L ? " +L" : ""}</span></div>
+    <div class="kv"><span class="k">Rwp</span><span class="v">${D.rwp === null ? "—" : fmt(D.rwp, 2) + " %"}</span></div>
+    <div class="kv"><span class="k">ELPD-LOO</span><span class="v">${D.elpd === null ? "—" : fmt(D.elpd, 1)}</span></div>
+    <div style="font-size:10.5px;color:var(--sub);margin-top:5px;line-height:1.5">
+      Rwp 无预注册阈值，只作参考，不参与判定。</div>
+  </div></div>
+
+  <div class="sec"><h2>判定<span class="n">结构 ${nPass}/${nAll}</span></h2><div class="sb">
+    <div style="margin-bottom:8px"><span class="chip ${lv}">${v.label}</span></div>
+    <div class="checks">${chkHtml}${kkHtml}</div>
+    <div style="font-size:10.5px;color:var(--sub);margin-top:7px;line-height:1.5">
+      ${D.thresholds.acf} / ${D.thresholds.rhat} / ${D.thresholds.div} 是结构判据；
+      采样分级达标 ≠ 残差结构过关。
     </div>
-    <div class="cols" style="grid-template-columns:1.35fr 1fr">
-      <div><h3>警告与限制</h3><ul class="notes-list">${warn || '<li class="info">无</li>'}</ul></div>
-      <div><h3>口径备注</h3><ul class="notes-list">${layer}${strong}</ul></div>
-    </div>`;
+  </div></div>
+
+  <div class="sec"><h2>警告<span class="n">${nWarn} 条</span></h2>
+    <div class="sb" style="max-height:180px;overflow:auto">
+    <ul class="notes-list">${warnHtml}</ul>
+  </div></div>
+
+  `;
+  // 配色不在这里：标题栏已有主题开关，取色器在「导出…」抽屉里（那里同时能看到
+  // 它怎么进 spec）。左栏再放一套，内容就会超出一屏，把「警告」挤进滚动区。
+  renderReadout();
 }
 
 /* ---------------- 模型与参数 ---------------- */
@@ -1011,7 +1191,11 @@ function drawModel(box) {
   const corr = D.corr;
   let corrHtml = `<div style="color:var(--sub);font-size:12px">无后验样本：不画相关矩阵（不伪造）</div>`;
   if (corr && corr.names && corr.matrix) {
-    const n = corr.names.length, cell = n > 6 ? 17 : 21;
+    // 格子大小按当前宽度算：写死 17px 时 10 个参数挤成 170px，
+    // 数字与色块糊在一起，还看不清是哪一对。
+    const n = corr.names.length;
+    const avail = Math.max(240, (box.clientWidth || 900) * 0.5) - 96;
+    const cell = Math.max(15, Math.min(34, Math.floor(avail / n)));
     let g = `<div class="corr" style="grid-template-columns:${cell * 3.4}px repeat(${n},${cell}px)">`;
     g += `<div></div>` + `<div></div>`.repeat(n);   // 表头留空：行标签+悬浮提示已够
     corr.matrix.forEach((row, i) => {
@@ -1040,19 +1224,21 @@ function drawModel(box) {
     ${D.candidates_source === "note_text" ? " · 候选表由选择日志文本解析" : ""}
   </div>`;
 
-  box.innerHTML = `<div class="cols">
-    <div><h3>K 候选</h3>${el2}
+  box.innerHTML = `<div class="cols" style="grid-template-columns:minmax(0,1fr) minmax(0,1.05fr)">
+    <div>
+      <h3>K 候选</h3>${el2}
       <table class="t"><thead><tr><th>K</th><th>状态</th><th></th><th>依据</th></tr></thead>
       <tbody>${candRows}</tbody></table>
-      <div style="font-size:11px;color:var(--sub);margin-top:8px">
+      <div style="font-size:11px;color:var(--sub);margin:6px 0 16px">
         只有扫过的 K 才在表里；状态 <span class="pill degraded">degraded</span>
-        表示采样只到「可用」档，不当作严格通过</div></div>
-    <div><h3>参数后验</h3>
+        表示采样只到「可用」档，不当作严格通过</div>
+      <h3>参数后验</h3>
       <table class="t"><thead><tr><th>参数</th><th>中位</th><th>5%</th><th>95%</th><th></th></tr></thead>
       <tbody>${pRows}</tbody></table>
       <div style="font-size:11px;color:var(--sub);margin-top:8px">
         分位已是原尺度（ln 参数已换回）；区间是逐参数边际分位，
-        不是联合可信域，也不能据此判断两个参数「都不确定」</div></div>
+        不是联合可信域，也不能据此判断两个参数「都不确定」</div>
+    </div>
     <div><h3>参数相关性</h3>${corrHtml}</div>
   </div>`;
 }
@@ -1068,10 +1254,17 @@ function openDrawer(id) {
   $("#dt").textContent = (m.title || id) + " · 详情";
   const box = $("#db");
   if (id === "fit") {
-    const w = Math.min(720, box.clientWidth || 700), h = 340;
+    // 抽屉 = 把**当前投影**放大看，不固定成 Bode。Bode 已经有 tab 了，
+    // 再在这里放一份等于两个入口打开同一个东西。
+    const w = Math.min(760, box.clientWidth || 720), h = 430;
+    const r = MAINTAB === "bode" ? renderBode(w, h)
+      : MAINTAB === "reim" ? renderReIm(w, h) : renderFit(w, h);
     const svg = svgEl("svg", { viewBox: `0 0 ${w} ${h}`, width: w, height: h });
-    svg.innerHTML = renderBode(w, h).body;
-    box.innerHTML = `<div class="hint">Bode 幅值（实线）与相位（虚线，右轴）。相位用 −Z″ 口径之外的原始 atan2，注意符号约定。</div>`;
+    svg.innerHTML = r.body;
+    const cap = { nyq: "Nyquist：实验数据空心点、后验中位实线、90% **边际**区间逐点十字棒（Re/Im 各自取分位，不是联合可信域）。",
+      bode: "Bode：|Z| 实线走左轴，相位虚线走右轴（原始 atan2 口径）。",
+      reim: "Re & Im：Z′ 与 −Z″ 各自对频率，拟合在某个频段偷偷偏移在这张图上是一条直线的偏。" }[MAINTAB];
+    box.innerHTML = `<div class="hint">${md(cap)}</div>`;
     box.appendChild(svg);
   } else if (id === "resid") {
     box.innerHTML = residDetail();
@@ -1276,15 +1469,19 @@ function loadLayout() {
     const s = localStorage.getItem(LS_KEY);
     if (!s) return;
     const o = JSON.parse(s);
-    if (o && o.panels && o.panels.length) {
-      LAYOUT = o;
-      // 与预置面板对齐：只保留已知 id，顺序按保存的来
-      LAYOUT.panels = LAYOUT.panels.filter(p => META[p.id]);
-      Object.keys(META).forEach(id => {
-        if (!LAYOUT.panels.find(p => p.id === id))
-          LAYOUT.panels.push({ id, span: 6, visible: false });
-      });
+    // 面板结构一改（本轮把 notes 并入左栏、新增 zone），旧缓存里的 panels
+    // 就是一份不存在的布局：沿用会让 fit 拿到旧 span、出现半屏空白。
+    // 比对 id 序列，不一致就回默认，只保留用户真正改过的东西（主题、配色）。
+    const want = DEFAULT_LAYOUT.panels.map(q => q.id).join(",");
+    const have = ((o && o.panels) || []).filter(q => META[q.id])
+      .map(q => q.id).join(",");
+    if (want !== have) {
+      LAYOUT = JSON.parse(JSON.stringify(DEFAULT_LAYOUT));
+      if (o && o.theme && THEMES[o.theme]) LAYOUT.theme = o.theme;
+      if (o && o.colors) LAYOUT.colors = o.colors;
+      return;
     }
+    if (o && o.panels && o.panels.length) { LAYOUT = o; LAYOUT.zone = undefined; }
   } catch (e) {}
 }
 
@@ -1303,16 +1500,13 @@ function renderTabs() {
   const v = D.verdict;
   const lv = v.level === "ok" ? "ok" : v.level === "bad" ? "bad" : "warn";
   const nWarn = (D.warnings || []).length;
-  $("#tabs").innerHTML = PAGES.map(p => {
-    let badge = "";
-    if (p.id === "md") {
-      badge = `<span class="dot ${lv}" title="${esc(v.label)}"></span>`;
-    }
-    return `<button class="tab${p.id === PAGE ? " on" : ""}" data-page="${p.id}">
-      <span>${p.label}</span>${badge}${p.id === "md" && nWarn
-        ? `<span style="color:var(--sub);font-size:11px">${nWarn} 条警告</span>` : ""}
-    </button>`;
-  }).join("") + `<span class="hint" id="phint"></span>`;
+  // 状态点两页都挂：切到数据表页不该失去"整体判定成什么样"这条信息，
+  // 分页可以切内容，不能切掉结论。
+  $("#tabs").innerHTML = PAGES.map(p =>
+    `<button class="tab${p.id === PAGE ? " on" : ""}" data-page="${p.id}">
+      <span>${p.label}</span><span class="dot ${lv}" title="${esc(v.label)}"></span>
+      ${nWarn ? `<span style="color:var(--sub);font-size:11px">${nWarn} 条警告</span>` : ""}
+    </button>`).join("") + `<span class="hint" id="phint"></span>`;
   const pg = PAGES.find(p => p.id === PAGE) || PAGES[0];
   $("#phint").textContent = pg.hint || "";
   $("#tabs").querySelectorAll("[data-page]").forEach(b => {
@@ -1334,6 +1528,14 @@ function setPage(id) {
   $("#opshint").style.display = (id === "ov") ? "" : "none";
   buildCards();
   drawAll();
+  syncHdr();
+}
+
+// 左栏是 sticky 的，top 必须等于顶栏实际高度——写死 96px 在窄屏换行时会盖住标题。
+function syncHdr() {
+  const h = $("#hdr");
+  if (!h) return;
+  document.documentElement.style.setProperty("--hdrtop", (h.offsetHeight + 10) + "px");
 }
 
 function renderChrome() {
@@ -1389,9 +1591,9 @@ function boot() {
   sel.onchange = () => { LAYOUT.theme = sel.value; saveLayout(); applyTheme(sel.value); };
   $("#btn-reset").onclick = () => {
     LAYOUT = JSON.parse(JSON.stringify(DEFAULT_LAYOUT));
-    ZOOM = {}; PIN = null; delete LAYOUT.version;
+    ZOOM = {}; PIN = null; MAINTAB = "nyq"; delete LAYOUT.version;
     saveLayout(); renderTabs(); buildCards(); applyTheme(LAYOUT.theme);
-    renderChrome();
+    renderChrome(); renderSide();
   };
   $("#btn-exp").onclick = openExport;
   $("#dclose").onclick = closeDrawer;
@@ -1399,6 +1601,7 @@ function boot() {
   document.addEventListener("keydown", e => { if (e.key === "Escape") closeDrawer(); });
   renderChrome();
   applyTheme(LAYOUT.theme);
+  renderSide();
 
   // 深链要先读：setPage 会重写 hash，读晚了 detail=… 就没了
   const mDeep = /detail=([a-z]+)/.exec(location.hash || "");
@@ -1417,7 +1620,10 @@ function boot() {
   setPage(initPage);
   if (DEEP) openDrawer(DEEP);
   let t = null;
-  addEventListener("resize", () => { clearTimeout(t); t = setTimeout(drawAll, 120); });
+  addEventListener("resize", () => {
+    clearTimeout(t);
+    t = setTimeout(() => { syncHdr(); drawAll(); }, 120);
+  });
   addEventListener("hashchange", () => {
     const m = /page=([a-z]+)/.exec(location.hash || "");
     if (m && m[1] !== PAGE && PAGES.find(p => p.id === m[1])) setPage(m[1]);
