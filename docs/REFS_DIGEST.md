@@ -31,9 +31,9 @@
 | 2 | `S1875-53722930093-X.pdf` | Rare Met. Mater. Eng. 2015, 44(7): 1561−1567（柠檬酸盐镀镍机理） | 7 页 / 27k 字符 | ✅ 全文可读 |
 | 3 | `电化学阻抗谱在电沉积研究中的应用.pdf` | 袁国伟，《电镀与涂饰》2008(1):1−4，**连载第 1 部分（共 3 部分）** | 4 页 / 26k 字符 | ✅ 全文可读；**第 2、3 部分缺** |
 | 4 | `[emuch.net]《电化学阻抗谱导论》.pdf` | 曹楚南、张鉴清，科学出版社（9 章） | **209 页纯扫描件** | ✅ **能读**：无文字层、无 OCR，但可逐页转 PNG 直读（1 bit TIFF → PNG）。已核读 p.41–75（含逐图核参数）、76–83（第 5 章全章）、84–96、106–107、108–114（7.1–7.2）、115–117、128–138、142、155–162、163–166、178–183、185–191、190–191 |
-| 5 | `EIS基础.pptx` | 17 页教学课件（介质电阻/伪影/扩散/CPE/Bode） | 43 图 | ⚠️ 以图为主，文字层仅 1.4k 字符；已抽图核读 |
-| 6 | `阻抗谱进阶.pptx` | 15 页（弧的归属/模型歧义/感抗环） | 22 图 | ⚠️ 同上，文字层 0.9k |
-| 7 | `一些复杂阻抗谱可能对应的电路图及参考文献.pptx` | **52 页，113 图，39 篇文献截图** | 15 MB | ⚠️ 图片为主；已抽图 + 拼图核读 |
+| 5 | `EIS基础.pptx` | 17 页教学课件（介质电阻/伪影/扩散/CPE/Bode） | 40 图 | ✅ **2026-11-11 逐图补读**（python-pptx 按页重提 `_refs_extract/pptx_jb/`，40 张含版面位置），见 §1.5a |
+| 6 | `阻抗谱进阶.pptx` | 15 页（弧的归属/模型歧义/感抗环） | 24 图 | ✅ **2026-11-11 全部页逐图补读**（`_refs_extract/pptx_jj/`），见 §1.5b |
+| 7 | `一些复杂阻抗谱可能对应的电路图及参考文献.pptx` | **52 页，111 图，39 篇文献截图** | 15 MB | ✅ 谱形分类与电路骨架已核读（本表下文）；**39 篇文献截图 2026-11-11 全部转录核对**（`_refs_extract/pptx_cx/` + `m_refs*.jpg`），见 §1.5c |
 
 扫描书的页码换算（已实测）：**PDF 页 = 印刷页 + 12**。本文所有书页码均指印刷页码。
 
@@ -381,6 +381,59 @@ AZ31 在腐蚀电位下正是**混合电位**（Mg 阳极溶解 + 析氢两个�
 - 另有 1 篇方法学直接相关：Zhao Zhaoyang 等，*"Automated workflow of EIS data validation and quality improvement based on the detection, detention, and removal of outliers"*，**Electrochim. Acta 461 (2023) 142661** —— 与项目的 guard/质量门禁同题。
 - 还有 1 篇 DRT 相关：Harirchi & Yang，*"Effect of carbon dioxide curing on cement pastes through DRT analysis of EIS data"*，Constr. Build. Mater. 417 (2024) 135310。
 
+### 1.5a `EIS基础` 逐图补读（2026-11-11，补齐第 6 页"电路图构思思路"等缺口）
+
+- **第 4 页**：`(C∥R)` 弧（ω→∞ 落在 R₁）与 `R₀+(C∥R₁)`（高频 Z=R₀、低频 Z=R₀+R₁）两个教学谱；复平面几何 `tanφ=b/a`。
+- **第 5 页**：**(I)–(XI) 十一种元件组合在同一条复平面上**（R / jωL / 1/jωC / `R·(jωT)^n` / `R+jωL` / `R+1/jωC` / `R+1/[Y₀(jω)^n]` / `R+jωL/(1+jωRL)` / `R/(1+jωRC)` / `R/(1+Y₀(jω)^n R)`）——这是书第 3 章 11 种组合的浓缩表，引用时可直接指 PPT 第 5 页。另有一张实测"阻抗/相位 vs 实部"散点图（同实部对应多个 |Z| 的例子）。
+- **第 6 页"电路图构思思路"（原缺口，7 张图全读）**——作者自己的高熵合金/镀层体系示例：
+  - s06_01/02：`AlCoCrFeNi₂.₁` vs `AlCrFe₁.₅Ni₂.₆` 高熵合金，电路 `Rs+(CPE₁∥R₁)+(R₂+C∥R_ct)` 与含 L 变体（容抗弧 + 低频小感抗钩，拟合线）；
+  - s06_03/04：**RE（稀土）0–1.0% 系列**，容抗弧后接**大感抗环（−Z″ 到 −10000）**，1.0%RE 环最大；
+  - s06_05：**分层结构→电路映射三维示意**（3.5%NaCl 溶液 / 钝化与腐蚀产物层 / Al-Zn 基体，逐层配 R_s、R_f、CPE₁、R_b、CPE₂、L）——本批最清楚的"结构分层↔电路分支"对应图；
+  - s06_07：添加剂 A 浓度（12–24 mL/L）系列，双容抗弧叠加；
+  - s06_06：**双感抗并联支路电路** `Rs+[C_al+C_dl∥(R₁∥R₂)+(R_L1∥L₁)+(R_L2∥L₂)]`（跨三象限大环）。
+- **第 8 页（扩散族谱，价值高）**：W / O / T **三条曲线画在同一复平面上**（T=反射边界 45°后竖直上升；O=渗透边界 45°后回落到实轴成半圆；W=纯 45°）；`tL≡2π/ω₁` 判据；**B 参数族**（B=0.5/1/2.5/5，有限扩散 `B=√(L²/D)`）与 **ka 族**（均相反应速率 0.01–10）的谱形演化；转盘转速 10–1200 rpm 系列图。
+- **第 9–10 页（高频相移=伪影的文献链条，与 §9.4.24/§19 方向直接相关）**：
+  - 实测例：0.1 mol/L NaCl 高频端**整段处于实轴以下**（s09_01）；
+  - 出处：**李谋成、曾潮流、林海潮（中科院金属所，沈阳）《参比电极体系内阻对电化学阻抗谱的影响》**——"参比电极体系的内阻较大容易导致 EIS 的高频产生**容抗性相移**，且高频相移随其内阻减小而减弱；在低电导率溶液中较强、高电导率中较弱"；
+  - s10 三张英文截图补两条机理：**CE（对电极）反应场阻抗大于 WE 时会支配并污染高频数据**；**线缆电感**（两电极连接电缆的长度/电感）与**三电极体系内部杂散电容建模**（Fletcher、Sadkowski 等把高频感抗建成 cell 内杂散 R-C 组合）。
+  - → 与项目 §15 `K:hf_L`、§19 "查整谱频响/校准" 相互印证：**高频端伪影的机理候选在文献里是"参比内阻/线缆电感/CE 场/杂散参数"四件套，且都是整谱性而非端点几点**。
+- **第 13–16 页（Bode 对应教学，出处已定位）**：`R∥C` / `R₀+(C₁∥R₁)` / `R₀+(C₁∥R₁)+(C₂∥R₂)` 的 Nyquist↔Bode 三联图（A/B/C 三面板，R0=R1=R2=1 kΩ），**出自 ACS Meas. Sci. Au 综述 Figure 9**（与 lazanas 2023 同刊；进阶 s04/s08 同图）。注意 **s16 右侧直接贴了书图 5.2.1**（两个时间常数叠合成一个弧）——PPT 作者与书共用同一算例。
+- **第 17 页**：Ni-Co 合金腐蚀，电路 `Rs + CPE₁∥(R₁ + (R_ct∥CPE₂))`——**与我们 voigt 串 K 个 `(R∥CPE)` 的形制完全相同**（又一个文献实例，Bode 双相位峰）。
+
+### 1.5b `阻抗谱进阶` 全部页逐图补读（2026-11-11）
+
+- **第 2 页**：单元件 Nyquist 签名四联图：R=实轴一点（1.0 kΩ）；C=竖直线；L=竖直线（−Z″ 方向）；R+C=右移竖直线。
+- **第 3 页**：锂电池 SEI 谱的**频段分区**（High/Medium/Low Frequency Areas）配电路 `L + R_ohm + (CPE_SEI∥R_SEI) + (CPE_cdl∥R_ct) + Z_W`；另一张对比"Warburg 放在不同位置"的 A/B 两模型（10 mHz 处回升 vs 1 mHz 处竖直上升）。
+- **第 4 / 8 页**：ACS Meas. Sci. Au Figure 9（A/B/C 模型电路的 Nyquist+Bode 三联图）——教学图出处。
+- **第 5–6 页**：书 §2.3.4 常相角元件 Q 原文页（式 2.3.11/2.3.12：`Z_Q=Y₀⁻¹(jω)^−n`，两参数 Y₀、n）＋ Figure 17（`Rs C_dl` n=1 vs `Rs(C_dl R_ct)` n=0.9 的 θ 角）。
+- **第 7 页**：**Q 的退化规则原文**："当 n=0 时 Q 还原为 R；n=1 时 Q 变为 C；**当 n=−1 时 Q 实为 L**"——与项目把 CPE 与 HN/L 归一到同一族的做法同源。
+- **第 9–10 页（模型歧义，论点页）**：**Model B（梯子）`Rs+(R₁∥Q₁)+(R₂∥Q₂)` vs Model C（嵌套）`Rs+(R₁∥Q₁)+(R₂∥Q₂)`（Q₂ 嵌在 R₂ 之下）拟合同一组数据**，拟合线重合；右侧配 ACS Meas. Sci. Au **Figure 7**：`R1(C1R2)(C2R3)(C3R4)`（梯子）与 `R1[C1R1[C2R2[C3R3[C4R4]]]]`（全嵌套，CDC "reading"）**生成完全相同的三弧谱**。
+  → 与 §9.4.27 的"多套等效电路"、§17 的 C1≡C4 星三角同题的又一独立出处。
+- **第 11–12 页（闭合感抗环）**：同一电路**不同参数组**给开环/闭环两种谱形（(0.001,10,0) vs (0.001,10,100)）；Figure 2 电路 `R_b + [C_s ∥ R_rec ∥ (R_δ+L_δ) ∥ (R_σ+C₁)]`（R_b 串联；C_s 介电电容、R_rec 复合电阻、R_δ 介电电阻、L_δ 电感、R_σ 与表面充电电容 C₁ 串联）给出**大弧 + 下方闭合小环**的双环谱。
+  → 此前 digest 记的 `C_dp∥[R_rec+(R_c+C_f)∥(R_s+L)]` 标签据此更正。
+- **第 13 页**：嵌套梯子的频率标注读法（10 kHz/10 Hz/10 mHz 分属三个嵌套段）；GC/NC/Ni 葡萄糖电氧化：**同一实验数据配两个候选电路**（(a) `Rs+Q_dl∥(R_ct∥Q_ads∥R_ads)`、(b) `Rs+Q∥(R_c+Q∥(R₁∥L))`），4a/4b/4c 三个电位下感抗环从无→单环→双环。
+- **第 14 页**：Randles 电路的两个极限行为（Zw≪R_ct→纯弧；Zw≫R_ct→45° 直线；45° 段起点实部 = Ru+Rct/2）——Figure 13（Copyright 2022 Wiley）。
+- **第 15 页**：Model D（含 `Z_G` 类元件）不同参数组的谱形对比；NCO（NiCo 氧化物）50/500 次循环，电路 `Rs+(R∥CPE₁)+(R∥CPE₂)+W`，低频出现感抗尾。
+
+### 1.5c 复杂谱 PPT 的 39 篇文献截图：全部转录（2026-11-11）
+
+此前只有题录级；现已把 `m_refs1–3` 拼图与逐页提取件全部转录核对。**与本项目直接相关的优先条目**（其余电沉积工艺类文献只列存目）：
+
+1. **Z. Shahrı', S.R. Allahkaram, R. Soltani, H. Jafari, "Electrochemical analysis on localized corrosion of PEO/magnesium oxide coating", J. Alloys Compd. 1003 (2024) 175572**——§9.4.27 已读正文；**"Shahri 2024 是否即项目所引"由"待确认"升级为已确认**（Sharif Univ. + Shahid Beheshti Univ.）。
+2. **Jianglin Ouyang, Yan Gao, "Effect of degradable (CaP and ZnO) nanoparticles void-plugging MgFe-LDHs film on the pitting-responsive behaviors of AZ31 magnesium alloy"**——Mg 基体上 LDH/超疏水膜两层结构的**逐层电路**（s28_03/s39_02：Electrode/Oxide film(+air layer)/Superhydrophobic film/Mg alloy，含 `R_ct∥CPE_dl∥L`、`C_f`、`R_a`），**AZ31 孔蚀响应直接同体系**。
+3. **Zhaoyang Zhao, Zhaogui Lai, Hui Zhi, Yang Zou, Ying Jin, Kaiyang Zeng, "Automated workflow of EIS data validation and quality improvement based on the definition, detection, and removal of outliers", Electrochim. Acta 461 (2023) 142661**——与项目 guard/质量门禁同题（Shenzhen+Singapore）。
+4. **Hao Wu 等（中科院上海应用物理研究所/金属所）"Corrosion behaviors and passive film properties of a newly developed cost-effective AlCrFeNi eutectic high entropy alloy in different corrosive solutions"**——s06 高熵合金电路的原始出处之一。
+5. **Fuchun Chang, Yingwei Song, Kaihui Dong, Yanlin An, En-Hou Han, "Formation mechanisms of product film on high corrosion resistant EW75 Mg alloy: The effect of corrosive media"**（中科院金属所）——EW75 镁合金产物膜机理。
+6. **Yan Liu, Jingxue Xue, Dan Luo, Huyuan Wang, Xu Gong, Zhiwu Han, Luquan Ren（吉林大学仿生实验室）"One-step fabrication of biomimetic superhydrophobic surface by electrodeposition on magnesium alloy and its corrosion inhibition"**——镁合金超疏水膜（与 2. 的逐层电路同类）。
+7. **Yashwanth Banerjee 等，Zn-Mn 镀层两篇**：Electrochim. Acta 383 (2021) 138379 与 393 (2021) 139170；配图 **20/35/50 ℃ 的谱上明确标注 "Capacitive response / Inductive response" 分区**——温度升高感抗响应变弱的实测例子。
+8. **Ghazaleh Saladi(?), Mahboobeh Azadi, Hossein Tavakoli, "Evaluations of microstructure and electrochemical characteristics of Al-Si-Cu/clay nanocomposites in two corrosive solutions", J. Electroanal. Chem. 940 (2024) 114203**。
+9. **Peng-Peng Wu, Guang-Ling Song 等，"Improvement of intelligent corrosivity-detection and corrosion-protection for reinforcing steel"**（厦门大学+昆士兰）——智能腐蚀检测（钢筋）。
+10. **L.A. Arpeitia(?), C.A. Gervasi, A.E. Bolzán, "Effects of Temperature and Thiourea Addition on the Electrodeposition of Tin on Galvanized Carbon Electrodes in Acid Solutions", Electrochim. Acta 257 (2017) 388–402**（UNLP 阿根廷）。
+11. 其他存目（电沉积工艺/超级电容器/热电薄膜类，与本项目 EIS 建模无直接关系）：Yilin Chen 等 Ni-Co 镀层（Mater. Today Commun. 25 (2025) 109926）；Ali Kaleji 等 Fe-Co-Ni 循环伏安镀氢（J. Electroanal. Chem. 968 (2024) 118161）；Liang Yuan 等 碱性锌酸盐镀锌添加剂（Trans. NFSOC China 23(6) (2013) 1666–1674）；Xiaolong Bai 等 高压正极+PEO 电解 EIS 策略（J. Energy Chem. 98 (2024) 451–469）；Co/Ce-MOF 碳复合材料阳极（Sep. Purif. Technol. 218 (2019) 123292）；In situ graphene/nano-Pd 甲醇氧化（J. Power Sources 266 (2014) 334–348）；Bi₂Te₃ 热电膜（Appl. Surf. Sci. 486 (2019) 50–71，×2）；Fe-Co-Se/Ni-Co-Se 超级电容器（J. Colloid Interface Sci. 605 (2022) 1490–1500）；Zn-Ni/Si₃N₄ 复合镀（Appl. Surf. Sci. 658 (2024) 465–477）；CuInS₂ 薄膜（KHP 添加剂）；Bi₀.₅Sb₁.₅Te₃（Tianjin Univ）；Pt/碳糊甲醇氧化（Catal. Today 264 (2016) 188–205）；Al-Zn 稀土（Mater. Res. Bull. 184 (2025) 113227，digest 已有）；Harirchi & Yang DRT 水泥（Constr. Build. Mater. 417 (2024) 135310，×2）；"Electrodeposition of anticorrosion nanocoatings" 书章（Nasirpouri 等，Sahand Univ.）。
+12. **另有两页非文献截图但含数值样例**：书图 9.5.3（钝化金属小孔腐蚀发展期法拉第阻抗）＋图 5.5.4（18-8 不锈钢在 NaCl+FeCl₃ 中随时间演化）；带数值的算例电路 `R₁=100Ω + (R₂=200Ω∥C₃=0.8μF) + (R₄=500Ω∥W, Y₀=0.4 mS·s^0.5)`。
+
+
+
 ### 1.6 `嵌套拓扑/` 目录的三份 PDF（2026-11-11 晚补读；此前只读过 Shahri 正文）
 
 这三份不在 `电化学阻抗谱文献和ppt分享` 目录，是用户另放进来的；其中 Shahri 2024 已在 §9.4.27 读过正文，**另两份 2026-11-11 补读**：
@@ -422,7 +475,7 @@ AZ31 在腐蚀电位下正是**混合电位**（Mg 阳极溶解 + 析氢两个�
 
 ### A. 高频感抗 = 仪器项，不是可选的模型自由度 —— 影响 `include_L` 写死关掉的代价
 
-- **文献**：lazanas §15（P21）：高频感抗来自导线自感/互感与参比电极，**低阻池更明显**；`EIS基础` 第 3 页把"初始高频端在实轴以下"直接归为伪影并列出三条成因。
+- **文献**：lazanas §15（P21）：高频感抗来自导线自感/互感与参比电极，**低阻池更明显**；`EIS基础` 第 3 页把"初始高频端在实轴以下"直接归为伪影并列出三条成因。**2026-11-11 补（§1.5a 第 9–10 页逐图）**：`EIS基础` 第 9–10 页给出这条文献链的完整出处——**李谋成/曾潮流/林海潮（中科院金属所）《参比电极体系内阻对电化学阻抗谱的影响》**（高频**容抗性**相移随参比内阻减小而减弱、低电导率溶液更强）+ 三张英文截图（**CE 反应场阻抗支配高频数据**、**线缆电感**、**三电极 cell 内杂散 R-C 建模**（Fletcher/Sadkowski））→ 伪影机理候选是"参比内阻 / 线缆电感 / CE 场 / 杂散参数"**四件套**，且都是**整谱性**系统偏差而非端点几点——与 §19「只有跨频段平滑偏差留得下自相关」互相印证。
 - **项目现状**：`bm_select.fit_voigt` 的 `include_L` 默认 `False` 且无调用点传 `True`（已核），所以 voigt 族**结构性无法表示高频感抗段**。
 - **实测（本轮新做，18 条 AZ31）**：**3 条**谱的高频端落在感抗侧 ——
 
@@ -909,7 +962,7 @@ R1n = A²/den,  τ2n = den/A,  R2n = S − R1n,  C1n = (τ1+τ2−τ2n)/S
 5. 书**第 9.2 节**已读 p.155–166（模型与两个时间常数、失效演化与特征频率法）。~~p.163–166 未读~~ **2026-11-11 已补读**。
 6. 书**第 9.4 节**已读 p.178–183（通用机理、感抗判据、钝化），**仅剩 p.184 一页**；书**第 9.5 节**（孔蚀）已于 2026-11-11 补读 p.185–191。镁的负差异效应（NDE）书中未单列，**已找到机制文献：Triviño-Peláez 2026（§1.6 ②，反常析氢写进基元机理 Reaction (1)）**。
 7. 书**第 1–3 章**（阻抗导论/等效电路/法拉第导纳基础）只按需引用，未通读；第 3 章式(3.2.9)/(3.2.12) 是 4.3 节的出发点，引用时要对齐式号。**第 5 章（时间常数）已全读 p.76–83；第 7 章 p.108–117 已读全；第 8 章（数据处理与解析 / NLLS / Boukamp 原理，p.118–146）仍未读**。
-8. `嵌套拓扑/` 目录的三份 PDF：Shahri 2024 正文已读（§9.4.27）；**npj Mater. Degrad. 2024（贝叶斯评估 ECM）与 Triviño-Peláez 2026（Mg 界面动力学）已于 2026-11-11 补读全文，见 §1.6**。PPT 的 39 篇文献仍只有题录；Shahri 2024 与项目已引篇目的对应已确认（同篇）。
+8. `嵌套拓扑/` 目录的三份 PDF：Shahri 2024 正文已读（§9.4.27）；**npj Mater. Degrad. 2024（贝叶斯评估 ECM）与 Triviño-Peláez 2026（Mg 界面动力学）已于 2026-11-11 补读全文，见 §1.6**。~~PPT 的 39 篇文献仍只有题录~~ **2026-11-11 三份 PPT 全部逐图补读、39 篇文献截图全部转录核对，见 §1.5a/b/c**；Shahri 2024 与项目已引篇目的对应已确认（同篇，J. Alloys Compd. 1003 (2024) 175572）。
    > **2026-11-10 补（例外）**：Shahri 2024 的**正文已读**——全文抽取在
    > `out/_pdf_read/p3/content.md`（Table 1 四个电路 + 阻抗方程、Table 2 参数、
    > §3.2 line 157–213 的浸泡时间换电路说明）。核对结论与电路映射见
