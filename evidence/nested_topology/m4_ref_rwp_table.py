@@ -99,7 +99,13 @@ def main() -> int:
             ls_status=blk["ls_relative_refit_status"],
             ls_elapsed_s=blk.get("ls_relative_elapsed_s"),
             ls_starts=blk.get("ls_relative_refit_starts"),
+            # 收敛诊断（外部审查 2026-11-11 要求）：判据是 least_squares.success，
+            # 不是「残差有限」。逐起点明细一并落盘，事后可复核是哪个起点赢的。
+            ls_converged=blk.get("ls_relative_refit_converged"),
+            ls_not_converged=blk.get("ls_relative_refit_not_converged_starts"),
             ls_at_bound=blk.get("ls_relative_at_bound"),
+            ls_unconverged_lower_cost=blk.get("ls_relative_unconverged_lower_cost"),
+            ls_starts_detail=blk.get("ls_relative_refit_starts_detail"),
             external=EXTERNAL[tag],
             isomorphic=bool(c["similar"]),
             param_note=c["param_note"],
@@ -130,6 +136,9 @@ def main() -> int:
     print(f"| LS 相对 Rwp（rwp_ls_relative） | {a['rwp_ls_relative']:.4f}% "
           f"| {b['rwp_ls_relative']:.4f}% |")
     print(f"| LS 重拟合耗时 | {a['ls_elapsed_s']:.2f} s | {b['ls_elapsed_s']:.2f} s |")
+    print(f"| LS 起点收敛 | {a.get('ls_starts')} 起点 / 未收敛 "
+          f"{a.get('ls_not_converged')} | {b.get('ls_starts')} 起点 / 未收敛 "
+          f"{b.get('ls_not_converged')} |")
     print("\n注：耗时是**选中 K 那一次拟合**的墙钟，不含被淘汰的 K 探针。"
           "50 mA 全流程 16 min 里 914 s 花在 K=3 探针（R̂=2.303/div=90 后被剔除），"
           "那是「诚实证伪」的成本，不是选中模型的成本。")

@@ -165,8 +165,18 @@ def refit(f, Z, *, R_inf, w, tau, phi, L=0.0, include_L=False,
           pct=PCT, starts=STARTS):
     """从**参考参数**出发做独立加权 LS，返回最优 Rwp 与诊断。
 
-    返回 dict：status / rwp_pct / n_starts / failed_starts / nfev / elapsed_s /
-    at_bound（有多少参数贴在边界上，用于判断解是否被边界卡住）。
+    返回 dict：status（ok / not_converged / failed）/ rwp_pct / n_starts /
+    failed_starts / not_converged_starts / unconverged_lower_cost / starts_detail /
+    nfev / elapsed_s / at_bound。
+
+    **收敛判据是 `least_squares().success`，不是「残差有限」**（外部审查 2026-11-11）：
+    `max_nfev` 耗尽时 `rr.fun` 通常仍然有限，只看 `isfinite` 会把「跑了 4000 次
+    没收敛」的解当成最优解写进 `rwp_ls_relative`。这里改成：
+
+    · 只有 `success=True` 的起点参与竞争最优；
+    · 一个成功的都没有 → `status="not_converged"`，**不报数**（`rwp_pct=None`）；
+    · 未收敛起点里若有 cost 更低的，记 `unconverged_lower_cost=True`，
+      说明报出来的数**可能偏保守**（但绝不把未收敛解当结果）。
     """
     from scipy.optimize import least_squares
 
@@ -188,26 +198,49 @@ def refit(f, Z, *, R_inf, w, tau, phi, L=0.0, include_L=False,
     t0 = time.time()
     best = None
     failed = 0
+    not_conv = 0
     nfev = 0
+    detail = []
+    best_any_cost = None                 # 含未收敛起点，用于「报值可能偏保守」提示
     for x0 in _starts(x_ref, K, f, zmax, include_L, starts):
         try:
             rr = least_squares(resid, np.clip(x0, lo, hi), bounds=(lo, hi),
                                max_nfev=MAX_NFEV, ftol=1e-11, xtol=1e-11,
                                gtol=1e-11, x_scale="jac")
-        except Exception:
+        except Exception as exc:                 # noqa: BLE001 - 单起点崩不影响其它
             failed += 1
+            detail.append(dict(success=False, status=None, message=f"{type(exc).__name__}: {exc}",
+                               nfev=0, cost=None))
             continue
         nfev += int(rr.nfev)
+        st = getattr(rr, "status", None)
+        st = int(st) if st is not None else None
         if not np.all(np.isfinite(rr.fun)):
             failed += 1
+            detail.append(dict(success=False, status=st,
+                               message=f"残差非有限：{getattr(rr, 'message', '')}",
+                               nfev=int(rr.nfev), cost=None))
             continue
         cost = float(np.sqrt(np.mean(rr.fun ** 2)))
+        ok = bool(getattr(rr, "success", False))
+        detail.append(dict(success=ok, status=st,
+                           message=str(getattr(rr, "message", ""))[:200],
+                           nfev=int(rr.nfev), cost=cost))
+        best_any_cost = cost if best_any_cost is None else min(best_any_cost, cost)
+        if not ok:
+            not_conv += 1
+            continue                    # 未收敛起点不参与最优（审查看法：不能靠有限残差判成功）
         if best is None or cost < best[0]:
             best = (cost, rr.x)
+
+    common = dict(n_starts=starts, failed_starts=failed,
+                  not_converged_starts=not_conv, starts_detail=detail,
+                  nfev=nfev, elapsed_s=round(time.time() - t0, 2))
     if best is None:
-        return dict(status="failed", rwp_pct=None, n_starts=starts,
-                    failed_starts=failed, nfev=nfev,
-                    elapsed_s=round(time.time() - t0, 2), at_bound=None)
+        # 全部起点都没给出「成功」的优化结果：只报状态，不报数
+        status = "not_converged" if detail and any(d["cost"] is not None for d in detail) else "failed"
+        return dict(status=status, rwp_pct=None, at_bound=None,
+                    unconverged_lower_cost=None, **common)
 
     x = best[1]
     p = _unpack(x, K, include_L)
@@ -215,9 +248,10 @@ def refit(f, Z, *, R_inf, w, tau, phi, L=0.0, include_L=False,
     # 边界诊断：贴在 1e-6 相对距离内算"卡边界"，说明解可能被框住
     span = np.maximum(hi - lo, 1e-12)
     at_bound = int(np.sum((x - lo) / span < 1e-6) + np.sum((hi - x) / span < 1e-6))
-    return dict(status="ok", rwp_pct=val, n_starts=starts, failed_starts=failed,
-                nfev=nfev, elapsed_s=round(time.time() - t0, 2),
-                at_bound=at_bound)
+    return dict(status="ok", rwp_pct=val, at_bound=at_bound,
+                unconverged_lower_cost=bool(best_any_cost is not None
+                                            and best_any_cost < best[0] * 0.999),
+                **common)
 
 
 # ---------------------------------------------------------------------------
@@ -282,15 +316,27 @@ def reference_block(f, Z, res, include_L, zeta, *, pct=PCT, starts=STARTS):
                 include_L=include_L, pct=pct, starts=starts)
     block["ls_relative_refit_performed"] = True
     block["ls_relative_refit_status"] = out["status"]
+    block["ls_relative_refit_converged"] = bool(out["status"] == "ok")
     block["ls_relative_refit_starts"] = out["n_starts"]
     block["ls_relative_refit_failed_starts"] = out["failed_starts"]
+    block["ls_relative_refit_not_converged_starts"] = out["not_converged_starts"]
+    block["ls_relative_refit_starts_detail"] = out["starts_detail"]
     block["ls_relative_elapsed_s"] = out["elapsed_s"]
     if out["status"] != "ok":
-        block["reference_note"] = "LS 重拟合未收敛，只报状态不报数"
+        block["reference_note"] = (
+            "LS 重拟合**没有成功收敛的起点**（判据是 least_squares.success，"
+            "不是残差有限），只报状态不报数"
+            if out["status"] == "not_converged"
+            else "LS 重拟合全部起点失败（异常/残差非有限），只报状态不报数")
         return block
 
     block["rwp_ls_relative"] = out["rwp_pct"]
     block["ls_relative_at_bound"] = out["at_bound"]
+    if out["unconverged_lower_cost"]:
+        # 有未收敛起点代价更低：报出来的数偏保守，但绝不拿未收敛解顶替
+        block["ls_relative_unconverged_lower_cost"] = True
+        block["reference_note"] = (NOTE + " 注意：存在未收敛起点其代价低于所选解，"
+                                          "该值可能偏保守（未采纳）。")
     # 参考解打头 → LS 最优点不可能比 primary 差；差了说明实现有问题，
     # 宁可标 failed 也不把可疑数字交出去。
     # 容差用**绝对下限**兜底：无噪声合成谱上 primary 可以是 0（或 1e-16），
@@ -298,6 +344,7 @@ def reference_block(f, Z, res, include_L, zeta, *, pct=PCT, starts=STARTS):
     prim = block["rwp_primary"]
     if prim is not None and np.isfinite(prim) and out["rwp_pct"] > max(prim, 1e-6) * 1.001:
         block["ls_relative_refit_status"] = "failed"
+        block["ls_relative_refit_converged"] = False
         block["reference_note"] = (f"LS 结果 {out['rwp_pct']:.4f}% 反而劣于 "
                                    f"primary {prim:.4f}%，拒绝采用（实现自检失败）")
         block["rwp_ls_relative"] = None

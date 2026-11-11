@@ -10,7 +10,8 @@
     C  门禁三态     —— fail / unavailable(strict) / unavailable(fail-open) 三种输入，
                        gate 模式行为与 `kk_performed` 字段保持一致
     D  JSON 合法性  —— `_json_safe` + `allow_nan=False`；新产物能被严格解析器吃下
-    E  参考 Rwp     —— 与生产解析式对拍、`Rwp = √2·rms_rel`、拓扑不一致必须 skipped
+    E  参考 Rwp     —— 与生产解析式对拍、`Rwp = √2·rms_rel`、拓扑不一致必须 skipped、
+                       `least_squares.success=False` 的解不许当参考值
 
 用法：
     python test_contract.py             # 全跑，约 60-90 s（含 2 次 quick 拟合）
@@ -421,6 +422,81 @@ def case_e2_ref_rwp_skip_contract(tmp):
 # 主流程
 # ---------------------------------------------------------------------------
 
+def case_e3_ref_rwp_requires_success(tmp):
+    """`least_squares.success=False` 的解**不许**当参考值（外部审查 2026-11-11）。
+
+    这是契约回归：`max_nfev` 耗尽时 `rr.fun` 照样有限，旧实现只看 `isfinite`，
+    就会把「跑了 4000 次没收敛」的解写进 `rwp_ls_relative` 并标 `status="ok"`。
+    这里用桩替换 `scipy.optimize.least_squares`，不依赖真数据、不跑真优化。
+    """
+    import scipy.optimize as SO
+
+    import bm_ref_rwp as REF
+
+    f = np.logspace(-1, 5, 51)
+    p = dict(R_inf=1.0, w=np.array([3.0, 2.0]),
+             tau=np.array([1 / (2 * np.pi * 30.0), 1 / (2 * np.pi * 0.5)]),
+             phi=np.array([0.9, 0.8]), L=1e-7)
+    Z = REF.z_from_params(f, **p, include_L=True)
+    base = dict(K=2, w=p["w"], f0=1 / (2 * np.pi * p["tau"]), phi=p["phi"],
+                R_inf=p["R_inf"], L=p["L"], diffusion=None, adsorption=None)
+    kw = dict(R_inf=p["R_inf"], w=p["w"], tau=p["tau"], phi=p["phi"],
+              L=p["L"], include_L=True)
+
+    class _RR:
+        def __init__(self, x0, fun, success, status, msg, nfev):
+            self.x = np.asarray(x0, float)
+            self.fun = fun
+            self.success = success
+            self.status = status
+            self.message = msg
+            self.nfev = nfev
+
+    n = 2 * f.size
+
+    def _all_max_nfev(resid, x0, **k):
+        return _RR(x0, np.full(n, 0.5), False, 0,
+                   "The maximum number of function evaluations is exceeded.",
+                   int(k.get("max_nfev", 1)))
+
+    calls = {"n": 0}
+
+    def _mixed(resid, x0, **k):
+        """第一个起点：未收敛但残差更低；其余：收敛但残差更高。"""
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return _RR(x0, np.full(n, 0.01), False, 0, "max_nfev", 4000)
+        return _RR(x0, np.full(n, 0.5), True, 3, "gtol satisfied", 10)
+
+    old = SO.least_squares
+    try:
+        # ① 全部起点 max_nfev 耗尽 → 不报数（旧实现会报一个"ok"的数）
+        SO.least_squares = _all_max_nfev
+        blk = REF.reference_block(f, Z, dict(base), True, 1.0, starts=3)
+        assert blk["ls_relative_refit_performed"] is True, blk
+        assert blk["ls_relative_refit_status"] == "not_converged", blk
+        assert blk["ls_relative_refit_converged"] is False, blk
+        assert blk["rwp_ls_relative"] is None, "未收敛解被当成参考值写进去了"
+        assert blk["ls_relative_refit_not_converged_starts"] == 3, blk
+        det = blk["ls_relative_refit_starts_detail"]
+        assert len(det) == 3 and all(d["success"] is False for d in det), det
+        assert all(d["cost"] is not None for d in det), det    # 残差有限，正是坑所在
+        assert "success" in blk["reference_note"], blk["reference_note"]
+
+        # ② 混合：只采纳收敛起点；同时如实标记"未收敛者代价更低"
+        SO.least_squares = _mixed
+        out = REF.refit(f, Z, starts=3, **kw)
+        assert out["status"] == "ok", out
+        assert out["not_converged_starts"] == 1, out
+        assert out["unconverged_lower_cost"] is True, \
+            "未收敛起点代价更低却没有标记，报值会显得是「最优」"
+        assert out["starts_detail"][0]["success"] is False, out["starts_detail"][0]
+        assert out["rwp_pct"] is not None
+    finally:
+        SO.least_squares = old
+    return "全未收敛→不报数；混合→只采纳收敛解并标记代价更低的未收敛起点"
+
+
 CASES = [
     ("A1 合法用法", case_a1_legal_forms, False),
     ("A2 未知开关", case_a2_unknown_flags, False),
@@ -437,6 +513,7 @@ CASES = [
     ("D3 历史盘点", case_d_legacy_inventory, False),
     ("E1 参考Rwp恒等", case_e1_ref_rwp_identity, False),
     ("E2 参考Rwp跳过", case_e2_ref_rwp_skip_contract, False),
+    ("E3 参考Rwp收敛", case_e3_ref_rwp_requires_success, False),
 ]
 
 
