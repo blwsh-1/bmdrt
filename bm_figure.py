@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -107,15 +108,41 @@ DEFAULT_SPEC = dict(
     formats=["png"],
     titles=None,                                     # None = 不写标题（期刊习惯）
     allow_font_fallback=False,
+    # 逐系列覆盖颜色与线宽。None = 跟主题走。
+    # 只放开**颜色与线宽**，不放开标记形状：实验数据永远空心圆点、
+    # 拟合永远实线、Re/Im 永远不同标记——颜色可以换，编码规则不许换，
+    # 否则同一条谱的两张图会被读成两种数据。
+    style=dict(data=None, fit=None, band=None, drt=None,
+               resid_re=None, resid_im=None, lw_data=None, lw_fit=None),
 )
+
+STYLE_COLORS = ("data", "fit", "band", "drt", "resid_re", "resid_im")
+STYLE_LW = ("lw_data", "lw_fit")
+_HEX = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 
 
 class SpecError(ValueError):
     pass
 
 
+def _check_block(block, allowed, path):
+    """嵌套块也逐键校验。`{"font": {"famliy": "Arial"}}` 必须报错——
+    静默接受会让人以为字体改了，实际还是默认字体，投出去才发现。"""
+    if block is None:
+        return
+    if not isinstance(block, dict):
+        raise SpecError(f"{path} 必须是对象，收到 {type(block).__name__}")
+    unknown = set(block) - set(allowed)
+    if unknown:
+        raise SpecError(f"{path} 里有未知键 {sorted(unknown)}；允许 {sorted(allowed)}")
+
+
 def validate_spec(spec: dict) -> dict:
-    """校验并补默认值。**未知键直接报错**——静默忽略会让人以为设置生效了。"""
+    """校验并补默认值。**未知键直接报错**——静默忽略会让人以为设置生效了。
+
+    顶层与 font / canvas / style / titles 各块**逐层**校验，
+    不做 `dict.update` 蒙混过关。
+    """
     if not isinstance(spec, dict):
         raise SpecError("spec 必须是 dict")
     unknown = set(spec) - set(DEFAULT_SPEC)
@@ -123,11 +150,32 @@ def validate_spec(spec: dict) -> dict:
         raise SpecError(f"未知配置键：{sorted(unknown)}；"
                         f"允许的是 {sorted(DEFAULT_SPEC)}")
     out = dict(DEFAULT_SPEC)
-    out.update({k: v for k, v in spec.items() if k != "font" and k != "canvas"})
-    for blk in ("font", "canvas"):
+    blocks = ("font", "canvas", "style")
+    out.update({k: v for k, v in spec.items() if k not in blocks})
+    for blk in blocks:
+        _check_block(spec.get(blk), DEFAULT_SPEC[blk], blk)
         merged = dict(DEFAULT_SPEC[blk])
         merged.update(spec.get(blk) or {})
         out[blk] = merged
+
+    # style 只认颜色与线宽：值必须是 #rgb/#rrggbb，否则报错不猜
+    for k in STYLE_COLORS:
+        v = out["style"].get(k)
+        if v is not None and not _HEX.match(str(v)):
+            raise SpecError(f"style.{k} 必须是 #rrggbb 形式的颜色，收到 {v!r}")
+    for k in STYLE_LW:
+        v = out["style"].get(k)
+        if v is not None:
+            try:
+                fv = float(v)
+            except (TypeError, ValueError):
+                raise SpecError(f"style.{k} 必须是数字，收到 {v!r}") from None
+            if not (0.1 <= fv <= 8.0):
+                raise SpecError(f"style.{k} 超出 0.1–8.0 pt：{fv}")
+            out["style"][k] = fv
+
+    if out["titles"] is not None:
+        _check_block(out["titles"], PANELS, "titles")
 
     if out["theme"] not in THEMES:
         raise SpecError(f"未知主题 {out['theme']!r}；可选 {sorted(THEMES)}")
@@ -259,7 +307,8 @@ def panel_nyquist(ax, res, spec, th):
     # 实验数据：空心圆点（全项目固定编码）
     ax.plot(zr, -zi, "o", ms=3.6, mfc="none", mec=th["data"],
             mew=0.9, label=L["data"], zorder=3)
-    ax.plot(fr, -fi, "-", lw=1.3, color=th["fit"], label=L["fit"], zorder=4)
+    ax.plot(fr, -fi, "-", lw=float(th.get("lw_fit", 1.3)), color=th["fit"],
+            label=L["fit"], zorder=4)
     if res.get("has_band"):
         # 区间的 Re/Im 是**分别**取的边缘分位，复平面上是矩形包络，不是一条带。
         # 早先按 re_lo→re_hi→im_hi 连成封闭多边形，那圈面积没有概率含义，
@@ -290,7 +339,7 @@ def panel_drt(ax, res, spec, th):
         return
     f, med = np.array(d["f"]), np.array(d["med"])
     ax.fill_between(f, d["lo"], d["hi"], color=th["drt"], alpha=0.15, lw=0)
-    ax.plot(f, med, "-", lw=1.3, color=th["drt"])
+    ax.plot(f, med, "-", lw=float(th.get("lw_fit", 1.3)), color=th["drt"])
     _logx(ax)
     ax.set_xlabel(L["f"])
     ax.set_ylabel(L["gam"])
@@ -313,7 +362,13 @@ def panel_residual(ax, res, spec, th):
     c = res["curves"]
     f = np.array(c["f"])
     norm = spec["resid_mode"] == "normalized"
-    key = ("nre", "nim") if norm else ("rre", "rim")
+    re_key, im_key = ("nre", "nim") if norm else ("rre", "rim")
+    # 标准化残差可能只有一半有效（σ 缺失或为 0）。两种量纲不能画在一根轴上，
+    # 所以只要有一半缺，整幅退回绝对残差，并在图上写明原因——
+    # 悄悄混画会让 "1σ 线" 失去意义。
+    half_missing = norm and not (c.get(re_key) and c.get(im_key))
+    if half_missing:
+        re_key, im_key, norm = "rre", "rim", False
     ylab = L["nres"] if norm else L["res"]
     ax.axhline(0, color="#333333", lw=0.8, zorder=1)
     if norm:
@@ -321,10 +376,14 @@ def panel_residual(ax, res, spec, th):
             ax.axhline(s, color="#bbbbbb", ls="--", lw=0.6, zorder=1)
         ax.text(f[0], 1.0, " 1σ", fontsize=6.0, color="#999999",
                 va="bottom", ha="left")
+    else:
+        ax.text(0.995, 0.02, "normalized unavailable",
+                transform=ax.transAxes, fontsize=5.8, color="#999999",
+                ha="right", va="bottom")
     mre, mim = "o", "s"
-    ax.plot(f, c[key[0]], mre, ms=2.8, mfc="none", mec=th["resid_re"],
+    ax.plot(f, c[re_key], mre, ms=2.8, mfc="none", mec=th["resid_re"],
             mew=0.8, label="Re", zorder=3)
-    ax.plot(f, c[key[1]], mim, ms=2.6, mfc="none", mec=th["resid_im"],
+    ax.plot(f, c[im_key], mim, ms=2.6, mfc="none", mec=th["resid_im"],
             mew=0.8, label="Im", zorder=3)
     _logx(ax)
     ax.set_xlabel(L["f"])
@@ -367,6 +426,22 @@ _PANEL_FN = dict(nyquist=panel_nyquist, drt=panel_drt,
 # --------------------------------------------------------------------------
 # 渲染
 # --------------------------------------------------------------------------
+def _apply_style(th: dict, style: dict) -> dict:
+    """把 style 覆盖叠到主题上；band 没单独给颜色就跟随 fit。"""
+    th = dict(th)
+    for k in STYLE_COLORS:
+        v = (style or {}).get(k)
+        if v:
+            th[k] = v
+    if (style or {}).get("fit") and not (style or {}).get("band"):
+        th["band"] = th["fit"]              # 区间与拟合线必须同色，否则读成两组数据
+    for k in STYLE_LW:
+        v = (style or {}).get(k)
+        if v:
+            th[k] = float(v)
+    return th
+
+
 def draw(res: dict, spec: dict):
     """按 spec 画一张图，返回 (fig, spec)。**不落盘**，便于测试复用。"""
     spec = validate_spec(spec)
@@ -375,7 +450,7 @@ def draw(res: dict, spec: dict):
         raise SpecError(f"字体不可用：{missing}。装字体，或显式设 "
                         f"allow_font_fallback=true（会替换成默认字体，"
                         f"导出的图与预览不一致）")
-    th = _rc(spec)
+    th = _apply_style(_rc(spec), spec["style"])
     rows, cols = LAYOUTS[spec["layout"]]
     w = float(spec["canvas"]["width_mm"]) * MM
     h = float(spec["canvas"]["height_mm"]) * MM
@@ -433,6 +508,9 @@ def main(argv=None) -> int:
                     help="png+svg+pdf+tiff 全出")
     ap.add_argument("--out", default=None, help="输出目录（默认 results/<stem>/figures）")
     ap.add_argument("--spec", default=None, help="读取保存的 PlotSpec JSON")
+    ap.add_argument("--color", action="append", default=None, metavar="KEY=#hex",
+                    help="逐系列覆盖配色，如 fit=#c0392b（可重复）；"
+                         f"可选键 {STYLE_COLORS + STYLE_LW}")
     ap.add_argument("--dump-spec", action="store_true")
     ap.add_argument("--show-predictive", action="store_true")
     a = ap.parse_args(argv)
@@ -444,6 +522,21 @@ def main(argv=None) -> int:
     spec = dict(DEFAULT_SPEC)
     if a.spec:
         spec = json.loads(Path(a.spec).read_text(encoding="utf-8"))
+    if a.color:
+        sty = dict(spec.get("style") or {})
+        for item in a.color:
+            if "=" not in item:
+                print(f"[spec 错误] --color 需要 KEY=#hex，收到 {item!r}",
+                      file=sys.stderr)
+                return 2
+            k, v = item.split("=", 1)
+            k, v = k.strip(), v.strip()
+            if k not in STYLE_COLORS + STYLE_LW:
+                print(f"[spec 错误] 未知配色键 {k!r}；"
+                      f"可选 {STYLE_COLORS + STYLE_LW}", file=sys.stderr)
+                return 2
+            sty[k] = v
+        spec["style"] = sty
     for key, val in (("theme", a.theme), ("layout", a.layout),
                      ("labels", a.labels), ("resid_mode", a.resid_mode),
                      ("dpi", a.dpi)):
@@ -486,6 +579,14 @@ def main(argv=None) -> int:
     for p in made:
         print(f"  {p}  ({p.stat().st_size / 1024:.1f} KB)")
     print(f"  {spec_path}")
+    # 结果包封口：figures/ 是刚写进去的，bundle() 那会儿的 manifest 里没有它们。
+    # 不重扫一遍，"每个文件都有 SHA256" 就是空话。
+    mf = out.parent / "manifest.json"
+    if mf.exists():
+        mp = R.finalize_bundle(out.parent)
+        man = json.loads(mp.read_text(encoding="utf-8"))
+        print(f"  {mp}  (已封包，{len(man['files'])} 个文件，"
+              f"figures {man['counts']['figures']} 个)")
     return 0
 
 

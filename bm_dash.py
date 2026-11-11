@@ -71,29 +71,43 @@ THEMES = {
                          sub="#6b6b6b", line="#ededed"),
 }
 
+# 分页：一页放不下就分页，而不是把所有卡片堆成一条长页面。
+# 判定不放总览、也不藏进抽屉——它常驻顶栏 chip（每页都能看到），
+# 逐条判据在「判定与模型」页。漂亮拟合与「参数不可辨识」都必须能一眼看到。
+PAGES = [
+    dict(id="ov", label="总览", hint="先看图：拟合轨迹、DRT、残差是否过关"),
+    dict(id="md", label="判定与模型", hint="逐条判据、K 候选、参数后验与相关性"),
+]
+
 # 默认布局：Nyquist 占最大面积（第一眼判拟合好坏的就是它），
-# DRT 与之同高空一级对照；残差与判定并排；表格类到底部通栏。
+# DRT 与残差在右列上下对齐（共用频率轴，可以竖着对照）；
+# 判定与模型另起一页，不跟图抢纵向空间。
 DEFAULT_PANELS = [
     # Nyquist 跨两行：它是第一眼判「拟合好不好」的图，等比例坐标下必须有
     # 近方的画布，否则要么字太小、要么四周留白。
-    dict(id="fit", span=6, rows=2, visible=True),
-    dict(id="drt", span=6, rows=1, visible=True),
-    dict(id="resid", span=6, rows=1, visible=True),
-    dict(id="notes", span=12, rows=1, visible=True),
-    dict(id="model", span=12, rows=1, visible=True),
+    dict(id="fit", span=6, rows=2, visible=True, page="ov"),
+    dict(id="drt", span=6, rows=1, visible=True, page="ov"),
+    dict(id="resid", span=6, rows=1, visible=True, page="ov"),
+    dict(id="notes", span=12, rows=1, visible=True, page="md"),
+    dict(id="model", span=12, rows=1, visible=True, page="md"),
 ]
 
 # 默认布局也导出成模块常量：面板生成、契约测试、以及"另存为模板"都读它，
 # 免得默认值散在 main() 里被改一处、漏一处。
 DEFAULT_LAYOUT = dict(theme="minimal", panels=DEFAULT_PANELS,
-                      version=R.SPEC_VERSION)
+                      colors={}, version=R.SPEC_VERSION)
 
 PANEL_META = {
-    "fit": dict(title="阻抗拟合", sub="Nyquist · 数据 / 后验中位 / 区间", detail="Bode"),
-    "drt": dict(title="DRT 分布", sub="后验 γ(τ) 与峰位", detail="峰参数"),
-    "resid": dict(title="残差诊断", sub="标准化残差 · ±1σ / ±2σ", detail="ACF / 分段"),
-    "notes": dict(title="判定与警告", sub="§14 判据逐条 · 数据自洽性", detail=None),
-    "model": dict(title="模型与参数", sub="K 候选 · 参数后验 · 相关性", detail="相关矩阵"),
+    "fit": dict(title="阻抗拟合", sub="Nyquist · 数据 / 后验中位 / 区间",
+                detail="Bode", page="ov"),
+    "drt": dict(title="DRT 分布", sub="后验 γ(τ) 与峰位", detail="峰参数",
+                page="ov"),
+    "resid": dict(title="残差诊断", sub="标准化残差 · ±1σ / ±2σ",
+                  detail="ACF / 分段", page="ov"),
+    "notes": dict(title="判定与警告", sub="§14 判据逐条 · 数据自洽性",
+                  detail=None, page="md"),
+    "model": dict(title="模型与参数", sub="K 候选 · 参数后验 · 相关性",
+                  detail="相关矩阵", page="md"),
 }
 
 
@@ -107,6 +121,7 @@ def build(payload: dict, title: str, layout: dict, theme: str) -> str:
         "__LAYOUT__": json.dumps(layout, ensure_ascii=False),
         "__THEMES__": json.dumps(THEMES, ensure_ascii=False),
         "__PANELMETA__": json.dumps(PANEL_META, ensure_ascii=False),
+        "__PAGES__": json.dumps(PAGES, ensure_ascii=False),
         "__THEME__": theme,
         "__VER__": R.SPEC_VERSION,
     }
@@ -137,11 +152,13 @@ def main(argv=None) -> int:
     root = Path(a.out) if a.out else Path("results") / payload["name"]
     root.mkdir(parents=True, exist_ok=True)
 
-    layout = dict(theme=a.theme, panels=[dict(p) for p in DEFAULT_PANELS])
+    layout = dict(theme=a.theme, panels=[dict(p) for p in DEFAULT_PANELS],
+                  colors={})
     if a.layout:
         saved = json.loads(Path(a.layout).read_text(encoding="utf-8"))
         layout = dict(theme=saved.get("theme", a.theme),
                       panels=saved.get("panels") or layout["panels"],
+                      colors=saved.get("colors") or {},
                       version=saved.get("version", R.SPEC_VERSION))
 
     html = build(payload, payload["name"], layout, layout["theme"])
@@ -153,6 +170,8 @@ def main(argv=None) -> int:
         b = res.bundle(root)
         print(f"  {b}{'/manifest.json'}  ("
               f"{len(list((b / 'data').glob('*')))} 个数据文件)")
+        # bundle() 之后又写了 dashboard.html，重扫一遍才会进清单
+        R.finalize_bundle(root)
 
     if a.open:
         webbrowser.open(out.resolve().as_uri())
@@ -181,28 +200,53 @@ body{padding:0 0 40px}
 a{color:var(--accent)}
 .wrap{max-width:1560px;margin:0 auto;padding:0 20px}
 
-/* ---------- 顶栏 ---------- */
-header{position:sticky;top:0;z-index:30;background:rgba(255,255,255,.92);
-  backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
-.hd{display:flex;align-items:center;gap:16px;padding:10px 0}
-.hd h1{font-size:17px;margin:0;font-weight:650;letter-spacing:.2px}
-.hd .sub{color:var(--sub);font-size:12px}
-.chips{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto;align-items:center}
+/* ---------- 标题栏 ---------- */
+header{position:sticky;top:0;z-index:30;background:rgba(255,255,255,.94);
+  backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.tb{display:flex;align-items:flex-start;gap:20px;padding:10px 0 7px;
+  flex-wrap:wrap}
+.tb-l{min-width:0;flex:0 1 auto}
+.tb h1{font-size:20px;margin:0;font-weight:650;letter-spacing:.1px;
+  line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  max-width:46vw}
+.tb .sub{color:var(--sub);font-size:12px;margin-top:3px;font-variant-numeric:tabular-nums}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto;align-items:center;
+  padding-top:2px}
 .chip{font-size:12px;padding:3px 9px;border-radius:999px;border:1px solid var(--line);
   background:#fafafa;white-space:nowrap}
 .chip.ok{color:var(--ok);border-color:#bfe0bf;background:var(--okbg)}
 .chip.warn{color:var(--warn);border-color:#f0d4a8;background:var(--warnbg)}
 .chip.bad{color:var(--bad);border-color:#f0c0ba;background:var(--badbg)}
-.tools{display:flex;gap:8px;align-items:center}
+.tools{display:flex;gap:8px;align-items:center;padding-top:2px;flex:0 0 auto}
 select,button{font:inherit;font-size:12px;padding:5px 9px;border-radius:8px;
   border:1px solid var(--line);background:#fff;color:var(--fg);cursor:pointer}
 button:hover,select:hover{border-color:#c9c9c9;background:#fafafa}
 button.primary{background:var(--fg);color:#fff;border-color:var(--fg)}
 button.primary:hover{background:#000}
 
+/* 分页签：与标题同一块，粘顶；当前页用下划线，不用色块（色块会抢读数） */
+/* 注意：这里必须自己写左右 20px——`.tabs` 的 padding 会覆盖 `.wrap` 的，
+   否则分页签相对上面的标题和下面的卡片整体左移 20px。 */
+.tabs{display:flex;align-items:center;gap:4px;border-top:1px solid var(--line);
+  padding:3px 20px 0}
+.tab{font-size:13px;padding:6px 12px 6px;border:0;border-bottom:2px solid transparent;
+  border-radius:0;background:none;color:var(--sub);cursor:pointer;
+  display:flex;align-items:center;gap:6px}
+.tab:hover{background:#fafafa;color:var(--fg)}
+.tab.on{color:var(--fg);font-weight:600;border-bottom-color:var(--fg)}
+.tab .dot{width:7px;height:7px;border-radius:50%;flex:0 0 auto}
+.tab .dot.ok{background:var(--ok)} .tab .dot.warn{background:var(--warn)}
+.tab .dot.bad{background:var(--bad)} .tab .dot.na{background:#ccc}
+.tab .hint{margin:0 0 0 auto;font-size:11.5px;color:var(--sub);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#phint{margin:0 0 0 auto;font-size:11.5px;color:var(--sub);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;padding-right:2px}
+/* 窄屏：卡片副标题只剩「标准化残…」，不如留给按钮；标题本身已经说清了 */
+@media(max-width:1080px){.card .ch .s{display:none}}
+
 /* ---------- KPI ---------- */
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));
-  gap:0;border:1px solid var(--line);border-radius:var(--radius);margin:16px 0;
+  gap:0;border:1px solid var(--line);border-radius:var(--radius);margin:12px 0;
   overflow:hidden;background:var(--panel)}
 .kpi{padding:11px 14px;border-right:1px solid var(--line)}
 .kpi:last-child{border-right:0}
@@ -262,7 +306,8 @@ tr.sel td{background:#f4f8fd;font-weight:600}
   padding:5px 9px;border-radius:7px;background:#fafafa}
 .chk .dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto}
 .chk.pass .dot{background:var(--ok)} .chk.fail .dot{background:var(--bad)}
-.chk.na .dot{background:#bbb}
+.chk.warn .dot{background:var(--warn)}
+.chk.na .dot{background:#bbb} .chk.na{color:var(--sub)}
 .chk .val{margin-left:auto;font-variant-numeric:tabular-nums;
   font-family:ui-monospace,Consolas,monospace;font-size:12px;color:var(--sub)}
 .notes-list{list-style:none;margin:0;padding:0;font-size:12px}
@@ -315,22 +360,25 @@ footer code{font-family:ui-monospace,Consolas,monospace;font-size:11px;
 </style>
 </head>
 <body>
-<header><div class="wrap hd">
-  <div>
-    <h1 id="ttl">__TITLE__</h1>
-    <div class="sub" id="sub"></div>
+<header>
+  <div class="wrap tb">
+    <div class="tb-l">
+      <h1 id="ttl">__TITLE__</h1>
+      <div class="sub" id="sub"></div>
+    </div>
+    <div class="chips" id="chips"></div>
+    <div class="tools">
+      <select id="theme" title="排版风格预设（不是期刊合规声明）"></select>
+      <button id="btn-exp">导出…</button>
+      <button id="btn-reset" title="恢复默认布局">重置</button>
+    </div>
   </div>
-  <div class="chips" id="chips"></div>
-  <div class="tools">
-    <select id="theme" title="排版风格预设（不是期刊合规声明）"></select>
-    <button id="btn-exp">导出…</button>
-    <button id="btn-reset" title="恢复默认布局">重置</button>
-  </div>
-</div></header>
+  <div class="wrap tabs" id="tabs"></div>
+</header>
 
 <div class="wrap">
   <section class="kpis" id="kpis"></section>
-  <div class="hint">
+  <div class="hint" id="opshint">
     滚轮缩放 · 拖动平移 · 双击复位 · 点击固定读数 ·
     <kbd>Shift</kbd>+滚轮只缩横轴 · 拖卡片标题可重排
   </div>
@@ -351,16 +399,24 @@ footer code{font-family:ui-monospace,Consolas,monospace;font-size:11px;
 const D = __DATA__;
 const THEMES = __THEMES__;
 const META = __PANELMETA__;
+const PAGES = __PAGES__;
 const DEFAULT_LAYOUT = __LAYOUT__;
 const SPEC_VER = "__VER__";
 const LS_KEY = "bmdrt.dash.layout." + D.name;
 
 let LAYOUT = JSON.parse(JSON.stringify(DEFAULT_LAYOUT));
+if (!LAYOUT.colors) LAYOUT.colors = {};
 let TH = THEMES[LAYOUT.theme] || THEMES.minimal;
 // 卡片内高 = 行高×行数 + 间距；绘图区要再减掉卡头(37)、读数行(26)与内边距(10)。
 // 之前漏了读数行，svg 比容器高 15px，轴标题被挤到卡片外面压住读数。
-const ROW = 300, GAP = 16, HDR = 37, RO = 26, PADV = 10;
-let PIN = null;                 // 固定的频点索引
+const ROW = 286, GAP = 16, HDR = 37, RO = 26, PADV = 10;
+// PIN 存的是**频率值**，不是数组下标。
+// Nyquist / 残差用 curves.f，DRT 用 drt.f，两组网格长度和采样点都不一样；
+// 早先两边共用同一个整数下标，点 DRT 会在 Nyquist 上落到另一个频点，
+// DRT 网格比观测点数多时还会越界。现在每个面板各自把频率映射到最近的点。
+let PIN = null;                 // 固定的频点（Hz）
+let PAGE = PAGES[0].id;         // 当前页
+let DEEP = null;                // 抽屉深链（#detail=…），与页签一起维护 hash
 let ZOOM = {};                  // panelId -> {x0,x1,y0,y1}
 let OPEN = null;                // 抽屉里正在看的面板
 
@@ -388,6 +444,42 @@ const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
 // 结果 JSON 里的提示是 markdown 风格（**加粗**）。直接 innerHTML 会显示星号，
 // 转义后只放开 **…** 这一种标记。
 const md = s => esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>");
+
+/* ---------------- 频点映射（跨图联动的唯一正确做法） ---------------- */
+// 三种图各有自己的网格：curves.f 是实测频点（少），drt.f 是后验 τ 网格取
+// 倒数（多）。跨图联动只能共用**频率值**，各面板自己就近映射；
+// 共用一个整数下标必然错位——点 DRT 会在 Nyquist 上落到另一个频点，
+// 网格更长时还会越界读出 undefined。
+function nearIdx(arr, f) {
+  let bi = 0, bd = Infinity;
+  for (let i = 0; i < arr.length; i++) {
+    const d = Math.abs(arr[i] - f);
+    if (d < bd) { bd = d; bi = i; }
+  }
+  return bi;
+}
+function gridOf(id) {
+  if (id === "drt") return (D.drt && D.drt.f) ? D.drt.f : [];
+  return D.curves.f;
+}
+function pinIdx(id) {
+  if (PIN === null) return -1;
+  const g = gridOf(id);
+  return g.length ? nearIdx(g, PIN) : -1;
+}
+// 第二次点同一个点要取消固定。判同看"映射到实测网格后的下标"，
+// 这样从 DRT 点过来、再点 Nyquist 上的对应点，仍然算同一个频点。
+function togglePin(f) {
+  PIN = (PIN !== null &&
+         nearIdx(D.curves.f, PIN) === nearIdx(D.curves.f, f)) ? null : f;
+  drawAll();
+}
+// 标准化残差要求实部、虚部**都**有效。只有一半可用时不能混画（两种量纲
+// 共用一根轴，"1σ 线"就没意义了），整幅退回绝对残差并注明原因。
+function normAvail() {
+  const c = D.curves;
+  return !!(c.nre && c.nre.length && c.nim && c.nim.length);
+}
 
 const SUP = {"-":"⁻","0":"⁰","1":"¹","2":"²","3":"³","4":"⁴",
   "5":"⁵","6":"⁶","7":"⁷","8":"⁸","9":"⁹"};
@@ -514,7 +606,7 @@ function domain(panel, w, h) {
              y0: Math.min(0, ...D.drt.lo) * 1.05 || -1e-3,
              y1: Math.max(...g) * 1.08 };
   }
-  const yk = (c.nre && D.curves.nre.length) ? "nre" : "rre";
+  const yk = normAvail() ? "nre" : "rre";
   const ys = (c[yk] || []).concat(c[yk === "nre" ? "nim" : "rim"] || []);
   const m = Math.max(1.2, ...ys.map(Math.abs)) * 1.12;
   return { x0: Math.min(...c.f), x1: Math.max(...c.f), y0: -m, y1: m };
@@ -550,10 +642,10 @@ function renderFit(w, h) {
     F.push(`<rect x="${lx + 118}" y="${ly - 5}" width="16" height="10" fill="${TH.band}" fill-opacity="0.18"/>`);
     F.push(`<text x="${lx + 139}" y="${ly + 3.5}" font-size="${fs}" fill="${TH.sub}">90% 边际区间</text>`);
   }
-  const pin = PIN !== null ? PIN : null;
+  const pi = pinIdx("fit");
   let mark = "";
-  if (pin !== null) {
-    const px = x(c.zre[pin]), py = y(-c.zim[pin]);
+  if (pi >= 0) {
+    const px = x(c.zre[pi]), py = y(-c.zim[pi]);
     mark = `<line x1="${px}" y1="${rngY[1]}" x2="${px}" y2="${rngY[0]}" stroke="${TH.fg}" stroke-opacity=".25" stroke-dasharray="3 3"/>
       <circle cx="${px}" cy="${py}" r="5.5" fill="none" stroke="${TH.fit}" stroke-width="1.6"/>`;
   }
@@ -576,10 +668,10 @@ function renderDrt(w, h) {
     F.push(`<line x1="${px.toFixed(1)}" y1="${rngY[1]}" x2="${px.toFixed(1)}" y2="${rngY[0]}" stroke="${TH.sub}" stroke-opacity=".55" stroke-dasharray="2 3"/>`);
     F.push(`<text x="${(px + 3).toFixed(1)}" y="${rngY[1] + 12}" font-size="${TH.fontSize - 2.5}" fill="${TH.sub}">#${cm.idx}</text>`);
   });
-  const pin = PIN;
+  const di = pinIdx("drt");
   let mark = "";
-  if (pin !== null && d.f[pin] !== undefined) {
-    const px = x(d.f[pin]);
+  if (di >= 0) {
+    const px = x(d.f[di]);
     mark = `<line x1="${px}" y1="${rngY[1]}" x2="${px}" y2="${rngY[0]}" stroke="${TH.fg}" stroke-opacity=".2" stroke-dasharray="3 3"/>`;
   }
   return { body: F.join("") + mark, fr, kind: "drt" };
@@ -587,7 +679,7 @@ function renderDrt(w, h) {
 
 function renderResid(w, h) {
   const c = D.curves;
-  const useNorm = !!(c.nre && D.curves.nre.length);
+  const useNorm = normAvail();
   const o = domain("resid");
   const fr = frame(null, w, h, { xdom: [o.x0, o.x1], ydom: [o.y0, o.y1], xlog: true,
     xlabel: "f / Hz", ylabel: useNorm ? "残差 / σ" : "残差 / Ω" });
@@ -596,6 +688,10 @@ function renderResid(w, h) {
   if (useNorm) {
     [-2, -1, 1, 2].forEach(s => F.push(
       `<line x1="${rngX[0]}" y1="${y(s).toFixed(1)}" x2="${rngX[1]}" y2="${y(s).toFixed(1)}" stroke="${TH.sub}" stroke-opacity="${Math.abs(s) === 1 ? .35 : .18}" stroke-dasharray="${Math.abs(s) === 1 ? '4 3' : '2 4'}"/>`));
+  } else if (D.norm_valid && !(D.norm_valid.re && D.norm_valid.im)) {
+    const miss = [D.norm_valid.re ? "" : "Re", D.norm_valid.im ? "" : "Im"]
+      .filter(Boolean).join("/");
+    F.push(`<text x="${rngX[0] + 4}" y="${rngY[1] + 12}" font-size="${fs}" fill="${TH.sub}">标准化残差不可用（${miss} 的 σ 缺失或为 0）→ 纵轴为绝对残差</text>`);
   }
   F.push(`<line x1="${rngX[0]}" y1="${y(0).toFixed(1)}" x2="${rngX[1]}" y2="${y(0).toFixed(1)}" stroke="${TH.fg}" stroke-opacity=".55"/>`);
   const re = useNorm ? c.nre : c.rre, im = useNorm ? c.nim : c.rim;
@@ -607,11 +703,12 @@ function renderResid(w, h) {
   F.push(`<circle cx="${lx + 3}" cy="${ly}" r="2.6" fill="none" stroke="${TH.reC}" stroke-width="1.2"/><text x="${lx + 10}" y="${ly + 3.5}" font-size="${fs}" fill="${TH.sub}">Re</text>`);
   F.push(`<rect x="${lx + 33}" y="${ly - 2.4}" width="4.8" height="4.8" fill="none" stroke="${TH.imC}" stroke-width="1.1"/><text x="${lx + 42}" y="${ly + 3.5}" font-size="${fs}" fill="${TH.sub}">Im</text>`);
   let mark = "";
-  if (PIN !== null) {
-    const px = x(c.f[PIN]);
+  const pi = pinIdx("resid");
+  if (pi >= 0) {
+    const px = x(c.f[pi]);
     mark = `<line x1="${px}" y1="${rngY[1]}" x2="${px}" y2="${rngY[0]}" stroke="${TH.fg}" stroke-opacity=".25" stroke-dasharray="3 3"/>
-      <circle cx="${px}" cy="${y(re[PIN]).toFixed(1)}" r="5" fill="none" stroke="${TH.reC}" stroke-width="1.5"/>
-      <rect x="${(px - 4.5).toFixed(1)}" y="${(y(im[PIN]) - 4.5).toFixed(1)}" width="9" height="9" fill="none" stroke="${TH.imC}" stroke-width="1.4"/>`;
+      <circle cx="${px}" cy="${y(re[pi]).toFixed(1)}" r="5" fill="none" stroke="${TH.reC}" stroke-width="1.5"/>
+      <rect x="${(px - 4.5).toFixed(1)}" y="${(y(im[pi]) - 4.5).toFixed(1)}" width="9" height="9" fill="none" stroke="${TH.imC}" stroke-width="1.4"/>`;
   }
   return { body: F.join("") + mark, fr, kind: "resid" };
 }
@@ -642,10 +739,15 @@ function renderBode(w, h) {
 }
 
 /* ---------------- 卡片 ---------------- */
+const pageOf = p => p.page || (META[p.id] || {}).page || "ov";
+function panelOrder(id) {
+  return LAYOUT.panels.findIndex(q => q.id === id);
+}
+
 function buildCards() {
   const grid = $("#grid");
   grid.innerHTML = "";
-  LAYOUT.panels.forEach((p, idx) => {
+  LAYOUT.panels.filter(p => pageOf(p) === PAGE).forEach(p => {
     const m = META[p.id] || { title: p.id, sub: "" };
     const card = el("section", { class: "card", "data-id": p.id, draggable: "true" });
     card.style.gridColumn = `span ${p.span}`;
@@ -662,24 +764,27 @@ function buildCards() {
         <div class="acts">
           ${m.detail ? `<button data-act="detail">${m.detail}</button>` : ""}
           <button data-act="span">宽</button>
-          <button data-act="svg">SVG</button>
+          ${["fit", "drt", "resid"].includes(p.id)
+            ? `<button data-act="svg">SVG</button>` : ""}
           <button data-act="hide">隐藏</button>
         </div>
       </div>
       <div class="cb"></div><div class="readout"></div>`;
     grid.appendChild(card);
     card.addEventListener("dragstart", e => {
-      e.dataTransfer.setData("text/plain", String(idx));
+      // 传 id 而不是下标：跨页时下标对不上，而且拖完重排会失效
+      e.dataTransfer.setData("text/plain", p.id);
       card.classList.add("dragging");
     });
     card.addEventListener("dragend", () => card.classList.remove("dragging"));
     card.addEventListener("dragover", e => e.preventDefault());
     card.addEventListener("drop", e => {
       e.preventDefault();
-      const from = +e.dataTransfer.getData("text/plain");
-      if (from === idx) return;
-      const moved = LAYOUT.panels.splice(from, 1)[0];
-      LAYOUT.panels.splice(idx, 0, moved);
+      const fromId = e.dataTransfer.getData("text/plain");
+      const gi = panelOrder(fromId), gj = panelOrder(p.id);
+      if (gi < 0 || gj < 0 || gi === gj) return;
+      const moved = LAYOUT.panels.splice(gi, 1)[0];
+      LAYOUT.panels.splice(gj, 0, moved);
       saveLayout(); buildCards(); drawAll();
     });
     card.querySelector(".acts").addEventListener("click", e => {
@@ -688,7 +793,8 @@ function buildCards() {
       if (act === "span") { p.span = p.span >= 12 ? 4 : p.span + 2;
         saveLayout(); buildCards(); drawAll(); }
       if (act === "detail") openDrawer(p.id);
-      if (act === "svg") exportPanelSvg(p.id, m.title);
+      if (act === "svg" && ["fit", "drt", "resid"].includes(p.id))
+        exportPanelSvg(p.id, m.title);
     });
   });
   // 「已隐藏」恢复条
@@ -776,10 +882,10 @@ function bindInteract(svg, id, fr, w, h) {
   svg.addEventListener("pointerup", () => { drag = null; });
   svg.addEventListener("pointerleave", () => { $("#tip").classList.remove("on"); });
   svg.addEventListener("dblclick", () => { delete ZOOM[id]; drawCard(id); });
-  svg.addEventListener("click", () => { PIN = PIN === hoverIdx ? null : hoverIdx; drawAll(); });
+  svg.addEventListener("click", () => { if (hoverF !== null) togglePin(hoverF); });
 }
 
-let hoverIdx = null;
+let hoverF = null;              // 悬停到的频点（Hz），跨面板共用频率值
 function hoverAt(id, fr, px, py, w, h, cx, cy) {
   const c = D.curves;
   const { x, y } = fr;
@@ -789,44 +895,63 @@ function hoverAt(id, fr, px, py, w, h, cx, cy) {
     D.drt.f.forEach((v, i) => { const d = Math.hypot(x(v) - px, y(D.drt.med[i]) - py);
       if (d < bd) { bd = d; best = i; } });
   } else {
+    const norm = normAvail();
     c.f.forEach((v, i) => {
       const yy = id === "fit" ? y(-c.zim[i])
-        : y((D.curves.nre && D.curves.nre.length) ? c.nre[i] : c.rre[i]);
+        : y(norm ? c.nre[i] : c.rre[i]);
       const d = Math.hypot(x(v) - px, yy - py);
       if (d < bd) { bd = d; best = i; }
     });
   }
   if (best === null || bd > 90) { $("#tip").classList.remove("on"); return; }
-  hoverIdx = best;
+  const f = id === "drt" ? D.drt.f[best] : c.f[best];
+  hoverF = f;
   const tip = $("#tip");
   tip.classList.add("on");
   tip.style.left = Math.min(cx + 14, innerWidth - 250) + "px";
   tip.style.top = (cy + 16) + "px";
-  tip.textContent = id === "drt"
-    ? `f = ${fmt(D.drt.f[best], 4)} Hz\nγ = ${fmt(D.drt.med[best], 3)} Ω\n90%: ${fmt(D.drt.lo[best], 3)} – ${fmt(D.drt.hi[best], 3)}`
-    : `f = ${fmt(c.f[best], 4)} Hz\nZ_obs = ${fmt(c.zre[best], 4)} ${c.zim[best] >= 0 ? "+" : "−"} j${fmt(Math.abs(c.zim[best]), 4)}\nZ_fit = ${fmt(c.fre[best], 4)} ${c.fim[best] >= 0 ? "+" : "−"} j${fmt(Math.abs(c.fim[best]), 4)}\nresid = ${fmt(c.rre[best], 3)} / ${fmt(c.rim[best], 3)} Ω\nσ = ${fmt(c.sre[best], 3)} / ${fmt(c.sim[best], 3)} Ω`
-    + ((D.curves.nre && D.curves.nre.length) ? `\nnorm = ${fmt(c.nre[best], 2)} / ${fmt(c.nim[best], 2)} σ` : "");
-  renderReadout(best);
+  if (id === "drt") {
+    // 从 DRT 网格映射回实测频点，让读数与 Nyquist / 残差 对得上
+    const ci = nearIdx(c.f, f);
+    tip.textContent = `f = ${fmt(f, 4)} Hz\nγ = ${fmt(D.drt.med[best], 3)} Ω\n90%: ${fmt(D.drt.lo[best], 3)} – ${fmt(D.drt.hi[best], 3)}`
+      + `\n最近实测点 f = ${fmt(c.f[ci], 4)} Hz`;
+  } else {
+    tip.textContent = `f = ${fmt(c.f[best], 4)} Hz\nZ_obs = ${fmt(c.zre[best], 4)} ${c.zim[best] >= 0 ? "+" : "−"} j${fmt(Math.abs(c.zim[best]), 4)}\nZ_fit = ${fmt(c.fre[best], 4)} ${c.fim[best] >= 0 ? "+" : "−"} j${fmt(Math.abs(c.fim[best]), 4)}\nresid = ${fmt(c.rre[best], 3)} / ${fmt(c.rim[best], 3)} Ω\nσ = ${fmt(c.sre[best], 3)} / ${fmt(c.sim[best], 3)} Ω`
+      + (normAvail() ? `\nnorm = ${fmt(c.nre[best], 2)} / ${fmt(c.nim[best], 2)} σ` : "");
+  }
+  renderReadout(f);
 }
 
-function renderReadout(i = PIN) {
+function renderReadout(f = PIN) {
   LAYOUT.panels.forEach(p => {
     const card = document.querySelector(`.card[data-id="${p.id}"]`);
     if (!card) return;
     const out = card.querySelector(".readout");
     if (!out) return;
-    if (i === null || i === undefined) { out.textContent = "悬停查看该频点的观测/拟合/残差，点击固定"; return; }
+    if (f === null || f === undefined) { out.textContent = "悬停查看该频点的观测/拟合/残差，点击固定"; return; }
     const c = D.curves;
     if (p.id === "fit" || p.id === "resid") {
-      out.textContent = `f ${fmt(c.f[i], 4)} Hz · obs ${fmt(c.zre[i], 3)}${c.zim[i] >= 0 ? "+" : "−"}j${fmt(Math.abs(c.zim[i]), 3)} · fit ${fmt(c.fre[i], 3)}${c.fim[i] >= 0 ? "+" : "−"}j${fmt(Math.abs(c.fim[i]), 3)} · resid ${fmt(c.rre[i], 3)}/${fmt(c.rim[i], 3)} Ω` +
-        ((c.nre && c.nre.length) ? ` · ${fmt(c.nre[i], 2)}/${fmt(c.nim[i], 2)} σ` : "");
+      const i = nearIdx(c.f, f);
+      const dev = Math.abs(c.f[i] - f) > Math.abs(f) * 0.02
+        ? `（按最近实测点 ${fmt(c.f[i], 4)} Hz）` : "";
+      out.textContent = `f ${fmt(c.f[i], 4)} Hz${dev} · obs ${fmt(c.zre[i], 3)}${c.zim[i] >= 0 ? "+" : "−"}j${fmt(Math.abs(c.zim[i]), 3)} · fit ${fmt(c.fre[i], 3)}${c.fim[i] >= 0 ? "+" : "−"}j${fmt(Math.abs(c.fim[i]), 3)} · resid ${fmt(c.rre[i], 3)}/${fmt(c.rim[i], 3)} Ω`
+        + (normAvail() ? ` · ${fmt(c.nre[i], 2)}/${fmt(c.nim[i], 2)} σ` : "");
     } else if (p.id === "drt" && D.drt) {
-      out.textContent = `f ${fmt(D.drt.f[i], 4)} Hz · γ ${fmt(D.drt.med[i], 3)} Ω · 90% ${fmt(D.drt.lo[i], 3)}–${fmt(D.drt.hi[i], 3)}`;
+      const i = nearIdx(D.drt.f, f);
+      const dev = Math.abs(D.drt.f[i] - f) > Math.abs(f) * 0.02
+        ? `（按最近网格点 ${fmt(D.drt.f[i], 4)} Hz）` : "";
+      out.textContent = `f ${fmt(D.drt.f[i], 4)} Hz${dev} · γ ${fmt(D.drt.med[i], 3)} Ω · 90% ${fmt(D.drt.lo[i], 3)}–${fmt(D.drt.hi[i], 3)}`;
     } else { out.textContent = ""; }
   });
 }
 
 /* ---------------- 判定卡 ---------------- */
+// Lin-KK 有四种状态，不是二值。早先写成 status==="ok" ? pass : fail，
+// 把 warn（可拟合、端部需归因）与 unavailable（判不了）都染成红色失败——
+// 这正好把"最需要归因"的一类结论说成了"数据报废"。
+const KK_STATE = {ok: ["pass", "通过"], warn: ["warn", "警告"],
+                  fail: ["fail", "未通过"], unavailable: ["na", "不可评价"]};
+
 function drawNotes(box) {
   const chips = D.checks.map(c => {
     const icon = c.state === "pass" ? "✓" : c.state === "fail" ? "✕" : "–";
@@ -834,10 +959,12 @@ function drawNotes(box) {
       <span class="dot"></span><span>${c.name}</span>
       <span class="val">${icon} ${c.value === null ? "不可用" : fmt(c.value, 3)}</span></div>`;
   }).join("");
-  const kk = (D.kk && D.kk.status) ? `<div class="chk ${D.kk.status === "ok" ? "pass" : "fail"}"
+  const kkRaw = (D.kk && D.kk.status) ? String(D.kk.status) : null;
+  const ks = kkRaw ? (KK_STATE[kkRaw] || ["na", kkRaw]) : null;
+  const kk = ks ? `<div class="chk ${ks[0]}"
       style="flex:1 1 200px" title="${md(D.kk.reason || "")}">
       <span class="dot"></span><span>Lin-KK 门禁</span>
-      <span class="val">${D.kk.status}</span></div>` : "";
+      <span class="val">${ks[1]}${ks[1] === kkRaw ? "" : ` · ${kkRaw}`}</span></div>` : "";
   const warn = (D.warnings || []).map(w => `<li>${md(w)}</li>`).join("");
   const layer = (D.layer_notes || []).map(w => `<li class="info">${md(w)}</li>`).join("");
   const strong = ((D.corr && D.corr.strong) || []).map(x =>
@@ -932,7 +1059,11 @@ function drawModel(box) {
 
 /* ---------------- 抽屉 ---------------- */
 function openDrawer(id) {
-  OPEN = id;
+  OPEN = id; DEEP = id;
+  if (PAGES.length) {
+    const h = "page=" + PAGE + "&detail=" + id;
+    if (location.hash !== "#" + h) location.hash = h;
+  }
   const m = META[id] || {};
   $("#dt").textContent = (m.title || id) + " · 详情";
   const box = $("#db");
@@ -967,7 +1098,12 @@ function openDrawer(id) {
   }
   $("#drawer").classList.add("open"); $("#mask").classList.add("open");
 }
-function closeDrawer() { $("#drawer").classList.remove("open"); $("#mask").classList.remove("open"); }
+function closeDrawer() {
+  $("#drawer").classList.remove("open"); $("#mask").classList.remove("open");
+  OPEN = null; DEEP = null;
+  const h = "page=" + PAGE;
+  if (location.hash !== "#" + h) location.hash = h;
+}
 
 function residDetail() {
   const c = D.curves;
@@ -984,9 +1120,10 @@ function residDetail() {
       <td class="num">${fmt(rr, 4)}</td><td class="num">${fmt(ri, 4)}</td>
       <td class="num">${fmt(100 * Math.hypot(rr, ri) / zz, 2)}%</td></tr>`;
   });
-  const m = (D.curves.nre && D.curves.nre.length) ? D.curves.nre.concat(D.curves.nim) : [];
+  const m = normAvail() ? D.curves.nre.concat(D.curves.nim) : [];
   const n1 = m.filter(v => Math.abs(v) > 1).length, n2 = m.filter(v => Math.abs(v) > 2).length;
-  return `<div class="hint">标准化残差用本次拟合的逐点 σ（中位），不套 2% 观测噪声。</div>
+  return `<div class="hint">标准化残差用本次拟合的逐点 σ（中位），不套 2% 观测噪声。
+    ${normAvail() ? "" : `<b>本谱不可用</b>：${(D.norm_valid && !D.norm_valid.re) ? "Re " : ""}${(D.norm_valid && !D.norm_valid.im) ? "Im " : ""}的 σ 缺失或为 0，下图/读数退回绝对残差。`}</div>
     <table class="t"><thead><tr><th>频段</th><th>点数</th><th>RMS Re / Ω</th><th>RMS Im / Ω</th><th>相对 |Z|</th></tr></thead>
     <tbody>${rows}</tbody></table>
     <table class="t" style="margin-top:14px"><thead><tr><th>指标</th><th>值</th><th>说明</th></tr></thead><tbody>
@@ -1053,22 +1190,42 @@ function download(name, text, mime) {
 }
 function specForFigure() {
   const map = { fit: "nyquist", drt: "drt", resid: "residual" };
-  const panels = LAYOUT.panels.filter(p => p.visible && map[p.id]).map(p => map[p.id]);
+  const panels = LAYOUT.panels
+    .filter(p => p.visible && pageOf(p) === "ov" && map[p.id])
+    .map(p => map[p.id]);
   const n = panels.length;
+  // 配色写进 spec：导出的图必须与面板上看到的一模一样（导出即冻结），
+  // 否则"换个主题重画一版"会让图和正文里的描述脱节。
   return { spec_version: SPEC_VER, theme: LAYOUT.theme,
+    style: { data: TH.data, fit: TH.fit, band: TH.band, drt: TH.drt,
+             resid_re: TH.reC, resid_im: TH.imC },
     canvas: { width_mm: n >= 4 ? 180 : n === 3 ? 180 : 90, height_mm: n >= 4 ? 110 : 70 },
     layout: n >= 4 ? "quad" : n === 3 ? "triple" : n === 2 ? "pair" : "single",
     panels, labels: "en", dpi: 600, formats: ["pdf", "svg", "tiff"] };
 }
+
+// 可改的是**颜色**，不是编码：实验点永远空心圆、拟合永远实线、
+// Re/Im 永远不同标记。同一条谱的两张图不能因为配色被读成两组数据。
+const COLOR_SLOTS = [["data", "实验点"], ["fit", "拟合线"], ["drt", "DRT"],
+                     ["reC", "Re 残差"], ["imC", "Im 残差"]];
+
 function openExport() {
-  const spec = specForFigure();
   const cmd = `python bm_figure.py "<sample_dir>" --spec figure_spec.json --all`;
   $("#dt").textContent = "导出";
   $("#db").innerHTML = `
     <div class="hint">图形文件由 <code>bm_figure.py</code> 用**同一份数据**重画，
     保证矢量图与 CSV 数值一致；这里的 spec 就是它的输入。</div>
-    <h3 style="font-size:12px;color:var(--sub)">PlotSpec（当前面板选择）</h3>
-    <pre style="font-size:11.5px;background:#fafafa;padding:10px;border-radius:8px;overflow:auto">${JSON.stringify(spec, null, 2)}</pre>
+    <h3 style="font-size:12px;color:var(--sub)">配色（改的是颜色，不是编码）</h3>
+    <div style="display:flex;gap:14px;flex-wrap:wrap;margin:6px 0 4px">
+      ${COLOR_SLOTS.map(([k, lab]) => `<label style="font-size:11.5px;color:var(--sub);
+        display:flex;align-items:center;gap:5px">
+        <input type="color" data-c="${k}" value="${TH[k] || "#333333"}"
+          style="width:26px;height:22px;padding:0;border:1px solid var(--line);border-radius:5px;background:none">
+        ${lab}</label>`).join("")}
+      <button id="ex-colreset" style="font-size:11.5px">跟随主题</button>
+    </div>
+    <h3 style="font-size:12px;color:var(--sub);margin-top:12px">PlotSpec（当前面板选择）</h3>
+    <pre id="sp-preview" style="font-size:11.5px;background:#fafafa;padding:10px;border-radius:8px;overflow:auto">${JSON.stringify(specForFigure(), null, 2)}</pre>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0">
       <button id="ex-spec" class="primary">下载 figure_spec.json</button>
       <button id="ex-layout">下载布局 JSON</button>
@@ -1082,9 +1239,27 @@ function openExport() {
       ${LAYOUT.panels.filter(p => p.visible && META[p.id] && ["fit", "drt", "resid"].includes(p.id)).map(p => `<button data-svg="${p.id}">${META[p.id].title} SVG</button>`).join("")}
     </div>`;
   $("#drawer").classList.add("open"); $("#mask").classList.add("open");
-  $("#ex-spec").onclick = () => download("figure_spec.json", JSON.stringify(spec, null, 2), "application/json");
-  $("#ex-layout").onclick = () => download("dashboard_layout.json", JSON.stringify(LAYOUT, null, 2), "application/json");
-  $("#ex-data").onclick = () => download("payload.json", JSON.stringify(D, null, 2), "application/json");
+  const syncSpec = () => { $("#sp-preview").textContent =
+    JSON.stringify(specForFigure(), null, 2); };
+  $("#db").querySelectorAll("input[data-c]").forEach(inp => {
+    inp.oninput = () => {
+      LAYOUT.colors = Object.assign({}, LAYOUT.colors, { [inp.dataset.c]: inp.value });
+      saveLayout(); applyTheme(LAYOUT.theme); syncSpec();
+    };
+  });
+  $("#ex-colreset").onclick = () => {
+    LAYOUT.colors = {}; saveLayout(); applyTheme(LAYOUT.theme); syncSpec();
+    COLOR_SLOTS.forEach(([k]) => {
+      const inp = $("#db").querySelector(`input[data-c="${k}"]`);
+      if (inp) inp.value = TH[k] || "#333333";
+    });
+  };
+  $("#ex-spec").onclick = () => download("figure_spec.json",
+    JSON.stringify(specForFigure(), null, 2), "application/json");
+  $("#ex-layout").onclick = () => download("dashboard_layout.json",
+    JSON.stringify(LAYOUT, null, 2), "application/json");
+  $("#ex-data").onclick = () => download("payload.json",
+    JSON.stringify(D, null, 2), "application/json");
   $("#ex-cmd").onclick = () => { navigator.clipboard && navigator.clipboard.writeText(cmd); };
   $("#db").addEventListener("click", e => {
     const id = e.target.dataset.svg;
@@ -1115,10 +1290,49 @@ function loadLayout() {
 
 /* ---------------- 顶栏与 KPI ---------------- */
 function applyTheme(name) {
-  TH = THEMES[name] || THEMES.minimal;
+  TH = Object.assign({}, THEMES[name] || THEMES.minimal, LAYOUT.colors || {});
   const r = document.documentElement.style;
   r.setProperty("--plotfont", TH.plotFont);
   r.setProperty("--accent", TH.fit);
+  drawAll();
+}
+
+// 分页签：判定只在「判定与模型」页展开，但**状态点常驻在页签上**，
+// 任何时候都能看到结构判据是几条过、有没有警告。
+function renderTabs() {
+  const v = D.verdict;
+  const lv = v.level === "ok" ? "ok" : v.level === "bad" ? "bad" : "warn";
+  const nWarn = (D.warnings || []).length;
+  $("#tabs").innerHTML = PAGES.map(p => {
+    let badge = "";
+    if (p.id === "md") {
+      badge = `<span class="dot ${lv}" title="${esc(v.label)}"></span>`;
+    }
+    return `<button class="tab${p.id === PAGE ? " on" : ""}" data-page="${p.id}">
+      <span>${p.label}</span>${badge}${p.id === "md" && nWarn
+        ? `<span style="color:var(--sub);font-size:11px">${nWarn} 条警告</span>` : ""}
+    </button>`;
+  }).join("") + `<span class="hint" id="phint"></span>`;
+  const pg = PAGES.find(p => p.id === PAGE) || PAGES[0];
+  $("#phint").textContent = pg.hint || "";
+  $("#tabs").querySelectorAll("[data-page]").forEach(b => {
+    b.onclick = () => setPage(b.dataset.page);
+  });
+}
+
+function setPage(id) {
+  if (!PAGES.find(p => p.id === id)) return;
+  PAGE = id;
+  try { localStorage.setItem(LS_KEY + ".page", id); } catch (e) {}
+  // hash 里可能同时有 detail=…，不能直接覆盖——早先这里把深链冲掉了，
+  // 从 #detail=fit 打开面板时抽屉永远不弹。
+  const h = "page=" + id + (DEEP ? "&detail=" + DEEP : "");
+  if (location.hash !== "#" + h) location.hash = h;
+  renderTabs();
+  // KPI 条只在总览页：它是"一眼看整体"，放到表格页纯属占地方
+  $("#kpis").style.display = (id === "ov") ? "" : "none";
+  $("#opshint").style.display = (id === "ov") ? "" : "none";
+  buildCards();
   drawAll();
 }
 
@@ -1137,9 +1351,12 @@ function renderChrome() {
   const cell = (label, val, hint, cls) =>
     `<div class="kpi ${cls || ""}"><div class="k">${label}</div>
       <div class="v">${val}</div><div class="t">${hint || ""}</div></div>`;
+  // Rwp **不配色**。它不是预注册判据：acf / R̂ / div 有明确阈值，
+  // Rwp 只是"拟合误差有多大"。给它红黄绿等于发明一条验收线，
+  // 用户会以为 12% 就是"失败"、3% 就是"通过"。
   $("#kpis").innerHTML =
-    cell("Rwp", D.rwp === null ? "—" : fmt(D.rwp, 2) + "%", "相对加权残差（不除 √2）",
-      D.rwp === null ? "" : (D.rwp < 2 ? "pass" : D.rwp < 10 ? "warn" : "fail")) +
+    cell("Rwp", D.rwp === null ? "—" : fmt(D.rwp, 2) + "%",
+      "相对加权残差 · 无预注册阈值") +
     cell("残差 acf", fmt(D.acf, 2), `阈值 ≤ ${D.thresholds.acf}`,
       D.acf === null ? "" : (D.acf <= D.thresholds.acf ? "pass" : "fail")) +
     cell("max R̂", k && k.value !== null ? fmt(k.value, 3) : "—",
@@ -1158,7 +1375,8 @@ function renderChrome() {
      ${D.band_note}<br>
      ${D.sigma_note}<br>
      判定说明：采样分级（grade）与结构判据（acf / R̂ / div）分开陈述；
-     <b>indistinguishable 不等于存在唯一最优模型</b>；缺失后验时不给相关矩阵。`;
+     <b>indistinguishable 不等于存在唯一最优模型</b>；缺失后验时不给相关矩阵。<br>
+     Rwp 只报数值，不设通过/警告色——未预注册的阈值不进界面。`;
 }
 
 /* ---------------- 启动 ---------------- */
@@ -1172,7 +1390,8 @@ function boot() {
   $("#btn-reset").onclick = () => {
     LAYOUT = JSON.parse(JSON.stringify(DEFAULT_LAYOUT));
     ZOOM = {}; PIN = null; delete LAYOUT.version;
-    saveLayout(); buildCards(); applyTheme(LAYOUT.theme);
+    saveLayout(); renderTabs(); buildCards(); applyTheme(LAYOUT.theme);
+    renderChrome();
   };
   $("#btn-exp").onclick = openExport;
   $("#dclose").onclick = closeDrawer;
@@ -1180,15 +1399,32 @@ function boot() {
   document.addEventListener("keydown", e => { if (e.key === "Escape") closeDrawer(); });
   renderChrome();
   applyTheme(LAYOUT.theme);
+
+  // 深链要先读：setPage 会重写 hash，读晚了 detail=… 就没了
   const mDeep = /detail=([a-z]+)/.exec(location.hash || "");
-  if (mDeep && META[mDeep[1]]) openDrawer(mDeep[1]);
+  if (mDeep && META[mDeep[1]]) DEEP = mDeep[1];
+
+  // 初始页：URL hash 优先（可分享到具体页），其次上次停留页
+  let initPage = PAGES[0].id;
+  const mPage = /page=([a-z]+)/.exec(location.hash || "");
+  if (mPage && PAGES.find(p => p.id === mPage[1])) initPage = mPage[1];
+  else {
+    try {
+      const s = localStorage.getItem(LS_KEY + ".page");
+      if (s && PAGES.find(p => p.id === s)) initPage = s;
+    } catch (e) {}
+  }
+  setPage(initPage);
+  if (DEEP) openDrawer(DEEP);
   let t = null;
   addEventListener("resize", () => { clearTimeout(t); t = setTimeout(drawAll, 120); });
+  addEventListener("hashchange", () => {
+    const m = /page=([a-z]+)/.exec(location.hash || "");
+    if (m && m[1] !== PAGE && PAGES.find(p => p.id === m[1])) setPage(m[1]);
+  });
 }
 loadLayout();
 boot();
-buildCards();
-drawAll();
 </script>
 </body>
 </html>

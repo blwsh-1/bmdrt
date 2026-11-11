@@ -280,21 +280,32 @@ python bm_dash.py   out/<样品目录>              # 单文件交互面板 resu
 python bm_dash.py   out/<样品目录> --bundle     # 同上，并写 data/ metadata/ manifest.json
 python bm_figure.py out/<样品目录> --all        # 出版图 png/svg/pdf/tiff（mm 尺寸）
 python bm_figure.py out/<样品目录> --theme nature --panels nyquist,drt --layout pair
+python bm_figure.py out/<样品目录> --color fit=#c0392b --color drt=#1f4e79
 ```
 
 也可以直接指向导出包（`results/<stem>`），包内自带 `metadata/source_result.json`，
-换机器也能重画。
+换机器也能重画。顺序建议 `--bundle` → `--all`：两处都会调
+`bm_result.finalize_bundle()` 重扫清单，所以最终 `manifest.json` 一定覆盖出版图
+（`status="finalized"`；`complete` 表示 data/metadata/figures 都不空，`missing` 列出空目录）。
 
-三条口径（详见 `docs/BMDRT_RESULT_AND_FIGURE_DESIGN.md` §5）：
+面板是**标题栏 + 两页**（`#page=md` 可深链）：总览放指标条 + Nyquist + DRT + 残差，
+一屏放得下；判定与模型另起一页，但判定 chip 常驻标题栏，任何一页都能看到是否达标。
+`#detail=fit|drt|resid|model` 直接开详情抽屉（Bode / ACF 分段 / 峰参数 / 相关矩阵）。
+
+口径（详见 `docs/BMDRT_RESULT_AND_FIGURE_DESIGN.md` §5）：
 
 - 区间分**响应区间**（参数后验传播）与**后验预测区间**（含拟合噪声）两套，字段名不同，
   默认只画前者；Re/Im 各自取分位，是矩形包络，**不是联合可信域**；
-- 标准化残差除以**本次拟合的 σ**（后验中位），不套 2% 观测噪声；
+- 标准化残差除以**本次拟合的 σ**（后验中位），不套 2% 观测噪声；实部虚部分别判有效；
 - 判定分成「采样档」与「结构判据」两句，`采样达标（分级 2） · 结构判据 2/3`；
-  分级 1 一律显示为降级，`indistinguishable` 不包装成唯一最优。
+  分级 1 一律显示为降级，`indistinguishable` 不包装成唯一最优；
+- **Rwp 只报数值不上色**（没有预注册阈值）；Lin-KK 四态 `ok/warn/fail/unavailable`
+  分别显示为通过/警告/未通过/不可评价，不把 warn 染成红色。
 
-契约回归在 `test_contract.py` 的 **F1–F4**（曲线≡逐样本分位、残差≡恒等式、
-CSV≡图、sha256、判定口径、spec 可复现、面板载荷逐值相等）。
+契约回归在 `test_contract.py` 的 **F1–F7**（曲线≡逐样本分位、残差≡恒等式、CSV≡图、
+sha256、判定口径、spec 可复现 + 嵌套键校验、面板载荷逐值相等、包封口、σ 半失效）。
+面板交互另有 node 契约 `docs/round_2026-11-11/dash_smoke.js`（跨图频点映射、四态文案、
+Rwp 不上色、分页、导出抽屉）。
 
 ---
 

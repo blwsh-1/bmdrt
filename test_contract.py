@@ -503,7 +503,7 @@ def case_e3_ref_rwp_requires_success(tmp):
 # F 组：结果层与展示层（bm_result / bm_dash / bm_figure）
 # ---------------------------------------------------------------------------
 
-def _fake_sample(tmp, grade=2, n_draw=240, seed=0):
+def _fake_sample(tmp, grade=2, n_draw=240, seed=0, zero_sigma_im=False):
     """造一个**自包含**的样品目录：npz 后验 + 结果 JSON。
 
     不依赖 out/ 里的历史产物（那些不入库），也不跑 MCMC——
@@ -542,10 +542,11 @@ def _fake_sample(tmp, grade=2, n_draw=240, seed=0):
     Zobs = Z0 + rng.normal(0, 1, f.size) * sig0 \
         + 1j * rng.normal(0, 1, f.size) * sig0
     d = Path(tmp)
+    s_im = np.zeros((n, f.size)) if zero_sigma_im else np.full((n, f.size), sig0)
     (d / "real_synthetic.json").write_text(json.dumps({}), encoding="utf-8")
     np.savez(d / "real_synthetic_samples.npz",
              f=f, Zre=Zobs.real, Zim=Zobs.imag,
-             s_re=np.full((n, f.size), sig0), s_im=np.full((n, f.size), sig0),
+             s_re=np.full((n, f.size), sig0), s_im=s_im,
              **arr)
     med = {k: np.median(v, axis=0) for k, v in arr.items()}
     f0 = 1.0 / (2 * np.pi * med["tau"])
@@ -747,6 +748,99 @@ def case_f4_dashboard_payload_identity(tmp):
     return f"{len(html) / 1024:.0f} KB"
 
 
+def case_f5_bundle_is_finalized(tmp):
+    """封包：bundle 先落 partial；写完 figures 再 finalize，图必须进清单。
+
+    推荐流程就是「先 --bundle 再 --all」。如果 finalize 不给出版图补哈希，
+    「每个文件都有 SHA256」这句承诺就是空话。
+    """
+    import bm_result as RES
+
+    d = _fake_sample(tmp)
+    res = RES.AnalysisResult.load(d)
+    root = res.bundle(Path(tmp) / "bundle")
+    man = strict_load(root / "manifest.json")
+    assert man["status"] == "partial", "bundle 之后不该自称已完成"
+    assert man["pending"].get("figures"), "没说清还缺什么"
+    assert not any(f["path"].startswith("figures/") for f in man["files"])
+
+    # 模拟 bm_figure 写图（不真跑 matplotlib，只验封包逻辑）
+    (root / "figures").mkdir(exist_ok=True)
+    (root / "figures" / "figure_nyquist.png").write_bytes(b"\x89PNG\r\n\x1a\nfake")
+    (root / "figures" / "figure_spec.json").write_text("{}", encoding="utf-8")
+    mp = RES.finalize_bundle(root)
+    man = strict_load(mp)
+    assert man["status"] == "finalized" and man["complete"] is True
+    assert man["counts"]["figures"] == 2, man["counts"]
+    paths = {f["path"]: f for f in man["files"]}
+    assert "figures/figure_nyquist.png" in paths, "出版图没进 manifest"
+    import hashlib
+    for p, item in paths.items():
+        assert item["sha256"] == hashlib.sha256((root / p).read_bytes()).hexdigest(), \
+            f"{p} 的 sha256 对不上"
+    RES.finalize_bundle(root)                       # 幂等
+    assert len(strict_load(mp)["files"]) == len(paths)
+    return f"{len(paths)} 个文件，figures {man['counts']['figures']}"
+
+
+def case_f6_norm_sigma_halves(tmp):
+    """口径：实部/虚部标准化残差**分别**判有效，不能一坏全丢、也不能一好全发。"""
+    import bm_result as RES
+
+    d = _fake_sample(tmp, zero_sigma_im=True)
+    res = RES.AnalysisResult.load(d)
+    assert res.norm["re"] is not None, "Re 的 σ 有效却把 Re 也置空了"
+    assert res.norm["im"] is None, "Im 的 σ 全 0，标准化残差却是有效值"
+    assert np.allclose(res.norm["re"],
+                       res.resid["re"] / np.median(
+                           np.load(d / "real_synthetic_samples.npz")["s_re"], 0),
+                       rtol=1e-12)
+
+    pay = res.payload()
+    assert pay["norm_valid"] == {"re": True, "im": False}, pay["norm_valid"]
+    assert "nre" in pay["curves"] and "nim" not in pay["curves"], \
+        "载荷把无效的那半也发出去了"
+    assert "Im" in " ".join(pay["layer_notes"]), "没有说明哪一半不可用"
+
+    root = res.bundle(Path(tmp) / "bundle")
+    import csv
+    with open(root / "data" / "residuals.csv", encoding="utf-8") as fh:
+        rows = list(csv.DictReader(fh))
+    assert all(r["normalized_residual_im"] == "" for r in rows), \
+        "无效列的单元格不是空的（写成 0 会被当成残差为零）"
+    assert all(r["normalized_residual_re"] != "" for r in rows)
+    return f"Re 有效 / Im 置空（{len(rows)} 行）"
+
+
+def case_f7_spec_nested_keys(tmp):
+    """图形配置：嵌套块也逐键校验；配色可改，语义不改。"""
+    import bm_figure as FIG
+
+    bad_specs = [
+        {"font": {"famliy": "Arial"}},            # 拼错必须报错，不能静默忽略
+        {"canvas": {"width": 180}},               # 少了 _mm
+        {"style": {"fitt": "#ff0000"}},           # 拼错的配色键
+        {"style": {"fit": "red"}},                # 不是 #hex
+        {"style": {"lw_fit": 99}},                # 线宽越界
+        {"titles": {"nyquisty": "x"}},            # 面板名拼错
+    ]
+    for s in bad_specs:
+        try:
+            FIG.validate_spec(s)
+        except FIG.SpecError:
+            pass
+        else:
+            raise AssertionError(f"嵌套非法键没报错：{s}")
+
+    ok = FIG.validate_spec({"style": {"fit": "#FF0000", "lw_fit": 2.0}})
+    assert ok["style"]["fit"] == "#FF0000" and ok["style"]["lw_fit"] == 2.0
+    th = FIG._apply_style(FIG.THEMES["acs"], ok["style"])
+    assert th["fit"] == "#FF0000"
+    assert th["band"] == "#FF0000", "只改拟合色时区间必须跟着，否则读成两组数据"
+    assert th["data"] == FIG.THEMES["acs"]["data"], "标记/编码不该被 style 改到"
+    return "嵌套校验 6 例；配色只改颜色"
+
+
 CASES = [
     ("A1 合法用法", case_a1_legal_forms, False),
     ("A2 未知开关", case_a2_unknown_flags, False),
@@ -768,6 +862,9 @@ CASES = [
     ("F2 判定口径", case_f2_verdict_is_honest, False),
     ("F3 图形配置", case_f3_spec_roundtrip, False),
     ("F4 面板载荷", case_f4_dashboard_payload_identity, False),
+    ("F5 结果包封口", case_f5_bundle_is_finalized, False),
+    ("F6 标准化残差半失效", case_f6_norm_sigma_halves, False),
+    ("F7 spec 嵌套校验", case_f7_spec_nested_keys, False),
 ]
 
 

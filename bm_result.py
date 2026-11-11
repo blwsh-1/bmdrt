@@ -71,6 +71,72 @@ def _find_one(directory: Path, patterns) -> Path | None:
     return None
 
 
+BUNDLE_DIRS = ("data", "metadata", "figures")
+
+
+def _scan_files(root: Path) -> list:
+    """列出结果包里的全部文件 + sha256（manifest.json 自己不算）。"""
+    root = Path(root)
+    out = []
+    for pth in sorted(root.rglob("*")):
+        if pth.is_file() and pth.name != "manifest.json":
+            out.append(dict(path=str(pth.relative_to(root)).replace("\\", "/"),
+                            bytes=pth.stat().st_size, sha256=_sha256(pth)))
+    return out
+
+
+def finalize_bundle(root, *, note=None) -> Path:
+    """封包：所有出口写完之后，重写 manifest.json 覆盖**实际存在**的全部文件。
+
+    为什么必须单独一步
+    ------------------
+    `bundle()` 只能给当时已落盘的文件算哈希。推荐流程是先 bundle、再
+    `bm_figure.py --all` 出出版图——出版图就永远进不了清单，
+    "每个文件都有 SHA256" 变成一句空话。所以两条出口（bm_dash / bm_figure）
+    写完自己那部分后都调这里重扫一遍；status 从 partial 变成 finalized。
+
+    幂等：重复调用只是重新算一遍哈希。
+    """
+    root = Path(root)
+    mp = root / "manifest.json"
+    old = {}
+    if mp.exists():
+        try:
+            old = json.loads(mp.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            old = {}
+    files = _scan_files(root)
+    counts = {d: sum(1 for f in files if f["path"].startswith(d + "/"))
+              for d in BUNDLE_DIRS}
+    counts["html"] = sum(1 for f in files if f["path"].endswith(".html"))
+    # complete 的含义是「该有的目录都不空」，不是「清单写完了」。
+    # 只出了数据包、没出出版图时，complete 必须是 False，否则读者以为
+    # 包是齐的、找不到图还以为是下载出错。
+    missing = [d for d in BUNDLE_DIRS if counts[d] == 0]
+    man = dict(old)
+    man.update(
+        spec_version=old.get("spec_version", SPEC_VERSION),
+        generator="bm_result.finalize_bundle",
+        status="finalized",
+        complete=not missing,
+        missing=missing,
+        finalized_utc=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        sample=old.get("sample") or root.name,
+        source=old.get("source") or {},
+        reproduce=old.get("reproduce") or {
+            "figure": "python bm_figure.py <sample_dir> --all",
+            "dashboard": "python bm_dash.py <sample_dir>",
+        },
+        files=files,
+        pending={},
+        counts=counts,
+    )
+    if note:
+        man["note"] = note
+    mp.write_text(json.dumps(man, ensure_ascii=False, indent=2), encoding="utf-8")
+    return mp
+
+
 def _finite(v, default=None):
     try:
         x = float(v)
@@ -183,9 +249,17 @@ class AnalysisResult:
         resid = {"re": z_obs.real - z_fit.real, "im": z_obs.imag - z_fit.imag}
         with np.errstate(divide="ignore", invalid="ignore"):
             norm = {"re": resid["re"] / sigma["re"], "im": resid["im"] / sigma["im"]}
-        if not np.all(np.isfinite(norm["re"])):
-            notes.append("σ 缺失或为 0：标准化残差不可用（置空，不用 2% 顶替）")
-            norm = {"re": None, "im": None}
+        # 实部与虚部**分别**判有效：早先只看 norm["re"]，实部有效而虚部含
+        # inf/NaN 时会把整列虚部一起输出（CSV 里就是 inf 或空），
+        # 那不是"缺一点"，是非法数据。哪一半坏就只置空哪一半。
+        bad = [k for k in ("re", "im")
+               if not np.all(np.isfinite(np.asarray(norm[k], float)))]
+        for k in bad:
+            norm[k] = None
+        if bad:
+            notes.append("σ 缺失或为 0：标准化残差 %s 不可用（该列置空，"
+                         "不用 2%% 顶替）"
+                         % "/".join({"re": "Re", "im": "Im"}[k] for k in bad))
 
         rwp_pct = None
         if REF is not None:
@@ -393,6 +467,12 @@ class AnalysisResult:
         wcsv("input_data.csv", ["frequency_Hz", "Zre_obs", "Zim_obs"],
              [f, self.z_obs.real, self.z_obs.imag])
 
+        # 标准化残差按实/虚**分别**决定有无；缺的那一半写空单元格，
+        # 不写 0、不写 NaN——0 会被下游当成"残差为零"。
+        none_col = [None] * f.size
+        nre = self.norm["re"] if self.norm["re"] is not None else none_col
+        nim = self.norm["im"] if self.norm["im"] is not None else none_col
+
         if self.band is not None:
             wcsv("fitted_impedance.csv",
                  ["frequency_Hz", "Zre_observed", "Zim_observed",
@@ -410,7 +490,7 @@ class AnalysisResult:
                   self.pred["im_lo"], self.pred["im_hi"],
                   self.resid["re"], self.resid["im"],
                   self.sigma["re"], self.sigma["im"],
-                  self.norm["re"], self.norm["im"]])
+                  nre, nim])
         else:
             wcsv("fitted_impedance.csv",
                  ["frequency_Hz", "Zre_observed", "Zim_observed",
@@ -421,14 +501,11 @@ class AnalysisResult:
                   self.resid["re"], self.resid["im"],
                   self.sigma["re"], self.sigma["im"]])
 
-        sig_re = (self.norm["re"] is not None)
         wcsv("residuals.csv",
              ["frequency_Hz", "residual_re", "residual_im", "sigma_re", "sigma_im",
               "normalized_residual_re", "normalized_residual_im"],
              [f, self.resid["re"], self.resid["im"], self.sigma["re"],
-              self.sigma["im"],
-              self.norm["re"] if sig_re else [None] * f.size,
-              self.norm["im"] if sig_re else [None] * f.size])
+              self.sigma["im"], nre, nim])
 
         if self.drt is not None:
             fq = 1.0 / (2 * np.pi * np.exp(self.drt["ln_tau"]))
@@ -513,20 +590,19 @@ class AnalysisResult:
             "degeneracy": self.raw.get("degeneracy"),
             "diffusion_resolution": self.raw.get("diffusion_resolution"),
             "warnings": self.raw.get("warnings"),
+            "norm_valid": {k: (self.norm[k] is not None) for k in ("re", "im")},
             "layer_notes": self.notes,
             "band_note": ("Re/Im 分别取 5/95% 分位 = 复平面矩形包络，"
                           "不是联合可信域；区间为参数后验传播，非预测区间"),
         }, ensure_ascii=False, indent=2, default=float), encoding="utf-8")
 
-        files = []
-        for pth in sorted(root.rglob("*")):
-            if pth.is_file() and pth.name != "manifest.json":
-                files.append(dict(path=str(pth.relative_to(root)).replace("\\", "/"),
-                                  bytes=pth.stat().st_size,
-                                  sha256=_sha256(pth)))
+        files = _scan_files(root)
         manifest = dict(
             spec_version=SPEC_VERSION,
             generator="bm_result.AnalysisResult.bundle",
+            # status=partial 是**诚实**的状态：此刻 figures/ 还是空的，
+            # dashboard.html 也没写。谁最后写完，谁调 finalize_bundle()。
+            status="partial",
             created_utc=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             sample=stem,
             source=dict(
@@ -537,6 +613,11 @@ class AnalysisResult:
                      if self.npz_path else None),
             ),
             files=files,
+            pending=dict(
+                figures="python bm_figure.py <sample_dir> --all",
+                dashboard="python bm_dash.py <sample_dir>",
+                note="两个出口写入后会自动调用 finalize_bundle() 重写本文件",
+            ),
             reproduce=dict(
                 figure="python bm_figure.py <sample_dir> --format pdf,svg,tiff",
                 dashboard="python bm_dash.py <sample_dir>",
@@ -620,9 +701,11 @@ class AnalysisResult:
                 "pim_lo": self.pred["im_lo"].tolist(),
                 "pim_hi": self.pred["im_hi"].tolist(),
             })
-        if self.norm["re"] is not None:
-            d["curves"].update({"nre": self.norm["re"].tolist(),
-                                "nim": self.norm["im"].tolist()})
+        # 实部/虚部分别有无效值：分别输出，缺的那半不给键（前端画原始残差）
+        d["norm_valid"] = {k: (self.norm[k] is not None) for k in ("re", "im")}
+        for k, key in (("re", "nre"), ("im", "nim")):
+            if self.norm[k] is not None:
+                d["curves"][key] = self.norm[k].tolist()
         if self.drt is not None:
             d["drt"] = dict(
                 f=(1.0 / (2 * np.pi * np.exp(self.drt["ln_tau"]))).tolist(),
