@@ -66,6 +66,7 @@ evidence/nested_topology/*
 !evidence/nested_topology/m4_attrib.py
 !evidence/nested_topology/m4_drift.py
 !evidence/nested_topology/m4_external_cmp.py
+!evidence/nested_topology/m4_bode_compare.py
 !evidence/nested_topology/m4_conv_diag.py
 !evidence/nested_topology/m4_shape_roc.py
 !evidence/nested_topology/m3_regress_scalar.py
