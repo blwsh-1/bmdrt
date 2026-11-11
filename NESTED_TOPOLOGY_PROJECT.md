@@ -2054,6 +2054,13 @@ P4 失败同时说明：§9.4.15.3 那条谱的发散不是 `target_accept=0.90`
 
 ### 9.4.21 生产接入的准入条件：以「过验收线」为唯一门槛（不批，2026-11-10）
 
+> **2026-11-11 状态补注（原文保留）**：用户当日说「先接上吧，目前是代码上限，
+> 我回头再想想有没有好算法」，随后改为「可以额外搞一个接口吗，我要接上的自己跑试试」
+> → 批准的**不是**生产接入，而是新增一个**独立研究性接口** `nested_fit.py`
+> （§9.4.31）。**`bmdrt.py` 仍不接 nested、默认族仍是 voigt、A1–A4 一条未满足**：
+> §13 `0/3`、§14 `4/14`、§17 四电路 M-b `0/10` 全部原样保留。
+> 本节「不批」的决定不变；不要把「有接口可跑」读成「已过准入」。
+
 **决定**：`--topology nested` **暂不接 `bmdrt.py`**。接入不以「代码已就绪」为条件，
 以 §9.3 验收线的**实测通过**为条件。理由：§9.4.19/§9.4.20 已证拓扑表达能力到顶
 （6.69% vs LS 上限 6.68%），但同口径下后验 R̂ 1.29–1.96。现在接进去，交付的会是
@@ -2914,6 +2921,97 @@ L=201.71` → C1 `R2′=190.42, R3′=156.00, L′=667.56`），随后才解析�
    一条未满足。验收线不放宽（用户 11-10 明确 `8Li_5` 差 0.005 也不放宽）。
 3. 若将来拿到新谱：重新预注册留出集与判据，**不能**拿本节 LS 结果
    反推「应换成 C3」——本节全部标 `exploratory`，M-c 未评。
+
+### 9.4.31 独立研究性接口 `nested_fit.py`（2026-11-11，`exploratory`）
+
+#### 9.4.31.1 缘起：批的是「接口」，不是「生产接入」
+
+用户 11-11 说「先接上吧，目前是代码上限，我回头再想想有没有好算法」，
+紧接着改为「**可以额外搞一个接口吗，我要接上的自己跑试试**」。按后一句执行：
+**不改 `bmdrt.py`，新增一个独立入口**，让用户拿自己的谱直接跑 nested 拟合。
+这样既能试，又不会把未过验收线的拓扑塞进默认流程（§9.4.21 的 A1–A4
+一条未满足；§13 `0/3`、§14 `4/14`、§17 `0/10` 全部原样保留）。
+
+**五条硬边界**：
+
+1. 现有生产 `.py`（`bmdrt.py` / `bm_core.py` / `bm_top.py` / `bm_select.py`）
+   **逐位未改**；只新增 `nested_fit.py` + `nested_fit.bat`。
+   `bmdrt.bat` 的默认族、CLI、输出格式不变。
+2. 不写门禁、不做跨族判决、不产生 `grade` / `ad_status` / 证据卡、不进 G8b。
+3. 所有输出 `status="exploratory"`，JSON/控制台都带 §13/§14/§17 的未过线声明；
+   参数不得当物理量或真值；`acf` 提示只是把 §14 口径摆出来，**不是验收判定**。
+4. `--with-voigt` 只是**同口径参考曲线**，不是跨族证据（**R17**）；
+   逐点 σ 下 `elpd_loo` 不是标准留一预测（见 `bm_top.fit_top`），不得用于模型比较。
+5. 接口结果**不得**回写 §13/§14 的验收结论，也不得据此删点、加元件、改族定义。
+
+#### 9.4.31.2 用法
+
+```bash
+# Windows 一键（用项目 venv D:\autoeis_env\Scripts\python.exe）
+nested_fit.bat data.csv
+nested_fit.bat data.csv --budget quick --with-voigt
+
+# 直接调
+python nested_fit.py                       # 不给文件 → 扫 inbox/
+python nested_fit.py a.csv b.csv --out out/myrun
+python nested_fit.py data.csv --sigma free --branch series --layers 1
+python nested_fit.py data.csv --target-accept 0.9 --no-plot
+```
+
+上面的 `python` 指项目 venv `D:\autoeis_env\Scripts\python.exe`；系统 Python
+没装 numpyro/jax 会直接 `ImportError`，双击 `nested_fit.bat` 最省事。
+
+Python API（`run()` 返回结果 dict，同时写盘）：
+
+```python
+import nested_fit
+r = nested_fit.run("inbox/my_spectrum.csv", budget="standard", with_voigt=True)
+print(r["metrics"]["rms_rel"], r["params"]["R_ad"]["ci90"])
+```
+
+**输入**：`bm_real.load_spectrum` 的全部格式 —— CSV / TSV / 空白分隔，
+表头自动认 `f, Zre, Zim` 或 `f, |Z|, phase`（度/弧度），无表头按 3 列读；
+≥8 点。可给多个文件或目录，不给则扫 `inbox/`。
+
+**输出**（默认 `out/nested_fit/`，每条谱一组）：
+
+| 文件 | 内容 |
+|---|---|
+| `<stem>.nested.json` | 参数中位 + 90% 区间 + 逐参数 R̂/ESS、全部指标、诊断、口径配置、`notes` 警告 |
+| `<stem>.nested_curve.csv` | `f, Zre/Zim(obs), Zre/Zim(fit), absZ, rel_err`（`--with-voigt` 时加两列 voigt），方便接外部工具 |
+| `<stem>.nested.png` | Nyquist / Bode `|Z|` / 相对残差 三联图，标题明写「研究性，未过验收线」 |
+
+#### 9.4.31.3 口径（不另立标准）
+
+| 项 | 默认 | 来源 |
+|---|---|---|
+| `budget=standard` | 2000/1000/2 链 / `target_accept=0.98` / tree depth 10 | `m4_holdout2.py::BUDGET`，即 §13.2/§14.3 预注册档 |
+| `budget=quick/light` | 800/400/2 / 0.9 与 1200/600/2 / 0.9 | `bm_select.BUDGETS`（A2 档）。**注意与 `bm_select.BUDGETS["standard"]` 同名不同值**：那边是 0.9，这里 `standard` 用 §14.3 的 0.98，脚本里显式分开 |
+| `sigma=perpoint` | `σ_j = 2%·|Z_j|`，`sigma_from_data=True` | §13.1/§14.3 |
+| `--sigma free` / `scalar` | σ 后验采样 / 固定绝对 σ | 项目默认；**R16** 绝对 σ 会让高频「合法地不拟合」 |
+| `branch=parallel` | 文献 Table 1 的 C4（`R3∥L`） | §9.4.27；`series` 是另一种接法，两者不等价 |
+
+`--target-accept` 可覆盖预算档；voigt 对照共用同一 `kw` 与同一 σ。
+指标与 §14 `_metrics` 同定义（`rms_rel`、带符号残差的 `acf`、三频段），
+并报最高频端点相对误差。R̂>1.05 / 有发散 / `acf>0.50` 时只是**加提示**，
+不改任何判定。
+
+#### 9.4.31.4 试跑与零回归
+
+| 试跑 | 结果 |
+|---|---|
+| `AZ31-4Li_100`，`quick` + `--with-voigt` | 33.6 s；nested `rms 6.71%`、`acf 0.648`、`R̂ 1.009`、`div 0`、`L_ad 5011 H`；voigt K=1 参考 `32.06% / 0.937`；JSON/CSV/PNG 三件套齐全，中文无豆腐块 |
+| `AZ31-4Li_100`，默认 `standard` | 51.6 s；`rms 6.70%`、`acf 0.649`、`R̂ 1.003`、`div 0` → 与 §13 的 `6.69%` / §4.3 LS 上界 `6.68%` 同量级 |
+| `--sigma free --branch series --layers 1 --no-plot` | 10.9 s；`rms 80.93%`、`div 2`。**不是接口故障**：series 支路 + 单层本就不适配这条谱，控制台如实给出发散与 acf 提示；证明 `L_ad` 派生量与单层参数表路径都通 |
+| `--sigma scalar` | 最高频端点误差 28.7%（逐点口径是 10.6%）→ 实测复现 **R16**：绝对 σ 把高频判成噪声内 |
+| `python bmdrt.py check` | **18/18 通过** |
+| `python test_audit_findings.py` | **4/4 通过** |
+
+产物：`out/nested_fit_smoke/`、`out/nested_fit_smoke_std/`（均属 `out/`，不入库）。
+
+> 接口能跑 ≠ 结论可信：`AZ31-4Li_100` 的 `acf=0.649` 仍 >0.50，
+> 高频端点仍有 10.6% 偏差，与 §13/§14 卡 M-b 完全一致。
+> 算法的下一步由用户自行决定；本节只提供可复现的试跑入口。
 
 ## 10. 风险与缓解
 
