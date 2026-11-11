@@ -10,7 +10,9 @@
     C  门禁三态     —— fail / unavailable(strict) / unavailable(fail-open) 三种输入，
                        gate 模式行为与 `kk_performed` 字段保持一致
     D  JSON 合法性  —— `_json_safe` + `allow_nan=False`；新产物能被严格解析器吃下
-    E  参考 Rwp     —— 与生产解析式对拍、`Rwp = √2·rms_rel`、拓扑不一致必须 skipped、
+    E  参考 Rwp     —— 与生产解析式对拍、`Rwp = √2·rms_rel`、拓扑不一致必须 skipped
+    F  结果/展示   —— 曲线≡逐样本分位、残差≡恒等式、CSV≡图、sha256、判定口径、
+                      图形配置可复现、面板载荷与数据层逐值相等、
                        `least_squares.success=False` 的解不许当参考值
 
 用法：
@@ -497,6 +499,254 @@ def case_e3_ref_rwp_requires_success(tmp):
     return "全未收敛→不报数；混合→只采纳收敛解并标记代价更低的未收敛起点"
 
 
+# ---------------------------------------------------------------------------
+# F 组：结果层与展示层（bm_result / bm_dash / bm_figure）
+# ---------------------------------------------------------------------------
+
+def _fake_sample(tmp, grade=2, n_draw=240, seed=0):
+    """造一个**自包含**的样品目录：npz 后验 + 结果 JSON。
+
+    不依赖 out/ 里的历史产物（那些不入库），也不跑 MCMC——
+    这里验的是「数据层 → 图/CSV」的一致性，不是拟合正确性。
+    """
+    import bm_core as B
+
+    rng = np.random.default_rng(seed)
+    f = np.logspace(-1, 5, 40)
+    tau0 = np.array([0.08, 8e-4])
+    p0 = dict(R_inf=1.0, W=1.0, pi=np.array([4.0, 1.5]),
+              tau=tau0, phi=np.array([0.9, 0.75]), zeta=np.ones(2),
+              L=1.2e-7)
+    Z0 = B.model_z(f, p0, include_L=True)
+    sig0 = 0.01 * np.abs(Z0)
+
+    draws = dict(R_inf=[], W=[], pi=[], tau=[], phi=[], zeta=[], L=[])
+    for _ in range(n_draw):
+        draws["R_inf"].append(1.0 * (1 + 0.002 * rng.normal()))
+        draws["W"].append(1.0 * (1 + 0.002 * rng.normal()))
+        draws["pi"].append(p0["pi"] * (1 + 0.01 * rng.normal(size=2)))
+        draws["tau"].append(tau0 * np.exp(0.02 * rng.normal(size=2)))
+        draws["phi"].append(p0["phi"] * (1 + 0.005 * rng.normal(size=2)))
+        draws["zeta"].append(np.ones(2))
+        draws["L"].append(1.2e-7 * (1 + 0.002 * rng.normal()))
+
+    arr = {}
+    for k, v in draws.items():
+        arr[k] = np.asarray(v, float)
+    n = arr["R_inf"].shape[0]
+    zs = np.empty((n, f.size), complex)
+    for i in range(n):
+        zs[i] = B.model_z(f, B.sample_params({**arr, "ln_tau": np.log(arr["tau"])},
+                                            i, True), True)
+
+    Zobs = Z0 + rng.normal(0, 1, f.size) * sig0 \
+        + 1j * rng.normal(0, 1, f.size) * sig0
+    d = Path(tmp)
+    (d / "real_synthetic.json").write_text(json.dumps({}), encoding="utf-8")
+    np.savez(d / "real_synthetic_samples.npz",
+             f=f, Zre=Zobs.real, Zim=Zobs.imag,
+             s_re=np.full((n, f.size), sig0), s_im=np.full((n, f.size), sig0),
+             **arr)
+    med = {k: np.median(v, axis=0) for k, v in arr.items()}
+    f0 = 1.0 / (2 * np.pi * med["tau"])
+    rec = dict(
+        file="synthetic", n=int(f.size), f_min=float(f.min()),
+        f_max=float(f.max()), K=int(tau0.size), include_L=True, zeta=1.0,
+        fit_performed=True, sampling=dict(num_chains=2, num_warmup=1000,
+                                          num_samples=1000),
+        seed=seed, sample_grade=int(grade),
+        grade_fail=[] if grade == 2 else ["tail ESS 244 < 400"],
+        divergences=0, tree_cap=0.0,
+        elpd_loo=123.4, elpd_se=3.1, elpd_diff=2.0, dse=1.5,
+        comparison_performed=True,
+        rms_re=float(np.sqrt(np.mean((Zobs.real - zs.real.mean(0)) ** 2))),
+        rms_im=float(np.sqrt(np.mean((Zobs.imag - zs.imag.mean(0)) ** 2))),
+        sigma_re=float(np.median(sig0)), sigma_im=float(np.median(sig0)),
+        acf=0.31, trend_re=0.1, trend_im=0.1, cover_re=0.9, cover_im=0.92,
+        R_inf=float(med["R_inf"]), W=float(med["W"]),
+        L_uH=float(med["L"] * 1e6),
+        components=[dict(f0=float(f0[i]), f0_lo=float(f0[i] * 0.95),
+                         f0_hi=float(f0[i] * 1.05), w=float(med["pi"][i]),
+                         w_lo=float(med["pi"][i] * 0.96),
+                         w_hi=float(med["pi"][i] * 1.04),
+                         phi=float(med["phi"][i]), p_outside=0.0,
+                         p_tau_outside=0.0, p_peak_outside=0.0,
+                         p_outside_caliber="peak") for i in range(tau0.size)],
+        resid_bins=[], diag={"R_inf": dict(rhat=1.002, bulk=900, tail=800)},
+        k_selection=["K=3 **剔除**：R̂=1.42；div=3"],
+        warnings=["**测试用**合成谱，不是实验数据"],
+        kk=dict(status="ok", reason="合成谱", mu=0.01, M=12),
+        k_selection_status="converged" if grade == 2 else "degraded",
+        selection_tier=2 if grade == 2 else 1,
+        component_review=dict(parameter_identifiability=dict(
+            strong_pairs=[], n_strong=0, max_at_bound=0.0, level="ok")),
+        param_corr=dict(
+            names=["R_inf", "tau_1", "tau_2", "phi_1", "phi_2"],
+            corr=[[1.0, 0.1, 0.0, 0.2, 0.0],
+                  [0.1, 1.0, -0.95, 0.3, 0.0],
+                  [0.0, -0.95, 1.0, 0.0, 0.2],
+                  [0.2, 0.3, 0.0, 1.0, 0.1],
+                  [0.0, 0.0, 0.2, 0.1, 1.0]],
+            summary=[dict(name="R_inf", q05=0.99, q50=1.0, q95=1.01,
+                          sd=0.004, log=True),
+                     dict(name="tau_1", q05=0.078, q50=0.08, q95=0.082,
+                          sd=0.001, log=True),
+                     dict(name="tau_2", q05=7.8e-4, q50=8e-4, q95=8.2e-4,
+                          sd=1e-5, log=True),
+                     dict(name="phi_1", q05=0.88, q50=0.9, q95=0.92,
+                          sd=0.01, log=False),
+                     dict(name="phi_2", q05=0.73, q50=0.75, q95=0.77,
+                          sd=0.01, log=False)],
+            fixed=[dict(name="zeta_1", value=1.0)],
+            strong=[dict(a="tau_1", b="tau_2", rho=-0.95, why="测试")],
+            medium=[], degenerate=[]),
+        diffusion_resolution=dict(level="no_diffusion", resolvable=False),
+        zmax_obs=float(np.abs(Z0).max()),
+    )
+    (d / "real_synthetic.json").write_text(
+        json.dumps(rec, ensure_ascii=False), encoding="utf-8")
+    return d
+
+
+def case_f1_data_layer_consistency(tmp):
+    """数据层：曲线、残差、CSV、manifest 必须是同一份数（不许各算一遍）。"""
+    import bm_core as B
+    import bm_result as RES
+
+    d = _fake_sample(tmp)
+    res = RES.AnalysisResult.load(d)
+    pay = res.payload()
+    ref = np.load(d / "real_synthetic_samples.npz")
+    s = {k: ref[k] for k in ref.files}
+    f = s["f"]
+
+    # ① 拟合曲线 = 逐样本算 Z 后的逐点中位（不是"中位参数算一条曲线"）
+    idx = np.linspace(0, s["R_inf"].size - 1,
+                      min(RES.MAX_DRAWS, s["R_inf"].size)).astype(int)
+    zz = np.array([B.model_z(f, B.sample_params(s, int(i), True), True)
+                   for i in idx])
+    ref_fit = np.median(zz.real, 0) + 1j * np.median(zz.imag, 0)
+    assert np.allclose(res.z_fit, ref_fit, rtol=1e-12, atol=0), \
+        "拟合曲线与逐样本分位不一致——曲线被另一套参数算了"
+
+    # ② 残差与标准化残差是恒等式，不是另一遍拟合
+    assert np.allclose(res.resid["re"], res.z_obs.real - res.z_fit.real,
+                       rtol=0, atol=1e-15)
+    sig = np.median(np.asarray(s["s_re"]), 0)
+    assert np.allclose(res.norm["re"], res.resid["re"] / sig, rtol=1e-12), \
+        "标准化残差没有用拟合自己的 σ"
+
+    # ③ 区间包含关系：预测区间（含噪声）必须包住响应区间
+    band_w = res.band["re_hi"] - res.band["re_lo"]
+    pred_w = res.pred["re_hi"] - res.pred["re_lo"]
+    assert np.all(pred_w >= band_w * 0.999), "预测区间比响应区间还窄"
+
+    # ④ 导出包：CSV 里的数必须能对回内存对象；manifest 的 sha256 必须对
+    import csv
+    root = res.bundle(Path(tmp) / "bundle")
+    with open(root / "data" / "fitted_impedance.csv", encoding="utf-8") as fh:
+        rows = list(csv.DictReader(fh))
+    assert len(rows) == f.size
+    got = np.array([float(r["Zre_fitted_median"]) for r in rows])
+    assert np.allclose(got, res.z_fit.real, rtol=1e-9, atol=1e-12), \
+        "CSV 的拟合值与图上的曲线不是同一份数"
+    got_r = np.array([float(r["normalized_residual_im"]) for r in rows])
+    assert np.allclose(got_r, res.norm["im"], rtol=1e-9, atol=1e-9)
+
+    man = strict_load(root / "manifest.json")
+    import hashlib
+    for item in man["files"]:
+        h = hashlib.sha256((root / item["path"]).read_bytes()).hexdigest()
+        assert h == item["sha256"], f"{item['path']} 的 sha256 对不上"
+    assert man["source"]["npz"]["sha256"] == hashlib.sha256(
+        (d / "real_synthetic_samples.npz").read_bytes()).hexdigest()
+    return f"n={f.size} 曲线/残差/CSV/sha256 一致"
+
+
+def case_f2_verdict_is_honest(tmp):
+    """口径：分级 1 必须显示为降级；区间类型必须分开标注。"""
+    import bm_result as RES
+
+    d = _fake_sample(tmp, grade=1)
+    res = RES.AnalysisResult.load(d)
+    v = res.verdict
+    assert v["grade"] == 1
+    assert "降级" in v["label"], f"分级 1 却写成 {v['label']!r}"
+    assert v["level"] != "ok", "分级 1 不许给 ok 的总体等级"
+    assert "结构判据" in v["label"], "总判定必须与结构判据分开陈述"
+
+    pay = res.payload()
+    assert "非联合" in pay["band_note"] or "边际" in pay["band_note"], \
+        "区间口径说明缺失——会被读成联合可信域"
+    assert "2%" in pay["sigma_note"], "标准化残差口径说明缺失"
+    # 只有 1 个 K 时不许出现"比较过"的假象
+    assert pay["comparison"] is True
+    return v["label"]
+
+
+def case_f3_spec_roundtrip(tmp):
+    """图形配置：未知键必须报错；落盘再读回必须一致；尺寸按 mm 生效。"""
+    import bm_figure as FIG
+    import bm_result as RES
+
+    d = _fake_sample(tmp)
+    pay = RES.AnalysisResult.load(d).payload()
+
+    spec = FIG.validate_spec({"theme": "acs", "layout": "pair",
+                              "panels": ["nyquist", "drt"]})
+    assert spec["canvas"]["width_mm"] == FIG.DEFAULT_SPEC["canvas"]["width_mm"]
+
+    for bad in ({"themes": "acs"}, {"theme": "nope"}, {"layout": "2x3"},
+                {"panels": ["nyquist", "bode", "drt"], "layout": "pair"},
+                {"labels": "fr"}, {"canvas": {"width_mm": 5}}):
+        try:
+            FIG.validate_spec(bad)
+        except FIG.SpecError:
+            pass
+        else:
+            raise AssertionError(f"非法 spec 没报错：{bad}")
+
+    # 落盘 → 读回 → 再校验，必须逐键相等（可复现的版式）
+    p = Path(tmp) / "spec.json"
+    p.write_text(json.dumps(spec, ensure_ascii=False), encoding="utf-8")
+    back = json.loads(p.read_text(encoding="utf-8"))
+    assert FIG.validate_spec(back) == spec
+
+    fig, spec2 = FIG.draw(pay, spec)
+    w, h = fig.get_size_inches()
+    assert abs(w - spec2["canvas"]["width_mm"] / 25.4) < 1e-9
+    assert abs(h - spec2["canvas"]["height_mm"] / 25.4) < 1e-9, \
+        "画布尺寸没有按 mm 精确生效（bbox_inches 会偷偷改尺寸）"
+    import matplotlib.pyplot as plt
+    plt.close(fig)
+    return f"{spec2['theme']}/{spec2['layout']} {spec2['canvas']}"
+
+
+def case_f4_dashboard_payload_identity(tmp):
+    """面板：内嵌 JSON 必须与数据层逐值相等，且不含 NaN/Infinity。"""
+    import bm_dash
+    import bm_result as RES
+
+    d = _fake_sample(tmp)
+    pay = RES.AnalysisResult.load(d).payload()
+    html = bm_dash.build(pay, "synthetic", bm_dash.DEFAULT_LAYOUT, "minimal")
+    assert "__DATA__" not in html and "__TITLE__" not in html, "占位符没替换"
+
+    import re
+    m = re.search(r"^const D = (\{.*\});$", html, re.M)
+    assert m, "找不到内嵌载荷"
+    back = json.loads(m.group(1))
+    assert back["curves"]["f"] == pay["curves"]["f"]
+    assert back["curves"]["fre"] == pay["curves"]["fre"]
+    assert back["verdict"] == pay["verdict"]
+    assert "NaN" not in m.group(1) and "Infinity" not in m.group(1), \
+        "载荷里有非法 JSON 常量"
+    # 三种面板都要能画：缺 DRT/缺后验时必须给文字而不是崩
+    for pid in ("fit", "drt", "resid"):
+        assert pid in html
+    return f"{len(html) / 1024:.0f} KB"
+
+
 CASES = [
     ("A1 合法用法", case_a1_legal_forms, False),
     ("A2 未知开关", case_a2_unknown_flags, False),
@@ -514,6 +764,10 @@ CASES = [
     ("E1 参考Rwp恒等", case_e1_ref_rwp_identity, False),
     ("E2 参考Rwp跳过", case_e2_ref_rwp_skip_contract, False),
     ("E3 参考Rwp收敛", case_e3_ref_rwp_requires_success, False),
+    ("F1 数据层一致", case_f1_data_layer_consistency, False),
+    ("F2 判定口径", case_f2_verdict_is_honest, False),
+    ("F3 图形配置", case_f3_spec_roundtrip, False),
+    ("F4 面板载荷", case_f4_dashboard_payload_identity, False),
 ]
 
 
