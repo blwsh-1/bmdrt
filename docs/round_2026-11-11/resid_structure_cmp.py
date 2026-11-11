@@ -17,7 +17,8 @@
   LIT_C1     文献 Shahri 2024 Table 1 Model 1：`R(Q(R(QR(LR))))`（最内层 R+L 串联）
   LIT_C2     文献 Table 1 Model 2：三层嵌套，最内层 `R4∥L`
   LIT_C3     文献 Table 1 Model 3：`(R1∥QPE1)` 串联 + 两层嵌套
-  LINKK      Lin-KK 无模型拟合，给出「因果 LTI 模型」的残差地板
+  LINKK      Lin-KK 无模型拟合（肘部阶 M=12）。**不是「残差地板」**：有限阶基函数的
+             残差随阶数下降（M=12 的 8.49% → M=45 的 6.84%），见 `linkk_order_probe.py`
 
 C1 与 C4 是**同一个阻抗函数**（R-L 星三角，见 `NESTED_TOPOLOGY_PROJECT.md` §9.4.30.2），
 而 C4 就是我们的 `parallel/L=2`；所以 `LIT_C1` 与 `NESTED_LS` 的预测谱必须重合
@@ -245,13 +246,16 @@ def build_models(spec, with_lit=True, lit_iters=800):
             models[nm] = dict(Z=Zl, band=None, note=f"{lit_note[nm]}；LS {meta['n_params']} 参数",
                               params=meta["params"], n_params=meta["n_params"])
 
-    # 无模型对照：Lin-KK（一串 RC 的分布）。它按构造满足 Kramers-Kronig，
-    # 所以它的残差就是**这份数据自身违反 KK 的那一部分**——任何因果 LTI 模型
-    # （含所有等效电路）都不可能比它更好，因此它给出「残差地板」。
+    # 无模型对照：Lin-KK（一串 RC 的分布），按构造满足 Kramers-Kronig。
+    # **但它不是地板**（订正 2026-11-11）：`lin_kk` 用的是肘部选阶
+    # `argmin r_all·(1+0.02M)`，不是最小残差；加阶残差还会降（M=45 → 6.84%，
+    # 代价是 μ→0、元件为负）。所以这里只当「同一族基函数在肘部阶的参考拟合」，
+    # 不能写成「任何因果 LTI 模型都不可能更好」——见 linkk_order_probe.py。
     kk = KK.lin_kk(f, Z, c=0.85, max_M=50)
     models["LINKK"] = dict(Z=np.asarray(kk["Z_fit"], complex), band=None,
-                           note=f"Lin-KK 无模型拟合（M={kk.get('M')}、μ={kk.get('mu'):.3f}），"
-                                "按构造因果，给出因果 LTI 模型的残差地板")
+                           note=f"Lin-KK 无模型拟合（M={kk.get('M')} 肘部阶、"
+                                f"μ={kk.get('mu'):.3f}），按构造因果；"
+                                "**不是下界**（加阶还能更低，见 linkk_order_probe.py）")
     return f, Z, models
 
 
@@ -392,7 +396,7 @@ def plot(f, models, Z, path):
     for a in (ax[0, 0], ax[0, 1], ax[1, 0]):
         a.set_xlabel("f (Hz)")
     fig.suptitle(f"AZ31-4Li_100: residual structure across {len(models)} fits "
-                 "(incl. literature Table 1 C1–C3) + Lin-KK floor", fontsize=12)
+                 "(incl. literature Table 1 C1–C3) + Lin-KK M=12", fontsize=12)
 
     fig.tight_layout()
     fig.savefig(path, dpi=140)
