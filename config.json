@@ -23,7 +23,9 @@
     "adsorption": null,
     "auto_adsorption": false,
     "sigma_floor": 0.0,
-  "seed": null
+    "seed": null,
+    "ref_rwp": false,
+    "_ref_rwp说明": "参考性 Rwp（bm_ref_rwp.py）：独立 LS + 逐点相对权重重拟合的最优 Rwp，只作跨工具对照。不参与 kk 门禁、K 选择、参数推断与验收判定。false=不落 reference_rwp 键（输出与旧版逐位一致）；命令行 --ref-rwp 可临时打开。"
   },
 
   "drt": {

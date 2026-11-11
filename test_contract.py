@@ -10,6 +10,7 @@
     C  门禁三态     —— fail / unavailable(strict) / unavailable(fail-open) 三种输入，
                        gate 模式行为与 `kk_performed` 字段保持一致
     D  JSON 合法性  —— `_json_safe` + `allow_nan=False`；新产物能被严格解析器吃下
+    E  参考 Rwp     —— 与生产解析式对拍、`Rwp = √2·rms_rel`、拓扑不一致必须 skipped
 
 用法：
     python test_contract.py             # 全跑，约 60-90 s（含 2 次 quick 拟合）
@@ -79,6 +80,7 @@ def case_a1_legal_forms():
         (["--quick", "--no-move", "--L", "f.csv"],
          {"quick": True, "no_move": True, "L": True}),
         (["--no-L", "f.csv"], {"L": False}),
+        (["--ref-rwp", "f.csv"], {"ref_rwp": True}),
     ]
     for argv, want in spec:
         paths, opt = bmdrt.parse_opts(argv)
@@ -369,6 +371,53 @@ def case_d_legacy_inventory():
 
 
 # ---------------------------------------------------------------------------
+# E 组：参考性 Rwp（唯读对照，不进门禁/选K/参数推断）
+# ---------------------------------------------------------------------------
+
+def case_e1_ref_rwp_identity():
+    """参考模块的两条恒等式：与生产解析式一致；Rwp = √2 · 项目 rms_rel。"""
+    import bm_ref_rwp as REF
+    r = REF.selftest()
+    assert r["ok"], r
+    return f"对拍 model_z {r['hn']:.2e}；Rwp/rms_rel 关系 {r['rms']:.2e}"
+
+
+def case_e2_ref_rwp_skip_contract(tmp):
+    """拓扑不一致必须 `skipped` 且 performed=False，但仍给出 rwp_primary。"""
+    import bm_ref_rwp as REF
+
+    f = np.logspace(-1, 5, 51)
+    p = dict(R_inf=1.0, w=np.array([3.0, 2.0]),
+             tau=np.array([1 / (2 * np.pi * 30.0), 1 / (2 * np.pi * 0.5)]),
+             phi=np.array([0.9, 0.8]), L=1e-7)
+    Z = REF.z_from_params(f, **p, include_L=True)
+    base = dict(K=2, w=p["w"], f0=1 / (2 * np.pi * p["tau"]), phi=p["phi"],
+                R_inf=p["R_inf"], L=p["L"], diffusion=None, adsorption=None)
+
+    # ① 正常情形：应该真的重拟合，且 LS 不劣于 primary
+    #    无噪合成谱上 primary 可能是 0，容差要带绝对下限（与模块护栏同口径）
+    ok = REF.reference_block(f, Z, dict(base), True, 1.0)
+    assert ok["ls_relative_refit_performed"] is True, ok
+    assert ok["ls_relative_refit_status"] == "ok", ok
+    assert ok["rwp_ls_relative"] <= max(ok["rwp_primary"], 1e-6) * 1.001, ok
+    assert "sqrt(2)" in ok["ls_relative_weight_definition"], "口径串必须写明不除 √2"
+
+    # ② ζ 自由 → 拓扑不同，跳过（但 primary 仍算）
+    for patch, why in ((dict(zeta="free"), "ζ"),):
+        blk = REF.reference_block(f, Z, dict(base), True, patch["zeta"])
+        assert blk["ls_relative_refit_status"] == "skipped", blk
+        assert blk["ls_relative_refit_performed"] is False, blk
+        assert why in blk["reference_note"], blk["reference_note"]
+        assert blk["rwp_primary"] is not None, "跳过重拟合也必须有 primary"
+
+    # ③ 带扩散项 → 同样跳过
+    blk = REF.reference_block(f, Z, dict(base, diffusion="Ws"), True, 1.0)
+    assert blk["ls_relative_refit_status"] == "skipped", blk
+    assert "扩散" in blk["reference_note"], blk["reference_note"]
+    return "重拟合/ζ自由/带扩散 三态符合契约"
+
+
+# ---------------------------------------------------------------------------
 # 主流程
 # ---------------------------------------------------------------------------
 
@@ -386,6 +435,8 @@ CASES = [
     ("D1 json_safe", case_d_json_safe, False),
     ("D2 护栏有效", case_d_guard_is_real, False),
     ("D3 历史盘点", case_d_legacy_inventory, False),
+    ("E1 参考Rwp恒等", case_e1_ref_rwp_identity, False),
+    ("E2 参考Rwp跳过", case_e2_ref_rwp_skip_contract, False),
 ]
 
 

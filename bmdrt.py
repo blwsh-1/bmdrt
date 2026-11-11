@@ -30,6 +30,8 @@
     --L / --no-L   --zeta 1.0|free   --diffusion none|Ws|Wo|both
     --kk gate|warn|off   --auto-mechanism / --auto-mechanism-full
     --no-move   --out DIR   --inbox DIR   --interval 30
+    --ref-rwp    # 额外落一份参考性 Rwp（独立 LS + 逐点相对权重重拟合）
+                 # **只读对照**：不进 kk 门禁、不参与选 K、不改参数推断
 
     --seed 默认 0（= bm_real.KW 的默认值，旧命令逐位不变）。它换的是 NUTS 的
     随机流：同 seed 重跑逐位相同，不同 seed 才可能改变采样诊断与后验读数。
@@ -288,7 +290,9 @@ def process_one(path: Path, cfg: dict) -> dict:
                       adsorption=(None if str(fit.get("adsorption") or "none").lower()
                                   in ("none", "", "null")
                                   else str(fit.get("adsorption"))),
-                      auto_adsorption=bool(fit.get("auto_adsorption", False)))
+                      auto_adsorption=bool(fit.get("auto_adsorption", False)),
+                      # 参考性 Rwp：唯读对照，不参与任何判定（默认 False）
+                      ref_rwp=bool(fit.get("ref_rwp", False)))
                 js = outdir / f"real_{stem}.json"
                 rec["ok"] = js.exists()
                 rec["json"] = str(js) if js.exists() else None
@@ -547,6 +551,9 @@ def _apply_cli(cfg: dict, opt: dict):
     # --no-deinduce：关闭 DRT 去电感通道（README 宣传过但解析器里没有）
     if opt.get("no_deinduce"):
         cfg.setdefault("drt", {})["deinduce"] = False
+    # --ref-rwp：只打开参考指标，其余一切照旧（默认 False，输出逐位不变）
+    if opt.get("ref_rwp"):
+        fit["ref_rwp"] = True
     if opt.get("kk") is not None:
         cfg.setdefault("kk", {})["mode"] = str(opt["kk"])
     if opt.get("L") is True:
@@ -756,6 +763,7 @@ def parse_opts(argv: list[str]) -> tuple[list[str], dict]:
            "adsorption": None, "auto_adsorption": None,
            "sigma_floor": None, "no_deinduce": False,
            "seed": None, "diffusion": None,
+           "ref_rwp": False,
            "fit": False, "fast": False}
     paths, i = [], 0
     while i < len(argv):
@@ -771,6 +779,9 @@ def parse_opts(argv: list[str]) -> tuple[list[str], dict]:
             opt["no_move"] = True
         elif a == "--no-deinduce":
             opt["no_deinduce"] = True
+        elif a == "--ref-rwp":
+            # 参考性 Rwp：只读对照，不进 kk 门禁 / 不参与选 K / 不改参数推断。
+            opt["ref_rwp"] = True
         elif a == "--auto-mechanism":
             opt["auto_mechanism"] = True
         elif a == "--auto-mechanism-full":

@@ -2505,7 +2505,8 @@ def _write_kk_reject(path, f, Z, kk, kk_mode, seed=None):
     return js
 
 
-def save_out(stem, f, Z, res, pres, include_L, zeta, tips, K_sel_note):
+def save_out(stem, f, Z, res, pres, include_L, zeta, tips, K_sel_note,
+             ref_rwp_block=None):
     OUT.mkdir(exist_ok=True)
     js = OUT / f"real_{stem}.json"
     # P3（二轮审查）：结果按 stem 命名，同名谱/重跑会静默覆盖——至少让
@@ -2604,6 +2605,10 @@ def save_out(stem, f, Z, res, pres, include_L, zeta, tips, K_sel_note):
                           for k, v in res["s"].items()
                           if k in ("Rw", "Aw", "Rwo", "tauD")},
     )
+    # 参考性 Rwp（唯读对照，不进任何判定）：**默认不写这个键**，
+    # 只有 `--ref-rwp` 显式开启时才落盘，保证默认输出逐位不变。
+    if ref_rwp_block is not None:
+        summary["reference_rwp"] = ref_rwp_block
     js.write_text(json.dumps(_json_safe(summary), ensure_ascii=False, indent=2,
                              default=float, allow_nan=False),
                   encoding="utf-8")
@@ -2619,7 +2624,7 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
         diffusion=None, kk_mode="gate", kk_opts=None, diag=None,
         drt_opts=None, sigma_floor=0.0, auto_mechanism=False,
         auto_mechanism_full=False, adsorption=None, auto_adsorption=False,
-        seed=None):
+        seed=None, ref_rwp=False):
     """kk_mode: gate(fail 即拒绝定 K) | warn(只报告) | off(不跑门禁)。
     kk_opts 是传给 kk_check 的数值参数（c/max_M/res_tol/auto_L/...），
     不在代码里写死，由 config.json 统一管。
@@ -2631,6 +2636,9 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
     补跑 (K, adsorption='RL') 并配对比较（M4，§6.3 一期屏蔽 both，R8）。
     seed：sampler 随机流。`None`（默认）= 不动 `KW["seed"]`(=0)，旧命令逐位不变；
     传整数则本次所有拟合（none 家族 + 补跑的 Ws / ad）都用这个 seed。
+    ref_rwp：True 时额外落一份 `reference_rwp` 参考指标（独立 LS + 逐点相对
+    权重重拟合的 Rwp）。**只读对照**：不进 kk 门禁、不参与选 K、不改参数推断，
+    默认 False（默认输出的 json 逐位不变）。见 bm_ref_rwp.py。
     """
     drt_opts = drt_opts or {}
     sigma_floor = float(sigma_floor or 0.0)
@@ -2989,7 +2997,31 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
     except Exception as e:
         circ_note = f"\n  （电路图没画出来：{type(e).__name__}: {e}）"
 
-    js = save_out(stem, f, Z, best, pres, include_L, zeta, tips, note)
+    # 参考性 Rwp：独立 LS 重拟合（唯读对照）。放这里而不是 fit_one 里，
+    # 是为了只在**选中的最终模型**上跑一次，且任何异常都不影响主结果。
+    ref_block = None
+    if ref_rwp:
+        try:
+            from bm_ref_rwp import PCT as _REF_PCT
+            from bm_ref_rwp import reference_block as _ref_block
+            ref_block = _ref_block(f, Z, best, include_L, zeta)
+            print("\n=== 参考 Rwp（唯读，不参与门禁/选K/参数推断） ===")
+            print(f"  rwp_primary（生产 MCMC 参数换 Rwp 这把尺子）= "
+                  f"{ref_block['rwp_primary']:.4f}%")
+            if ref_block["ls_relative_refit_status"] == "ok":
+                print(f"  rwp_ls_relative（独立 LS + 逐点 {_REF_PCT:.0f}%σ 重拟合）= "
+                      f"{ref_block['rwp_ls_relative']:.4f}%  "
+                      f"（{ref_block['ls_relative_refit_starts']} 起点，"
+                      f"{ref_block['ls_relative_elapsed_s']:.1f}s）")
+            else:
+                print(f"  rwp_ls_relative：{ref_block['ls_relative_refit_status']}"
+                      f"（{ref_block.get('reference_note', '')}）")
+            print("  口径：" + ref_block["ls_relative_weight_definition"])
+        except Exception as e:                     # noqa: BLE001
+            print(f"  （参考 Rwp 没算出来：{type(e).__name__}: {e}，主结果不受影响）")
+
+    js = save_out(stem, f, Z, best, pres, include_L, zeta, tips, note,
+                  ref_rwp_block=ref_block)
     print(f"\n  图：{fig_path}{circ_note}\n"
           f"  结果：{js}  +  {OUT / f'real_{stem}_samples.npz'}")
     return best
