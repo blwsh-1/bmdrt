@@ -942,7 +942,7 @@ def _resolve_seed(seed, kw):
 
 
 def fit_one(f, Z, K, include_L, zeta, init=None, seed=None, kw=None, diffusion=None,
-            diag=None, sigma_floor=0.0, adsorption=None):
+            diag=None, sigma_floor=0.0, adsorption=None, zmax_override=None):
     """跑一次 NUTS，返回全部指标（不打印、不画图）。
 
     seed：sampler 随机流种子。`None`（默认）= 沿用 `kw["seed"]`，`kw` 里也没有
@@ -953,6 +953,8 @@ def fit_one(f, Z, K, include_L, zeta, init=None, seed=None, kw=None, diffusion=N
 
     sigma_floor：噪声地板（相对 zmax）。0.0 = 关闭，行为与改动前一致。
     adsorption：None = 基础模型（逐位不变）；"RL" = 采样吸附元件（M2/M4）。
+    zmax_override：透传给 `bm_core.fit`。None = 先验尺度取 `max|Z|`（默认，
+    逐位不变）；仅诊断脚本用（R21 先验尺度敏感性），生产/验收一律不传。
     """
     diag = diag or {}
     kw = dict(KW) if kw is None else dict(kw)
@@ -963,7 +965,7 @@ def fit_one(f, Z, K, include_L, zeta, init=None, seed=None, kw=None, diffusion=N
                   zeta_fixed=(None if zeta == "free" else float(zeta)),
                   init_values=init, diffusion=diffusion,
                   sigma_floor=float(sigma_floor or 0.0),
-                  adsorption=adsorption, **kw)
+                  adsorption=adsorption, zmax_override=zmax_override, **kw)
     dt = time.time() - t0
     ch = mc.get_samples(group_by_chain=True)
 
@@ -1215,7 +1217,7 @@ def grade(r):
 
 
 def select_k(res_list, exploratory: bool = False):
-    """在多个 K 之间选择。四条规则，全部可复核。
+    """在多个 K 之间选择。五条规则，全部可复核。
 
     exploratory=True（quick 档）时，最终状态一律改写成 `exploratory`：
     quick 只有 800 warmup / 400 采样 / 2 链，而严格线要求 `tail ESS>400`、
@@ -1233,14 +1235,23 @@ def select_k(res_list, exploratory: bool = False):
        峰位出窗是「组分的物理可辨识性」问题，不是「模型预测能力」问题：
        一个分量峰位在窗口外，仍可能对窗口内阻抗有显著贡献。
        它改由拟合后的 `component_review()` 单独报告，不淘汰 K。
-    2) 剩下的按 **elpd_loo 配对比较**排序，取最好。
-    3) **简约优先**：若某个更小的 K 与最好者满足 `deficit < max(2, dse)`
-       （差值落在不确定度内），取更小的 K。
-    4) 若全部被剔除，仍返回一个 dict（下游 report/plot/save_out 需要它），
+    2) **分档选择（R22，2026-11-11 修）**：剩下的候选按采样分级分两池——
+       严格通过（分级 2）优先；**严格池非空时，「可用」档（分级 1）不参与最优档
+       比较**，只有严格池为空才降到可用档。选中档记进 `selection_tier`（2/1/0），
+       `status` 也跟着这一档走。
+       为什么改：本节开头写的是「优先在严格通过的里选，没有才降级」，但旧实现把
+       两档混进同一个池按 elpd 混排，于是降级候选可以赢过严格通过的候选，而且
+       `status` 只看「池非空」就报 `converged` —— 出现「选中 K 的分级只有 1、
+       状态却写 converged」的自相矛盾（历史产物里 3/381 条中招）。
+       若降级候选的 elpd 反而更高，会**显式**写进 note，不静默丢弃。
+    3) 池内按 **elpd_loo 配对比较**排序，取最好。
+    4) **简约优先**：若某个更小的 K 与最好者满足 `deficit < max(2, dse)`
+       （差值落在不确定度内），取更小的 K。只在**同一档内**做。
+    5) 若全部被剔除，仍返回一个 dict（下游 report/plot/save_out 需要它），
        但打上 `selection_status` 并在 note 首条写明「不输出最优 K 的结论」，
        **绝不把「相对最好」包装成「最优」**：
-         converged  有 K 过完整硬筛选（旧结果文件里写作 "ok"）
-         degraded   只降到「可用」档（分级≥1 但被物理/LOO 规则剔除）
+         converged  被选中的 K 采样达到**严格线**（分级 2）
+         degraded   被选中的 K 只达到**可用**档（分级 1），note 写明原因
          rejected   连「可用」都没有，结果只是相对排序、无物理意义
          exploratory quick 档专属，见函数开头说明
 
@@ -1250,7 +1261,7 @@ def select_k(res_list, exploratory: bool = False):
 
     注意：这里的「最好」只在**扫过的 K 范围**内成立，不是全局最优。
     """
-    note, ok = [], []
+    note, strict, usable_ok = [], [], []
     tol = getattr(DIFF, "NONPHYS_TOL", 0.01) if DIFF is not None else 0.01
     for r in res_list:
         hard = []                                    # 直接剔除的理由
@@ -1273,22 +1284,35 @@ def select_k(res_list, exploratory: bool = False):
         if hard:
             note.append(f"K={r['K']} **剔除**：" + "；".join(hard))
         elif r["grade"] == 1:
-            note.append(f"K={r['K']} 未过严格线，降级为可用："
+            # R22：**不再**塞进最优档池。本函数开头写的是「优先在严格通过的里选，
+            # 没有才降级」，旧实现却把分级 1 和 2 混进同一个 `ok` 池按 elpd 混排 →
+            # 降级候选可以赢过严格通过的候选，且 `status` 只看「池非空」就报
+            # converged。现在分两池：strict（分级 2）/ usable_ok（分级 1）。
+            note.append(f"K={r['K']} 未过严格线，只进「可用」档："
                         + "；".join(r["grade_bad"]))
-            ok.append(r)                             # 仍可参与比较
+            usable_ok.append(r)
         else:
-            ok.append(r)
+            strict.append(r)
 
     usable = [r for r in res_list if r["grade"] >= 1]
-    pool = ok or usable or list(res_list)
+    # 先用严格池；严格池空才用「可用」档。两档都空时保留旧的兜底（全候选排序），
+    # 但状态必然是 rejected —— 那条路径只为了让下游拿到 dict，不输出结论。
+    if strict:
+        pool, tier = strict, 2
+    elif usable_ok:
+        pool, tier = usable_ok, 1
+    else:
+        pool, tier = (usable or list(res_list)), 0
     # 四档命名按审查意见统一：converged / degraded / rejected / exploratory。
     # 旧结果文件里的 "ok" 视为 converged 的别名，读的时候不用改。
-    status = "converged" if ok else ("degraded" if usable else "rejected")
-    if not ok:
-        note.append("严格标准下没有 K 全过（分级≥1 但被物理有效性/LOO "
-                    "规则剔除），已降级到「可用」档；下面的选择只是相对最好，"
-                    "引用时必须说明它没过硬筛选。"
-                    if usable else
+    # R22：`status` 现在跟**被选中的档**走，不再只看「有候选过了硬筛」——
+    # 否则会出现「选中 K 的分级只有 1，却报 converged」的自相矛盾。
+    status = {2: "converged", 1: "degraded", 0: "rejected"}[tier]
+    if tier < 2:
+        note.append("严格标准下没有 K 全过（分级 1 但被物理有效性/LOO "
+                    "规则剔除，或只是采样未达严格线），已降级到「可用」档；"
+                    "下面的选择只是相对最好，引用时必须说明它没过严格线。"
+                    if tier == 1 else
                     "**没有任何 K 达到可用**，下面的选择只是相对最好，不能当结论。")
     if status == "rejected":
         note.insert(0, "**不输出最优 K 的结论**：所有候选 K 都被硬性剔除或采样不可用；"
@@ -1297,6 +1321,15 @@ def select_k(res_list, exploratory: bool = False):
 
     pool = sorted(pool, key=lambda r: (-r["elpd"] if np.isfinite(r["elpd"]) else 1e18))
     best = pool[0]
+    # R22：被挡在最优档之外的「可用」候选，若 elpd 反而更高，必须显式说出来。
+    # 否则读者只看到「K 变小了」，不知道有个更贴的降级候选被规则挡住了。
+    if tier == 2 and usable_ok:
+        u = max(usable_ok, key=lambda r: r["elpd"] if np.isfinite(r["elpd"]) else -np.inf)
+        if (np.isfinite(u["elpd"]) and np.isfinite(best["elpd"])
+                and u["elpd"] > best["elpd"]):
+            note.append(f"K={u['K']}（分级 1）的 elpd 更高（{u['elpd']:.1f} vs "
+                        f"{best['elpd']:.1f}），但采样未过严格线 → 按「先严格后降级」"
+                        "不参与最优档；要引用这个 K 必须补预算重跑")
     # 注意：arviz 的 elpd_diff 是**正数表示更差**（deficit），且以全局最好者为基准。
     # 用 abs 与之解耦，无论 arviz 将来改符号约定都不会错。
     def deficit(r):
@@ -1320,6 +1353,8 @@ def select_k(res_list, exploratory: bool = False):
                        "当作模型选择结论。要判 K，请用正式档重跑。")
         status = "exploratory"
     best["selection_status"] = status
+    # R22：把「按哪一档选出来的」一并落盘，事后不用重跑才知道是严格还是降级
+    best["selection_tier"] = int(tier)
     return best, note
 
 

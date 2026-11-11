@@ -7,11 +7,24 @@
 1. 先按 M1（纯数据判据 `n>2.0`，最多剔 2 点）剔掉窗口上端的不可靠点，再拟合；
 2. 验收集改为**全部 14 条未跑过 nested 的谱**（不挑不换）。
 
+2026-11-11 审查后的两处执行器修正（**不改判据、不改数字**，见 §14.6 变更日志 2）
+--------------------------------------------------------------------------------
+1. `fit_top(..., sigma_from_data=True)`：`σ_j = 2%·|Z_j^obs|` 由本批观测算出，
+   原来漏传该标志 → `elpd_valid_for_predictive_comparison` 被误标为 True。
+   修后该标志为 False，`elpd` 只作溯源记录（`elpd_used_as_criterion=False`），
+   M-a/M-b/M-c 判定**完全不用** elpd，故 §14 的 `4/14` 不受影响。
+2. 记录 `ess_min` / `ess_by_param` / `ess_ok_supp(≥ESS_REF)`：`fit_top` 本来就返回
+   `ess_min`，但旧执行器只落 `rhat_max`/`div`，导致「ESS 未入验收」无法从产物核查。
+   **ESS 不进 M-c 判定**（M-c 仍是 §14.3 预注册的 `R̂≤1.05 且 div=0`），
+   只作补充诊断与预警。
+
 用法
 ----
     python evidence/nested_topology/m4_holdout2.py --dry
     python evidence/nested_topology/m4_holdout2.py
     python evidence/nested_topology/m4_holdout2.py --specs AZ31-4Li_5 --seeds 0
+    # 需要事后复核逐参数 R̂/ESS、后验相关、后验预测时：
+    python evidence/nested_topology/m4_holdout2.py --save-posterior out/m4_posterior
 """
 from __future__ import annotations
 
@@ -42,6 +55,12 @@ SIGMA_PCT = 2.0        # §14.3（同 §13.1）
 BUDGET = dict(n_warmup=2000, n_samples=1000, num_chains=2, target_accept=0.98)  # §14.3
 RMS_MAX, ACF_MAX, ACF_DROP, RHAT_MAX = 10.0, 0.50, 0.20, 1.05   # §14.3
 BRANCH, LAYERS = "parallel", 2
+# -----------------------------------------------------------------------------
+
+# ---- 补充诊断（**不是** §14 判据，不进 M-c 判定）-----------------------------
+#: ESS 参考线：ArviZ/Stan 的常用提示值（bulk ESS ≥ 400）。只记账与预警，
+#: **不改** M-c 的 `R̂≤1.05 且 div=0`。改这个数不影响任何「通过/未过」结论。
+ESS_REF = 400
 # -----------------------------------------------------------------------------
 
 
@@ -99,22 +118,54 @@ def _corr_pairs(ch: dict, names: list[str], thr: float = 0.90) -> list[dict]:
     return sorted(out, key=lambda d: -abs(d["rho"]))
 
 
-def _fit_set(f, Z, seeds: list[int]) -> dict:
-    """在一组点上跑 nested + 同口径 voigt，返回逐 seed 指标与 M 判据。"""
+def _fit_set(f, Z, seeds: list[int], save_dir: str | None = None,
+             tag: str = "") -> dict:
+    """在一组点上跑 nested + 同口径 voigt，返回逐 seed 指标与 M 判据。
+
+    噪声 `sg = 2%·|Z|` 是**由本批观测算出**的逐点 σ，所以必须显式传
+    `sigma_from_data=True`：否则 `fit_top` 会把 `elpd_valid_for_predictive_
+    comparison` 标成 True，而逐点 LOO 的尺度含该点自身，不是标准留一预测
+    （2026-11-11 审查指出，见 §14.6 变更日志 2）。
+
+    `save_dir` 非空时把**后验样本**落成 `{tag}_seed{sd}.npz`
+    （逐参数二维 `(chain, draw)` + 逐点 `pointwise_elpd`），
+    这样逐参数 R̂/ESS、后验相关、后验预测谱都能事后复核，
+    不必重跑 MCMC。旧执行器只落 `rhat_max`/`div`，外部审查因此拿不到后验。
+    """
     sg = (SIGMA_PCT / 100.0 * np.abs(Z), SIGMA_PCT / 100.0 * np.abs(Z))
     rows = []
     for sd in seeds:
         o = T.fit_top(f, Z, branch=BRANCH, layers=LAYERS, seed=sd, sigma=sg,
-                      progress=False, **BUDGET)
+                      sigma_from_data=True, progress=False, **BUDGET)
         names = list(T.sampled_keys(BRANCH, LAYERS))
         pm = {k: float(np.median(o["s"][k])) for k in names}
         met = _metrics(f, Z, T.z_nested(f, pm, branch=BRANCH, layers=LAYERS))
         po = o["idata"].posterior
         ch = {k: np.asarray(po[k].values) for k in names}
+        if save_dir:
+            os.makedirs(save_dir, exist_ok=True)
+            np.savez_compressed(
+                os.path.join(save_dir, f"{tag}_seed{sd}.npz"),
+                **ch,
+                pointwise_elpd=np.asarray(o["pointwise_elpd"], float),
+                elpd=np.float64(o["elpd"]), elpd_se=np.float64(o["elpd_se"]),
+                rms_rel=np.float64(met["rms_rel"]), acf=np.float64(met["acf"]),
+                sigma_re_perpoint=np.asarray(sg[0], float),
+                sigma_im_perpoint=np.asarray(sg[1], float),
+                f=np.asarray(f, float))
         rows.append(dict(seed=sd, **met, params=pm,
                          ci90={k: [float(np.percentile(o["s"][k], 5)),
                                    float(np.percentile(o["s"][k], 95))] for k in names},
                          rhat_max=float(o["rhat_max"]), div=int(o["divergences"] or 0),
+                         # M-c 目前只判 R̂/div（§14.3 预注册口径，不改）；
+                         # ESS 是**补充诊断**，只记账不裁决（见 ESS_REF）
+                         ess_min=float(o["ess_min"]),
+                         ess_by_param={k: float(v) for k, v in o["ess_by_param"].items()},
+                         ess_ok_supp=bool(o["ess_min"] >= ESS_REF),
+                         # 逐点 σ 由本批观测算出 → 该 elpd 无标准预测解释，
+                         # 只为溯源与尺度敏感性分析记录（Task 3），不作判据
+                         elpd=float(o["elpd"]), elpd_se=float(o["elpd_se"]),
+                         elpd_valid=bool(o["elpd_valid_for_predictive_comparison"]),
                          degenerate=_corr_pairs(ch, names)))
 
     s, mc = B.fit(f, Z, K=1, alpha=0.5, sigma=sg, zeta_fixed=1.0, seed=0,
@@ -126,6 +177,7 @@ def _fit_set(f, Z, seeds: list[int]) -> dict:
     from numpyro.diagnostics import summary
     sm = summary(mc.get_samples(group_by_chain=True), prob=0.9)
     base["rhat_max"] = max(float(np.max(np.asarray(v["r_hat"]))) for v in sm.values())
+    base["ess_min"] = min(float(np.min(np.asarray(v["n_eff"]))) for v in sm.values())
     base["div"] = int(np.sum(mc.get_extra_fields()["diverging"]))
 
     verdict = []
@@ -138,16 +190,18 @@ def _fit_set(f, Z, seeds: list[int]) -> dict:
     return dict(rows=rows, voigt_base=base, verdict=verdict)
 
 
-def one(spec: str, seeds: list[int]) -> dict:
+def one(spec: str, seeds: list[int], save_dir: str | None = None) -> dict:
     f_all, Z_all = R.load_spectrum(os.path.join(SPEC_DIR, spec + ".csv"))
     c = cut_top(f_all, Z_all)
     keep = c["keep"]
-    cut = _fit_set(f_all[keep], Z_all[keep], seeds)
+    cut = _fit_set(f_all[keep], Z_all[keep], seeds,
+                   save_dir=save_dir, tag=f"{spec}_cut")
 
     # §14.4b M4b：并报「未剔点」结果。若 M1 一个点都没剔，两套的 (f,Z,seed,模型)
     # 完全相同 → 同 seed 拟合逐位可复现（本项目已实测），无需重跑，标记 identical。
     if c["dropped"]:
-        nocut = _fit_set(f_all, Z_all, seeds)
+        nocut = _fit_set(f_all, Z_all, seeds,
+                         save_dir=save_dir, tag=f"{spec}_nocut")
         nocut["identical"] = False
     else:
         nocut = dict(rows=cut["rows"], voigt_base=cut["voigt_base"],
@@ -176,6 +230,9 @@ def main(argv=None) -> int:
     ap.add_argument("--specs", nargs="+", default=list(SET14))
     ap.add_argument("--seeds", type=int, nargs="+", default=[0])
     ap.add_argument("--json", default=os.path.join("out", "m4_holdout2.json"))
+    ap.add_argument("--save-posterior", default=None, metavar="DIR",
+                    help="把每条谱每个 seed 的后验样本落成 npz（逐参数 R̂/ESS、"
+                         "后验相关、后验预测可事后复核，无需重跑 MCMC）")
     ap.add_argument("--dry", action="store_true")
     a = ap.parse_args(argv)
 
@@ -193,7 +250,7 @@ def main(argv=None) -> int:
     for sp in a.specs:
         print(f"\n=== {sp} ===", flush=True)
         try:
-            r = one(sp, a.seeds)
+            r = one(sp, a.seeds, save_dir=a.save_posterior)
         except Exception as e:
             print(f"  失败：{type(e).__name__}: {e}", flush=True)
             res.append(dict(spec=sp, error=f"{type(e).__name__}: {e}"))
@@ -201,11 +258,13 @@ def main(argv=None) -> int:
         b = r["voigt_base"]
         print(f"  剔点 {len(r['dropped_hz'])} 个 {r['dropped_hz']}  n_trace={r['n_trace']}  "
               f"保留 {r['n_kept']}/{r['n_pts']}")
-        print(f"  voigt K=1：rms {b['rms_rel']:6.2f}%  acf {b['acf']:.3f}  R̂ {b['rhat_max']:.3f}")
+        print(f"  voigt K=1：rms {b['rms_rel']:6.2f}%  acf {b['acf']:.3f}  "
+              f"R̂ {b['rhat_max']:.3f}  ESS {b['ess_min']:.0f}")
         for row, v in zip(r["rows"], r["verdict"]):
             print(f"  seed{row['seed']} nested：rms {row['rms_rel']:6.2f}%  "
                   f"低/中/高 {row['bands'][0]:.1f}/{row['bands'][1]:.1f}/{row['bands'][2]:.1f}  "
                   f"acf {row['acf']:.3f}  R̂ {row['rhat_max']:.3f}  div {row['div']}  "
+                  f"ESS {row['ess_min']:.0f}{'' if row['ess_ok_supp'] else f'<{ESS_REF}'}  "
                   f"RsR1 {row['params']['Rs'] + row['params']['R1']:.1f}"
                   f"  M-a {'✓' if v['Ma'] else '✗'} M-b {'✓' if v['Mb'] else '✗'} "
                   f"M-c {'✓' if v['Mc'] else '✗'} → {'过' if v['passed'] else '未过'}")
@@ -216,7 +275,18 @@ def main(argv=None) -> int:
 
     if a.json:
         with open(a.json, "w", encoding="utf-8") as fh:
-            json.dump(dict(prereg="M6_VALIDATION_PLAN.md §14", rows=res), fh,
+            json.dump(dict(prereg="M6_VALIDATION_PLAN.md §14",
+                           meta=dict(
+                               sigma_pct=SIGMA_PCT, budget=BUDGET,
+                               branch=BRANCH, layers=LAYERS,
+                               # 逐点 σ 由本批观测算出：LOO 无标准预测解释
+                               sigma_from_data=True,
+                               elpd_used_as_criterion=False,
+                               # ESS 只作补充诊断，M-c 仍是 R̂≤1.05 且 div=0
+                               ess_ref=ESS_REF, ess_in_verdict=False,
+                               executor="m4_holdout2.py",
+                           ),
+                           rows=res), fh,
                       ensure_ascii=False, indent=1)
         ok = [r.get("spec") for r in res if r.get("passed_all")]
         print(f"\n通过 {len(ok)}/{len(res)}：{ok}")

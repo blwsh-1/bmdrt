@@ -518,6 +518,48 @@ def _selftest():
         print(f"[12] 逐点噪声检查**失败**（{type(ex).__name__}: {ex}）")
         ok = False
 
+    # [13] `zmax_override` 只改先验、不动似然（R21 的操作性守卫）
+    #      数据自带 max|Z| = zmax_d；用 σ 固定，令两个模型的**似然完全相同**，
+    #      于是 logp 之差必须精确等于手算的「先验差」。这同时证明：
+    #      (a) 默认路径仍按 max|Z| 定尺度（逐位不变）；(b) override 真的进到了先验。
+    try:
+        import numpyro.distributions as _dist      # noqa: F401  仅校验依赖
+        from numpyro.infer.util import log_density as _ld
+        f13 = np.logspace(-2.0, 5.0, 21)
+        Z13 = z_nested(f13, base, branch="parallel", layers=2)
+        zmax_d = float(np.max(np.abs(Z13)))
+        wref13 = float(2 * np.pi * np.sqrt(f13[0] * f13[-1]))
+        par13 = {k: float(base[k]) for k in sampled_keys("parallel", 2)}
+        args13 = (f13, Z13.real, Z13.imag)
+        lp_def, _ = _ld(_make_model("parallel", 2, "scalar", 1.0, 1.0),
+                        args13, {}, par13)
+        lp_ovr, _ = _ld(_make_model("parallel", 2, "scalar", 1.0, 1.0,
+                                    zmax_override=1.7 * zmax_d),
+                        args13, {}, par13)
+        tab_d = _prior_table(zmax_d, wref13, "parallel", 2)
+        tab_o = _prior_table(1.7 * zmax_d, wref13, "parallel", 2)
+        dlp_hand = float(sum(tab_o[k].log_prob(par13[k]) - tab_d[k].log_prob(par13[k])
+                             for k in tab_d))
+        e13 = abs(float(lp_ovr - lp_def) - dlp_hand) / max(abs(dlp_hand), 1.0)
+        print(f"[13] zmax 默认={zmax_d:.4g}、override×1.7 → 先验差 Δlp={dlp_hand:+.6f}，"
+              f"logp 实测差 {float(lp_ovr - lp_def):+.6f}，rel err {e13:.2e}")
+        ok &= bool(e13 < 1e-10) and bool(dlp_hand != 0.0)
+        # 默认路径必须真的等于 max|Z|：直接读返回值标记（小预算，只为取字段）
+        r13 = fit_top(f13, Z13, n_warmup=4, n_samples=4, seed=0, num_chains=1,
+                      sigma=(1.0, 1.0), progress=False)
+        tag_ok = (r13["prior_scale_data_dependent"] is True
+                  and abs(r13["zmax"] - zmax_d) < 1e-9
+                  and r13["zmax_override"] is None)
+        print(f"[13] 默认路径标记：zmax={r13['zmax']:.4g}（应={zmax_d:.4g}）"
+              f"、prior_scale_data_dependent={r13['prior_scale_data_dependent']}、"
+              f"override={r13['zmax_override']}")
+        ok &= bool(tag_ok)
+    except ImportError as ex:
+        print(f"[13] zmax 尺度检查跳过（{type(ex).__name__}: {ex}）")
+    except Exception as ex:
+        print(f"[13] zmax 尺度检查**失败**（{type(ex).__name__}: {ex}）")
+        ok = False
+
     print("=" * 72)
     print("全部通过" if ok else "有失败项")
     return ok
@@ -736,7 +778,8 @@ def physical_to_unconstrained(p_phys: dict, *, zmax: float, w_ref: float,
 
 
 def _make_model(branch: str, layers: int, sig_mode: str,
-                sig_re=None, sig_im=None, sigma_floor: float = 0.0):
+                sig_re=None, sig_im=None, sigma_floor: float = 0.0,
+                zmax_override: float | None = None):
     """构造 NumPyro 模型。噪声用 `_check_sigma` **归一化后**的输入。
 
     逐点 σ 与标量 σ 走**同一段代码**：`jnp.asarray` 对标量给 0 维、对
@@ -745,12 +788,23 @@ def _make_model(branch: str, layers: int, sig_mode: str,
 
     独立成函数只为一件事：自检能在**不跑 MCMC** 的情况下拿到 `obs` 位点的
     `scale`，验证模型真的吃了数组（而不是在追踪时被 `float()` 拍平）。
+
+    `zmax_override`
+    ---------------
+    先验尺度 `zmax` 默认取 `max|Z|`，**由本批观测算出**（数据依赖，见 R21）。
+    诊断时可用本参数指定一个**不依赖观测**的尺度，量化「先验尺度数据依赖」
+    对后验/`elpd` 的影响；`None`（默认）走原路径，数值**逐位不变**
+    （自检 [13] 守这条）。**不用于生产拟合**。
     """
     import numpyro                        # 局部导入：numpyro 仍是可选依赖
     import numpyro.distributions as dist
 
     def model(f_arr, Zr, Zi):
-        zmax = jnp.max(jnp.sqrt(Zr ** 2 + Zi ** 2))
+        # 默认：先验尺度跟本批观测走（数据依赖）；override 时用外部给定尺度
+        if zmax_override is None:
+            zmax = jnp.max(jnp.sqrt(Zr ** 2 + Zi ** 2))
+        else:
+            zmax = jnp.asarray(float(zmax_override))
         w_ref = 2.0 * jnp.pi * jnp.sqrt(jnp.min(f_arr) * jnp.max(f_arr))
         omega = 2.0 * jnp.pi * f_arr
         p = {}
@@ -787,7 +841,8 @@ def fit_top(f, Z, *, branch: str = "parallel", layers: int = 2,
             n_warmup: int = 600, n_samples: int = 1200, seed: int = 0,
             num_chains: int = 4, target_accept: float = 0.9,
             max_tree_depth: int = 10, sigma=None, sigma_floor: float = 0.0,
-            sigma_from_data: bool = False, init_values: dict | None = None,
+            sigma_from_data: bool = False, zmax_override: float | None = None,
+            init_values: dict | None = None,
             progress: bool = True) -> dict:
     """单次固定 `branch × layers` 的 NUTS 拟合（M3 研究性原型）。
 
@@ -816,6 +871,25 @@ def fit_top(f, Z, *, branch: str = "parallel", layers: int = 2,
 
     所以 `fit_top` 只负责**如实标注**（返回 `elpd_valid_for_predictive_comparison=False`），
     不替调用方决定是否使用。σ 来自仪器规格、外部估计或常数时保持默认 `False`。
+
+    `zmax_override`
+    ---------------
+    先验尺度 `zmax = max|Z|` 默认**由本批观测算出**，于是 `Rs`/`R1`/`Q1`… 的先验
+    中位都随本谱的幅值走。逐点 LOO 留出第 j 点时，`zmax` 严格说应重算——
+    现有实现没有（见 R21）。三种处置里本参数只支持**第三条**：
+
+    1. 逐折重算先验尺度 → 要改 `fit_top` 的 LOO 路径，成本高，尚未做；
+    2. 改成完全不依赖观测的尺度 → 会改变全部历史数值（§13/§14/§18/§19 全部作废），
+       **不做**；
+    3. 保持现状 + **显式标注 + 量化敏感性**（本条）：
+       `zmax_override` 只在**诊断脚本**里用（如
+       `evidence/nested_topology/m4_zmax_scale_probe.py`），拿同一个 `seed`
+       在 `zmax × {0.5, 1, 2}` 三个尺度上各拟一次，看 `Δelpd` 是否翻转结论。
+       生产与验收路径**一律传 `None`**，数值与引入本参数之前逐位相同（自检 [13]）。
+
+    返回值里的 `prior_scale_data_dependent` 就是「本次 elpd 是否带先验尺度数据
+    依赖」的机器可读标记：`True` 时 `Δelpd` 只能作族内/跨族的**相对**参考，
+    不得写成标准留一预测性能。
 
     `init_values`
     -------------
@@ -849,7 +923,7 @@ def fit_top(f, Z, *, branch: str = "parallel", layers: int = 2,
     sig_mode, sig_re, sig_im = _check_sigma(f, sigma, sigma_floor)
 
     model = _make_model(branch, layers, sig_mode, sig_re, sig_im,
-                        float(sigma_floor))
+                        float(sigma_floor), zmax_override)
 
     mcmc = MCMC(NUTS(model, target_accept_prob=target_accept,
                      max_tree_depth=max_tree_depth),
@@ -913,6 +987,11 @@ def fit_top(f, Z, *, branch: str = "parallel", layers: int = 2,
         "ess_by_param": ess_map,
         "branch": branch, "layers": layers,
         "f_ref": float(np.sqrt(f.min() * f.max())),
+        # 先验尺度溯源：默认取 max|Z|（数据依赖，R21）；override 时为外部给定值
+        "zmax": (float(np.max(np.abs(Z))) if zmax_override is None
+                 else float(zmax_override)),
+        "zmax_override": (None if zmax_override is None else float(zmax_override)),
+        "prior_scale_data_dependent": zmax_override is None,
     }
 
 

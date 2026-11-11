@@ -133,6 +133,17 @@ SIGMA_FLOOR = 0.0
 SWITCH_DELTA = 4.0
 SWITCH_Z = 2.0
 
+#: 跨族 `Δelpd` 的口径标注（**R21**，2026-11-11 补）。
+#: 两族的先验尺度 `zmax = max|Z|` 都是**由本批观测算出**的，而逐点 PSIS-LOO
+#: 留出第 j 点时没有重算 `zmax` → 严格说 `elpd_loo` 不是 `p(Z_j|Z_{-j})`。
+#: 处置：不改实现（改成非观测尺度会让 §13/§14/§18/§19 全部数值作废），
+#: 而是**每一条跨族判定都带这个标记**，报告里不得把 `Δelpd` 写成标准留一预测。
+#: 敏感性见 `evidence/nested_topology/m4_zmax_scale_probe.py`。
+ELPD_PRIOR_SCALE = "data_dependent_zmax"
+ELPD_PRIOR_SCALE_NOTE = (
+    "两族先验尺度 zmax=max|Z| 由本批观测算出，逐点 LOO 未按留出点重算 → "
+    "Δelpd 只作族间**相对**参考，不是标准留一预测性能（R21）")
+
 #: 采样质量门槛（两侧同等）。超过即认为该候选的 elpd 不可用于比较。
 RHAT_MAX = 1.05
 DIV_FRAC_MAX = 0.02
@@ -703,12 +714,15 @@ def _compare_group(V: list[dict], N: list[dict], n_draw: int,
     n, dn, why_n = _family_state(N, n_draw, strict, gate_b=gate_b)
     why = "; ".join(x for x in (why_v, why_n) if x)
     kn = _k_note(v)
+    # R21：每一条判定都带「先验尺度数据依赖」标记，别让下游把 Δ 当标准 LOO
+    stamp = dict(elpd_prior_scale=ELPD_PRIOR_SCALE,
+                 elpd_caveat=ELPD_PRIOR_SCALE_NOTE)
     if dv or dn or v is None or n is None:
         # 比较基准被采样失败污染 → **不做配对**，输出合规的「并列」。
         return dict(decision="indistinguishable", d_elpd=None, dse=None, z=None,
                     voigt=v, nested=n, degraded=True,
                     degraded_why=why or "族内无可用候选", reason="", note="",
-                    k_note=kn)
+                    k_note=kn, **stamp)
     d_elpd, dse = paired_diff(n["pointwise"], v["pointwise"], f=f)
     # dse 不可用（n=1、逐点差方差恰为 0）时**两个方向都不能判**。
     # 旧实现把 z 设成 +inf：正向 Δ≥4 会无条件切 nested（绕过显著性门槛），
@@ -718,7 +732,7 @@ def _compare_group(V: list[dict], N: list[dict], n_draw: int,
                     voigt=v, nested=n, degraded=False, degraded_why="",
                     reason=f"dse 不可用（{dse!r}）：逐点差方差为 0 或非有限，"
                            "无法做显著性判定，两方向一律并列", note="",
-                    k_note=kn)
+                    k_note=kn, **stamp)
     z = d_elpd / dse
     sw = (d_elpd >= SWITCH_DELTA and z >= SWITCH_Z)
     bk = (-d_elpd >= SWITCH_DELTA and -z >= SWITCH_Z)
@@ -736,7 +750,7 @@ def _compare_group(V: list[dict], N: list[dict], n_draw: int,
     return dict(decision=dec, d_elpd=d_elpd, dse=dse, z=z, voigt=v, nested=n,
                 degraded=False, degraded_why="",
                 reason="", note=why if dec == "voigt_inadmissible" else "",
-                k_note=kn)
+                k_note=kn, **stamp)
 
 
 def _k_note(v: dict | None) -> str:

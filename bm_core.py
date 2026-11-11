@@ -206,7 +206,8 @@ def make_model(K: int = 10, alpha: float | None = 1.0, sigma: tuple | None = Non
                include_L: bool = False, pad_dec: float = 1.5,
                zeta_fixed: float | None = None, phi_lo: float = 0.5,
                diffusion: str | None = None, sigma_floor: float = 0.0,
-               adsorption: str | None = None):
+               adsorption: str | None = None,
+               zmax_override: float | None = None):
     """alpha=None → 让 α~Exp(1) 进采样（复现论文）；否则固定。
 
     zeta_fixed：把 ζ 钉死（如 1.0 = 纯 ZARC 基底），用于隔离
@@ -235,10 +236,21 @@ def make_model(K: int = 10, alpha: float | None = 1.0, sigma: tuple | None = Non
     `Rw = A_W/√ω_ref`，即"该扩散项在窗口几何中心处的阻抗幅值"（Ω），
     与 zmax 同量纲。A_W = Rw·√ω_ref 在模型内部算出来。
     Wo 同理用 `Rwo`（Ω），另加 `tauD`（s），拐点频率 1/(2πτ_D)。
+
+    zmax_override：**诊断专用**（`bm_top.fit_top` 有同名字段，语义一致）。
+    先验尺度默认 `max|Z|`，**由本批观测算出**，所以逐点 LOO 留出 j 点时尺度
+    严格说应重算（R21）。本参数只让诊断脚本能指定一个不依赖观测的尺度去量化
+    这个影响；`None`（默认）= 原路径，数值逐位不变。生产/验收**一律不传**。
     """
 
     def model(f, Zr, Zi):
-        zmax = jnp.max(jnp.sqrt(Zr ** 2 + Zi ** 2))
+        # 先验尺度：默认 `max|Z|`（**由本批观测算出**，数据依赖，见 R21）。
+        # `zmax_override` 只给诊断脚本用（量化先验尺度依赖对 elpd 的影响），
+        # None = 原路径，数值**逐位不变**。生产/验收路径一律不传。
+        if zmax_override is None:
+            zmax = jnp.max(jnp.sqrt(Zr ** 2 + Zi ** 2))
+        else:
+            zmax = jnp.asarray(float(zmax_override))
         fmin, fmax = jnp.min(f), jnp.max(f)
         omega = 2 * jnp.pi * f
         omega_ref = 2 * jnp.pi * jnp.sqrt(fmin * fmax)
@@ -550,7 +562,8 @@ def fit(f, Z, K: int = 10, alpha: float | None = 1.0, sigma: tuple | None = None
         target_accept: float = 0.9, zeta_fixed: float | None = None,
         init_values: dict | None = None, max_tree_depth: int = 10,
         extra_fields: tuple = (), diffusion: str | None = None,
-        sigma_floor: float = 0.0, adsorption: str | None = None):
+        sigma_floor: float = 0.0, adsorption: str | None = None,
+        zmax_override: float | None = None):
     """跑 NUTS。
 
     num_chains > 1 时才有 R-hat；单链的 R-hat 恒等于 1，不能当收敛证据。
@@ -569,6 +582,9 @@ def fit(f, Z, K: int = 10, alpha: float | None = 1.0, sigma: tuple | None = None
 
     adsorption：透传给 `make_model`。None = 基础模型（与改动前逐位一致）；
     "RL" = 采样 Rad / tau_ad 并加 Z_ad（M2，见 bm_ad / ADSORPTION_PROJECT）。
+
+    zmax_override：透传给 `make_model`。None = 先验尺度取 `max|Z|`（默认，
+    逐位不变）；诊断脚本用它在不依赖观测的尺度上复拟，量化先验尺度依赖（R21）。
     """
     if not HAS_NUMPYRO:                 # pragma: no cover
         raise ImportError("需要 numpyro 才能采样。纯后处理/自检（bm_check、"
@@ -579,7 +595,8 @@ def fit(f, Z, K: int = 10, alpha: float | None = 1.0, sigma: tuple | None = None
     Z = np.asarray(Z, complex)
     m = make_model(K, alpha=alpha, sigma=sigma, include_L=include_L,
                    zeta_fixed=zeta_fixed, diffusion=diffusion,
-                   sigma_floor=sigma_floor, adsorption=adsorption)
+                   sigma_floor=sigma_floor, adsorption=adsorption,
+                   zmax_override=zmax_override)
     # init_strategy 不能传 None（numpyro 0.19 会走到 substitute(data=None) 分支报
     # "Only one of data or substitute_fn"），只在真要初始化时才加这个 kwarg。
     kw = dict(target_accept_prob=target_accept, max_tree_depth=max_tree_depth)
