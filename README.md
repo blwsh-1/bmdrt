@@ -241,14 +241,23 @@ R̂ / ESS / div / 触顶全达标，`K=3`（R̂ 1.053 / div 169）与 `K=2`（di
 
 | 状态 | 含义 |
 |---|---|
-| `converged` | 有 K 通过完整硬筛选（原 `ok`） |
-| `degraded` | 只降到「可用」档，没过硬筛选 |
+| `converged` | **被选中的 K** 采样达到严格线（分级 2，原 `ok`） |
+| `degraded` | **被选中的 K** 只到「可用」档（分级 1），没过严格线 |
 | `rejected` | 正式档下所有 K 都被剔除，结果只是相对排序 |
 | `exploratory` | **quick 档专属**：采样预算撑不起严格收敛线，K 与 elpd 都不是选择结论 |
 
 quick 档（800 warmup / 400 采样 / 2 链）与严格线（`tail ESS>400`、`触顶<1%`）
 不在同一个采样预算尺度上，所以它永远不会输出 `rejected`——那会把「预算不足」
 误读成「模型被统计证据否定」。
+
+**2026-11-11 修正（R22）**：上面两条 `converged`/`degraded` 的定义此前与实现不一致。
+旧实现把分级 1 和分级 2 的候选混进同一个池按 `elpd` 混排，且 `status` 只看
+「池非空」就报 `converged`，于是会出现「选中 K 的分级只有 1、状态却写
+`converged`」的自相矛盾（历史产物里 **3/381** 条，全在 `AZ31-12Li_0`）。
+现在改为**分档选择**：严格池非空时「可用」档不参与最优档比较，`status` 跟被选中的
+那一档走，并落盘 `selection_tier`（2/1/0）。降级候选若 `elpd` 反而更高，
+会在 `k_selection` 的 note 里**显式写出**，不静默丢弃。
+检查脚本：`docs/round_2026-11-11/k_tier_check.py`。
 
 任何 `cmd_<名字>.py` 里写一个 `run(argv)` 就会自动多一个子命令，无需修改入口。
 
@@ -405,13 +414,17 @@ not_compared, rejected_by_kk}`（旧结果文件里的 `ok` 是 `converged` 的�
 
 ## 7. 文档
 
+2026-11-11 起，设计与验证文档统一放在 **`docs/`**，总索引见 `docs/INDEX.md`
+（本节只列主链路相关的几份；`THREE_LAYER_SCOPE.md`、`WS_*`、两轮代码审查报告等
+都在 `docs/` 下）。代码注释里的交叉引用仍用裸文件名 + 章节号，不受迁移影响。
+
 | 文档 | 内容 |
 |------|------|
-| `DIFFUSION_PLAN.md` | 扩散扩展方案：数学、先验、测试矩阵、模型选择 |
-| `ADSORPTION_PROJECT.md` | **低频吸附电感元件立项书**：`R_ad∥L_ad` 定义、负 RC 恒等式、DRT 盲区、三区间可辨识性、M0–M6 里程碑与验收标准 |
-| `MODEL_COVERAGE_PLAN.md` | **模型体系规划与覆盖地图**：三层架构（基础 / 特殊响应 / 族选择与可辨识性）、11 项现象覆盖状态与证据等级、注册表接口约定、可辨识性报告规范、按证据排序的立项队列与准入规则 |
-| `BM_TOP_M3_PLAN.md` | **`fit_top()` 接口设计与 M3 验收清单（v3，已按审查冻结）**：现有采样接口摊开、候选 A/B/C 对比、参数先验冻结表、生成器独立性、三档验收与失败记录规范、`fit_top()` 实现记录、档 1 记录（§12）、档 2 第一组 5 seed（§15）、事前可辨识性筛查（§16）、M3 收尾（§19）、M3.5 逐点相对噪声的接口/回归/预注册与 LOO 有效性、双 seed 分离、判定链路分离（退出码 / 收敛数 / 主终点，§20.13–20.14）、两层判定与覆盖口径（§20.4.1 / §20.15）、正式采样配置对齐与首次正式跑（§20.16）、warmup 5000 重采与 M3.5 结案（§20.17） |
-| `NESTED_TOPOLOGY_PROJECT.md` | **嵌套并联电路拓扑立项书**：为何串联 Voigt 表达不了低频感抗环（三个硬约束）、理论上限对照（30.5% vs 6.7%）、渐近极限、`Rs≈0` 不可辨识警报、CPE 窗口幅值参数化、M0–M6（M0/M1 完成；M2 以独立 `fit_top()` 替代，未动 `bm_core`；M3 进行中） |
+| `docs/DIFFUSION_PLAN.md` | 扩散扩展方案：数学、先验、测试矩阵、模型选择 |
+| `docs/ADSORPTION_PROJECT.md` | **低频吸附电感元件立项书**：`R_ad∥L_ad` 定义、负 RC 恒等式、DRT 盲区、三区间可辨识性、M0–M6 里程碑与验收标准 |
+| `docs/MODEL_COVERAGE_PLAN.md` | **模型体系规划与覆盖地图**：三层架构（基础 / 特殊响应 / 族选择与可辨识性）、11 项现象覆盖状态与证据等级、注册表接口约定、可辨识性报告规范、按证据排序的立项队列与准入规则 |
+| `docs/BM_TOP_M3_PLAN.md` | **`fit_top()` 接口设计与 M3 验收清单（v3，已按审查冻结）**：现有采样接口摊开、候选 A/B/C 对比、参数先验冻结表、生成器独立性、三档验收与失败记录规范、`fit_top()` 实现记录、档 1 记录（§12）、档 2 第一组 5 seed（§15）、事前可辨识性筛查（§16）、M3 收尾（§19）、M3.5 逐点相对噪声的接口/回归/预注册与 LOO 有效性、双 seed 分离、判定链路分离（退出码 / 收敛数 / 主终点，§20.13–20.14）、两层判定与覆盖口径（§20.4.1 / §20.15）、正式采样配置对齐与首次正式跑（§20.16）、warmup 5000 重采与 M3.5 结案（§20.17） |
+| `docs/NESTED_TOPOLOGY_PROJECT.md` | **嵌套并联电路拓扑立项书**：为何串联 Voigt 表达不了低频感抗环（三个硬约束）、理论上限对照（30.5% vs 6.7%）、渐近极限、`Rs≈0` 不可辨识警报、CPE 窗口幅值参数化、M0–M6（M0/M1 完成；M2 以独立 `fit_top()` 替代，未动 `bm_core`；M3 进行中） |
 | `evidence/nested_topology/theoretical_bound.py` | 表达力证据：scipy 全局最小二乘对照，内置合成谱自包含，也可用 `--data` 跑真实谱 |
 | `evidence/nested_topology/identifiability_check.py` | 可辨识性证据：渐近极限 / `Rs` 剖面 / 高频窗口截断，同样支持内置合成与 `--data` |
 | `evidence/nested_topology/m3_stage2.py` | 参数恢复驱动：`--stage a`（固定 σ）/ `b`（自由 σ）/ `r`（**逐点相对 `rel-perpoint-2pct`**，M3.5）分记、`--truth-set a/b` 切真值组、**`--data-seeds` 与 `--seeds` 分离数据/采样器随机源**、多 seed 稳健性汇总（均值/SD/max\|err\|/逐 seed 达标）、**预注册主终点 `sd_r`（逐 draw 算 `r=R1/(R1+R2)`，带收敛门禁；不可判时 `value=null`、原始读数在 `observed_value`）**、**两层判定（`full_success` / `primary_only` / `partial` / `negative` / `indeterminate`，覆盖口径 `all_seeds` 冻结）**、`--selftest-verdict`（9 例纯函数自检）、**`exit_gate()` 分离退出码判据（`r` 只看运行有效性、`a`/`b` 沿用 `acceptance`）**、`n_mcmc_converged` 与 `n_pass_acceptance` 分列、逐参数 R̂/ESS、组合参数与相关矩阵、`--save-samples` 留后验 |
@@ -422,9 +435,9 @@ not_compared, rejected_by_kk}`（旧结果文件里的 `ok` 是 `converged` 的�
 | `evidence/nested_topology/m3_regress_scalar.py` | **标量噪声路径回归**：同环境同 seed 重跑冻结配置，与 `g1_seeds_a.json` 对比，分"逐位一致 / 容差一致 / 失败"三档（`bm_top` 引入逐点 σ 后用它证明旧路径没动） |
 | `evidence/nested_topology/g1_seeds_a.{json,log}` | 档 2 第一组（parallel L2，固定 2% 噪声）5 个 seed 的逐次记录与汇总 |
 | `evidence/nested_topology/g2_seeds_b.{json,log}` | 档 2 B 组（`R_ad=300`）2 个 seed：形状参数未收缩的负结果，`R1/(R1+R2)` 90% 区间覆盖 `[0.01,0.99]` |
-| `AD_M6_SAMPLING.md` | **吸附电感 M6 抽样验证记录**：18 条真实含环谱盘点、4+10 分层抽样设计、首个真实正例（正式档复核）、门控两处缺陷、`inv_from_lowfreq` 偏差实证、抽样置信上界与分阶段全量方案 |
-| `AD_GATE_SPEC.md` | **吸附门控边界状态规格**：`enter`/`strong` 严格分离、五状态定义、新增 `edge_peak`、`d_low` 与采样密度判据（`2/dens`）、"不增加假阳性"的不变性论证、M6 开发顺序与验收口径 |
-| `M6_VALIDATION_PLAN.md` | **M6 实测数据验证预注册方案（v0.1，待审查，未执行）**：合并吸附线 / nested 线的两个 M6 并分开验收；24 条真实谱盘点（AZ31 18 + Blank 6）、117 条 2E 的旧基线为何不能直接比（11-05 早于三处规则变更）；M6.1 基线 / M6.2 边界 / M6.3 假阳性三层判据（G1–G7）、**K 范围必须 `--wide` 而非 DRT 预判**、复用与必须重做的证据清单（E1–E7）、报告字段与五条禁止事项、判据变更规则 |
+| `docs/AD_M6_SAMPLING.md` | **吸附电感 M6 抽样验证记录**：18 条真实含环谱盘点、4+10 分层抽样设计、首个真实正例（正式档复核）、门控两处缺陷、`inv_from_lowfreq` 偏差实证、抽样置信上界与分阶段全量方案 |
+| `docs/AD_GATE_SPEC.md` | **吸附门控边界状态规格**：`enter`/`strong` 严格分离、五状态定义、新增 `edge_peak`、`d_low` 与采样密度判据（`2/dens`）、"不增加假阳性"的不变性论证、M6 开发顺序与验收口径 |
+| `docs/M6_VALIDATION_PLAN.md` | **M6 实测数据验证预注册方案（v0.1，待审查，未执行）**：合并吸附线 / nested 线的两个 M6 并分开验收；24 条真实谱盘点（AZ31 18 + Blank 6）、117 条 2E 的旧基线为何不能直接比（11-05 早于三处规则变更）；M6.1 基线 / M6.2 边界 / M6.3 假阳性三层判据（G1–G7）、**K 范围必须 `--wide` 而非 DRT 预判**、复用与必须重做的证据清单（E1–E7）、报告字段与五条禁止事项、判据变更规则 |
 | `evidence/ad_m6/sampling_check.py` | M6 抽样脚本：`inventory` 盘点 / `prepare` 转 csv+分层 / `summarize` 汇总结果 / `edges` 边界峰与 `d_low` 分析 |
 | `evidence/kk_review/verify_review.py` | **外部审查意见的逐条核实**（残差口径是绝对还是相对 / Lin-KK 是否自带串联电感、M 有没有被强行加大 / 三条护栏常数），只读复现，不改代码与结果 |
 | `docs/cases/blank_0.1KBr_pH10/` | **真实 EIS 谱模型选择诊断案例**（最新版本）：四层可辨识性规格、逐频点 LOO 与配对 dse、精确 HN 参考频率贡献、2×3 统一比较、合成谱用例与历史回放。文档 / 脚本 / CSV / JSON 齐备；NPZ 与 run.log 按约定不入库 |

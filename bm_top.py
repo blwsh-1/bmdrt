@@ -883,7 +883,7 @@ def fit_top(f, Z, *, branch: str = "parallel", layers: int = 2,
        **不做**；
     3. 保持现状 + **显式标注 + 量化敏感性**（本条）：
        `zmax_override` 只在**诊断脚本**里用（如
-       `evidence/nested_topology/m4_zmax_scale_probe.py`），拿同一个 `seed`
+       `docs/round_2026-11-11/m4_zmax_scale_probe.py`），拿同一个 `seed`
        在 `zmax × {0.5, 1, 2}` 三个尺度上各拟一次，看 `Δelpd` 是否翻转结论。
        生产与验收路径**一律传 `None`**，数值与引入本参数之前逐位相同（自检 [13]）。
 

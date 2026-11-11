@@ -83,7 +83,7 @@
     cmd_diff.py         扩散项回归测试（常数 σ 最小二乘，非 MCMC）
     cmd_status.py       汇总 out/ 里的结果表
     cmd_<名字>.py       可选：文件里写 run(argv) 就自动多一个子命令
-    DIFFUSION_PLAN.md   扩散扩展方案（数学、先验、测试矩阵、模型选择）
+    docs/               设计与验证文档（总索引 docs/INDEX.md）
     inbox/              丢文件进来，无参数运行就会处理
     out/                每个文件一个目录 + summary.md / summary.json
     archive/            跑完的输入移到这里

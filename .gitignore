@@ -107,6 +107,7 @@ evidence/nested_topology/*
 !evidence/ad_m6/
 evidence/ad_m6/*
 !evidence/ad_m6/sampling_check.py
+# 2026-11-11 起：本轮证据脚本随文档归档到 docs/round_2026-11-11/（不入 evidence/）
 # M6 E1：清单与生成日志随库归档（元数据，不含谱值；原始 .z 仍在仓外）
 !evidence/m6/
 evidence/m6/*

@@ -138,7 +138,7 @@ SWITCH_Z = 2.0
 #: 留出第 j 点时没有重算 `zmax` → 严格说 `elpd_loo` 不是 `p(Z_j|Z_{-j})`。
 #: 处置：不改实现（改成非观测尺度会让 §13/§14/§18/§19 全部数值作废），
 #: 而是**每一条跨族判定都带这个标记**，报告里不得把 `Δelpd` 写成标准留一预测。
-#: 敏感性见 `evidence/nested_topology/m4_zmax_scale_probe.py`。
+#: 敏感性见 `docs/round_2026-11-11/m4_zmax_scale_probe.py`。
 ELPD_PRIOR_SCALE = "data_dependent_zmax"
 ELPD_PRIOR_SCALE_NOTE = (
     "两族先验尺度 zmax=max|Z| 由本批观测算出，逐点 LOO 未按留出点重算 → "
