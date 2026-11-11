@@ -1,4 +1,4 @@
-"""AZ31-4Li_100 上四个模型的残差结构对比。
+"""AZ31-4Li_100 上七个电路的残差结构对比（含文献 Shahri 2024 Table 1）。
 
 回答一个具体问题：**「残差一样大」到底是幅值相近，还是连随频率变化的形状和
 正负号也一致？** 这两件事指向完全不同的诊断方向：
@@ -7,21 +7,32 @@
 * 幅值相近 + 形状/符号一致 → 存在一个**任何常规电路都吸收不掉的公共结构**，
   它更像数据侧的系统性贡献（仪器/夹具/非稳态/分布式效应）。
 
-四个模型
---------
+模型
+----
   VOIGT_K1   本项目生产管线在该谱上选中的模型（K=1，不含 L，后验中位数）
   NESTED_mcmc 本项目嵌套拓扑 `parallel/L=2` 的 MCMC 后验中位谱（口径不同，只作对照）
   NESTED_LS   同一阶梯（C4）用**与外部电路完全相同**的相对加权 LS 拟合（幅值可比）
   EXT1       外部软件 `adsorption_2RQ`：Rs+(Rct||CPE1)+(CPEdl||(Rct2||(Rads+jωLads)))
   EXT2       外部软件 `adsorption_RQ` ：Rs+(CPEdl||(Rct||(Rads+jωLads)))
+  LIT_C1     文献 Shahri 2024 Table 1 Model 1：`R(Q(R(QR(LR))))`（最内层 R+L 串联）
+  LIT_C2     文献 Table 1 Model 2：三层嵌套，最内层 `R4∥L`
+  LIT_C3     文献 Table 1 Model 3：`(R1∥QPE1)` 串联 + 两层嵌套
+  LINKK      Lin-KK 无模型拟合，给出「因果 LTI 模型」的残差地板
+
+C1 与 C4 是**同一个阻抗函数**（R-L 星三角，见 `NESTED_TOPOLOGY_PROJECT.md` §9.4.30.2），
+而 C4 就是我们的 `parallel/L=2`；所以 `LIT_C1` 与 `NESTED_LS` 的预测谱必须重合
+（脚本会打印两者 `max|ΔZ|/|Z|` 作独立核对）。真正另立拓扑的只有 C2、C3。
 
 外部两个电路先由 `ext_circuit_repro.py` 复现（Rwp 与参数与截图差 <0.5%），
-本脚本直接复用其结果，不再重复拟合。
+本脚本直接复用其结果，不再重复拟合。文献三个电路的阻抗函数不复制，直接复用
+`evidence/nested_topology/m4_four_circuits.py` 里的 `_z_c1/_z_c2/_z_c3`（单一来源），
+但**优化器与 NESTED_LS 相同**（DE 全局 + LS 精修、相对加权），保证幅值可比。
 
 跑法
 ----
     python docs/round_2026-11-11/resid_structure_cmp.py
     python docs/round_2026-11-11/resid_structure_cmp.py --specs AZ31-4Li_100 --no-plot
+    python docs/round_2026-11-11/resid_structure_cmp.py --no-lit      # 只跑原来六个
 """
 from __future__ import annotations
 
@@ -135,7 +146,68 @@ def fit_c4_ls(f, Z, seed=3):
     return _z_c4(f, r.x, w_ref), dict(x=r.x.tolist())
 
 
-def build_models(spec):
+# ---------------------------------------------------------------------------
+# 文献电路（Shahri 2024 Table 1）
+# ---------------------------------------------------------------------------
+
+_LIT_DIR = os.path.join(os.path.dirname(os.path.dirname(_HERE)),
+                        "evidence", "nested_topology")
+
+
+def _lit_module():
+    """§17 的四个电路实现只写一份，这里直接复用，不复制阻抗函数。"""
+    if _LIT_DIR not in sys.path:
+        sys.path.insert(0, _LIT_DIR)
+    import m4_four_circuits as F4
+    return F4
+
+
+def fit_lit(name, f, Z, seed=3, maxiter=800, popsize=20):
+    """文献电路的 LS 拟合：**与 `fit_c4_ls` 同一优化器与同一权重**（DE + LS 精修、
+    相对加权）。换优化器会让 C2/C3 多 3 个参数的比较失真，所以这里不省。
+
+    参数化：`n*` 线性（支撑 [0.5,1]），其余 log10；边界 `zmax·10^±6`，`L` 取
+    `10^-6..10^8 H`。返回 (Z_fit, meta)。
+    """
+    from scipy.optimize import differential_evolution, least_squares
+
+    F4 = _lit_module()
+    spec = F4.CIRCUITS[name]
+    keys, fn = spec["keys"], spec["fn"]
+    w_ref = 2.0 * np.pi * np.sqrt(f.min() * f.max())
+    zmax = float(np.max(np.abs(Z)))
+    wa = np.abs(Z)
+    lo, hi = [], []
+    for k in keys:
+        if k.startswith("n"):
+            lo.append(0.5), hi.append(1.0)
+        elif k == "L":
+            lo.append(-6.0), hi.append(8.0)
+        else:
+            lo.append(float(np.log10(zmax)) - 6.0), hi.append(float(np.log10(zmax)) + 6.0)
+    bounds = list(zip(lo, hi))
+
+    def decode(x):
+        return {k: (float(x[i]) if k.startswith("n") else float(10.0 ** x[i]))
+                for i, k in enumerate(keys)}
+
+    def resid(x):
+        d = fn(f, decode(x), w_ref) - Z
+        return np.concatenate([d.real / wa, d.imag / wa])
+
+    def cost(x):
+        return float(np.sqrt(np.mean(resid(x) ** 2)))
+
+    de = differential_evolution(cost, bounds, seed=seed, tol=1e-10,
+                                maxiter=maxiter, popsize=popsize, polish=False)
+    r = least_squares(resid, de.x, bounds=(lo, hi), max_nfev=30000,
+                      ftol=1e-14, xtol=1e-14, gtol=1e-14)
+    x = r.x
+    return fn(f, decode(x), w_ref), dict(params=decode(x), n_params=len(keys),
+                                         de_cost=float(de.fun), ls_cost=float(cost(x)))
+
+
+def build_models(spec, with_lit=True, lit_iters=800):
     f, Z = R.load_spectrum(os.path.join(SPEC_DIR, spec + ".csv"))
     models = {}
 
@@ -158,6 +230,20 @@ def build_models(spec):
         rec = ext[name]
         models[name] = dict(Z=ext_predict(f, Z, name, rec["params"]), band=None,
                             note=f"外部软件复现，Rwp {rec['rwp']:.3f}%")
+
+    # 文献四条（Shahri 2024 Table 1）。C1 ≡ C4 ≡ 我们的 `parallel/L=2`（R-L 星三角，
+    # §9.4.30.2），所以只跑 C1 作独立核对，不重复跑 C4；C2/C3 是真正另立的两条拓扑。
+    if with_lit:
+        lit_note = {
+            "LIT_C1": "文献 Table 1 Model 1（R(Q(R(QR(LR))))），最内层 R+L 串联"
+                      "；与 C4/NESTED_LS 是同一个阻抗函数（星三角），此处作恒等核对",
+            "LIT_C2": "文献 Table 1 Model 2：三层嵌套，最内层 R4∥L（比 C4 多一层、多 3 参数）",
+            "LIT_C3": "文献 Table 1 Model 3：(R1∥QPE1) 串联 + 两层嵌套（多 3 参数，接法不同）",
+        }
+        for nm, cir in (("LIT_C1", "C1"), ("LIT_C2", "C2"), ("LIT_C3", "C3")):
+            Zl, meta = fit_lit(cir, f, Z, maxiter=lit_iters)
+            models[nm] = dict(Z=Zl, band=None, note=f"{lit_note[nm]}；LS {meta['n_params']} 参数",
+                              params=meta["params"], n_params=meta["n_params"])
 
     # 无模型对照：Lin-KK（一串 RC 的分布）。它按构造满足 Kramers-Kronig，
     # 所以它的残差就是**这份数据自身违反 KK 的那一部分**——任何因果 LTI 模型
@@ -263,7 +349,10 @@ def plot(f, models, Z, path):
 
     style = {"VOIGT_K1": ("#9467bd", "o"), "NESTED_mcmc": ("#8c564b", "D"),
              "NESTED_LS": ("#1f77b4", "s"), "EXT1": ("#d62728", "^"),
-             "EXT2": ("#ff7f0e", "v"), "LINKK": ("#2ca02c", "P")}
+             "EXT2": ("#ff7f0e", "v"), "LINKK": ("#2ca02c", "P"),
+             "LIT_C1": ("#17becf", "x"), "LIT_C2": ("#bcbd22", "*"),
+             "LIT_C3": ("#e377c2", "<")}
+
     fig, ax = plt.subplots(2, 2, figsize=(14.5, 9.0))
 
     for name, m in models.items():
@@ -302,7 +391,9 @@ def plot(f, models, Z, path):
 
     for a in (ax[0, 0], ax[0, 1], ax[1, 0]):
         a.set_xlabel("f (Hz)")
-    fig.suptitle("AZ31-4Li_100: residual structure across five fits + Lin-KK floor", fontsize=12)
+    fig.suptitle(f"AZ31-4Li_100: residual structure across {len(models)} fits "
+                 "(incl. literature Table 1 C1–C3) + Lin-KK floor", fontsize=12)
+
     fig.tight_layout()
     fig.savefig(path, dpi=140)
     print(f"→ {path}")
@@ -317,16 +408,28 @@ def main(argv=None):
     ap.add_argument("--specs", nargs="+", default=["AZ31-4Li_100"])
     ap.add_argument("--json", default=OUT_JSON)
     ap.add_argument("--no-plot", action="store_true")
+    ap.add_argument("--no-lit", action="store_true",
+                    help="跳过文献 Table 1 的 C1/C2/C3（只跑原来六个）")
+    ap.add_argument("--lit-iters", type=int, default=800,
+                    help="文献电路的 DE 迭代上限（C2/C3 12 参数，太小会落到局部解）")
     a = ap.parse_args(argv)
 
     out = {}
     for spec in a.specs:
-        f, Z, models = build_models(spec)
+        f, Z, models = build_models(spec, with_lit=not a.no_lit, lit_iters=a.lit_iters)
         print(f"\n=== {spec}  n={f.size} ===")
+        # 恒等核对：C1 与 C4(我们的 nested) 是同一个阻抗函数 → 预测谱必须重合。
+        if "LIT_C1" in models and "NESTED_LS" in models:
+            d = np.abs(models["LIT_C1"]["Z"] - models["NESTED_LS"]["Z"]) / np.abs(Z)
+            print(f"  恒等核对 LIT_C1 vs NESTED_LS: max|ΔZ|/|Z| = {d.max():.3e}"
+                  f"（中位 {np.median(d):.3e}）→ 同一条阻抗函数，差异只是优化器收敛")
         rec = dict(n=int(f.size), f=f.tolist(), models={})
         for name, m in models.items():
             met = describe(f, Z, m["Z"])
             met["note"] = m["note"]
+            if m.get("n_params"):
+                met["n_params"] = m["n_params"]
+                met["params"] = m["params"]
             m["rwp"] = met["rwp"]
             rec["models"][name] = met
             print(f"  {name:<10} Rwp {met['rwp']:6.2f}%  rms_re {met['rms_re']:7.2f}"

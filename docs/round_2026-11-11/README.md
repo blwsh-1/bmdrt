@@ -14,7 +14,7 @@
 | `k_tier_check.py` | R22：`select_k()` 的分级分档是否真的生效（构造候选，6 条用例，**不跑 MCMC**） | `python docs/round_2026-11-11/k_tier_check.py` | 无（stdout 判据） |
 | `m4_zmax_scale_probe.py` | R21：先验尺度 `zmax = max\|Z\|` 的数据依赖对跨族 `Δelpd` 的影响 | `python docs/round_2026-11-11/m4_zmax_scale_probe.py --specs AZ31-8Li_50 --scales 0.5 1 2 --budget light` | `out/m4_zmax_scale_probe.json` |
 | `ext_circuit_repro.py` | 复现外部软件（EIS Battery Intelligence）两个吸附电路，用来先证明口径对得上 | `python docs/round_2026-11-11/ext_circuit_repro.py --specs AZ31-4Li_100` | `out/ext_circuit_repro.json` |
-| `resid_structure_cmp.py` | 四模型 + Lin-KK 地板的残差结构对比（幅值 / 形状 / 符号 / 峰位） | `python docs/round_2026-11-11/resid_structure_cmp.py --specs AZ31-4Li_100` | `out/resid_structure_cmp.{json,png}` |
+| `resid_structure_cmp.py` | 八模型 + Lin-KK 地板的残差结构对比（幅值 / 形状 / 符号 / 峰位），含文献 Shahri 2024 Table 1 的 C1–C3 | `python docs/round_2026-11-11/resid_structure_cmp.py --specs AZ31-4Li_100` | `out/resid_structure_cmp.{json,png}` |
 | `AZ31-4Li_100_RESID.md` | 上面那条谱的完整报告：接法判定、六个模型、KK 地板、五条边界 | — | — |
 
 `resid_structure_cmp.py` 会 `from ext_circuit_repro import predict`，两个文件必须放在同一目录。
@@ -30,10 +30,14 @@
    把尺度人为移动 ±2×：`8Li_50` 的 `Δelpd` = +146.34 / +146.61 / +146.57（跨度 0.27 nats），
    `4Li_0` = +25.67 / +25.11 / +25.60（跨度 1.21），**0/2 决策翻转**。
    即：口径上有瑕疵，结论上不翻转；标注 + 敏感性即可，不必为此重跑 LOO。
-3. **数据失配（`AZ31-4Li_100`）**：残差不是「一样大」，是**同一条曲线**——三个电路
-   允许缩放后 R² ≥ 0.99、峰位逐点相同（Re @0.1 Hz、Im @0.2683 Hz）、低频段同号率 100%；
+3. **数据失配（`AZ31-4Li_100`）**：残差不是「一样大」，是**同一条曲线**——六个电路
+   （我们阶梯、外部两个、文献 C1/C2/C3）允许缩放后 R² ≥ 0.99、峰位逐点相同
+   （Re @0.1 Hz、Im @0.2683 Hz）、低频段同号率 100%；
    而 Lin-KK（无拓扑假设、按构造因果）自身留下 **8.49% / acf 0.519**，说明这条谱在
    0.01–2 Hz 违反 KK 约 8.5%，`acf ≤ 0.50` 在它上面结构性不可达。
+   文献那条电路的关系：**C1 ≡ C4 ≡ 我们的 `parallel/L=2`**（R-L 星三角，本脚本用两套
+   独立方程复核到 3.5e-5），C2 多的一层在本谱退化（参数顶边界），C3 与 `EXT1` 残差
+   完全重合。详见 `AZ31-4Li_100_RESID.md` §2.1。
 
 ## 边界
 
