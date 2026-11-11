@@ -16,6 +16,7 @@
 | `ext_circuit_repro.py` | 复现外部软件（EIS Battery Intelligence）两个吸附电路，用来先证明口径对得上 | `python docs/round_2026-11-11/ext_circuit_repro.py --specs AZ31-4Li_100` | `out/ext_circuit_repro.json` |
 | `resid_structure_cmp.py` | 八模型 + Lin-KK（M=12 肘部阶）的残差结构对比（幅值 / 形状 / 符号 / 峰位），含文献 Shahri 2024 Table 1 的 C1–C3 | `python docs/round_2026-11-11/resid_structure_cmp.py --specs AZ31-4Li_100` | `out/resid_structure_cmp.{json,png}` |
 | `linkk_order_probe.py` | Lin-KK 阶数曲线（M=1…45）：8.49% 是「某一阶的拟合水平」而非下界 | `python docs/round_2026-11-11/linkk_order_probe.py --allow-overfit --max-M 45` | `out/linkk_order_probe.{json,md}` |
+| `dash_smoke.js` | 面板脚本的 DOM 桩冒烟（node）：boot 不抛异常、四个渲染器都产出非空 SVG | `node docs/round_2026-11-11/dash_smoke.js <提取出的 dashboard.js>` | — |
 | `AZ31-4Li_100_RESID.md` | 上面那条谱的完整报告：接法判定、六个模型、Lin-KK 阶数曲线、七条边界 | — | — |
 
 `resid_structure_cmp.py` 会 `from ext_circuit_repro import predict`，两个文件必须放在同一目录。

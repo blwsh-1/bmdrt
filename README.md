@@ -270,6 +270,34 @@ quick 档（800 warmup / 400 采样 / 2 链）与严格线（`tail ESS>400`、`�
 
 ---
 
+### 4.1 结果面板与出图
+
+拟合跑完后，同一条谱有三种出口，**都只读同一份 `AnalysisResult`**
+（`bm_result.py`：从 `real_*.json` + `*_samples.npz` 重算曲线、区间、残差、DRT）：
+
+```
+python bm_dash.py   out/<样品目录>              # 单文件交互面板 results/<stem>/dashboard.html
+python bm_dash.py   out/<样品目录> --bundle     # 同上，并写 data/ metadata/ manifest.json
+python bm_figure.py out/<样品目录> --all        # 出版图 png/svg/pdf/tiff（mm 尺寸）
+python bm_figure.py out/<样品目录> --theme nature --panels nyquist,drt --layout pair
+```
+
+也可以直接指向导出包（`results/<stem>`），包内自带 `metadata/source_result.json`，
+换机器也能重画。
+
+三条口径（详见 `docs/BMDRT_RESULT_AND_FIGURE_DESIGN.md` §5）：
+
+- 区间分**响应区间**（参数后验传播）与**后验预测区间**（含拟合噪声）两套，字段名不同，
+  默认只画前者；Re/Im 各自取分位，是矩形包络，**不是联合可信域**；
+- 标准化残差除以**本次拟合的 σ**（后验中位），不套 2% 观测噪声；
+- 判定分成「采样档」与「结构判据」两句，`采样达标（分级 2） · 结构判据 2/3`；
+  分级 1 一律显示为降级，`indistinguishable` 不包装成唯一最优。
+
+契约回归在 `test_contract.py` 的 **F1–F4**（曲线≡逐样本分位、残差≡恒等式、
+CSV≡图、sha256、判定口径、spec 可复现、面板载荷逐值相等）。
+
+---
+
 ## 5. 目录结构
 
 保持**扁平布局**：`bmdrt.py` 用 `Path(__file__).parent` 定位 `config.json`，
@@ -420,6 +448,7 @@ not_compared, rejected_by_kk}`（旧结果文件里的 `ok` 是 `converged` 的�
 
 | 文档 | 内容 |
 |------|------|
+| `docs/BMDRT_RESULT_AND_FIGURE_DESIGN.md` | **结果与图形系统设计（v1.0）**：三个出口（分析面板 / 出版图 / 数据包）、`AnalysisResult` 单一数据源、面板布局与理由、视觉编码、口径三条、导出目录契约、验收条件与已知限制 |
 | `docs/DIFFUSION_PLAN.md` | 扩散扩展方案：数学、先验、测试矩阵、模型选择 |
 | `docs/ADSORPTION_PROJECT.md` | **低频吸附电感元件立项书**：`R_ad∥L_ad` 定义、负 RC 恒等式、DRT 盲区、三区间可辨识性、M0–M6 里程碑与验收标准 |
 | `docs/MODEL_COVERAGE_PLAN.md` | **模型体系规划与覆盖地图**：三层架构（基础 / 特殊响应 / 族选择与可辨识性）、11 项现象覆盖状态与证据等级、注册表接口约定、可辨识性报告规范、按证据排序的立项队列与准入规则 |
