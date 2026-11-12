@@ -100,6 +100,14 @@ Zahner 的 modified Z-HIT 在此之上加了窗函数、端部外推和二阶修
 `phase_resid = angle(Z_pred / Z_obs)` 的统计量就有同样的相位敏感性，
 不引入新的模型误差、不加新算法、半小时能做完。**建议走这条，不走 Z-HIT。**
 
+**已落地（同日）**：`bm_kk._phase_resid()` 已接入 `kk_check()`，字段
+`phase_resid` 报 `rms_deg` / 分段 `bands` / `trend_deg_per_decade` / `ac1` /
+`systematic`。**只记账，不参与分级**（status 的代码路径完全不读它）。
+实测：干净谱 `AZ3` 0.14°、`AZ31-4Li_100` 4.04°（低频段 6.86°）。
+契约见 `test_contract.py` F10：干净谱 0.0011°；整体旋转 2° → 1.61° 且
+`ac1=0.58`（系统性），但幅值中段残差 3.4% 未超阈，**status 仍是 ok** ——
+这正是"幅值被 RC 链补偿、相位对不上"那个盲区被单独量出来的证据。
+
 ## 7. 顺带发现的数据陷阱
 
 `archive/AZ31-4Li.txt` 是 **6 列**：`index, f, Zre, Zim, Zre, Zim`（后两列重复）。

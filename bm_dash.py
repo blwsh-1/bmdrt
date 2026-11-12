@@ -1134,6 +1134,13 @@ function renderSide() {
   const warnHtml = (D.warnings || []).map(w => `<li>${md(w)}</li>`).join("")
     || '<li class="info">无</li>';
 
+  // 相位残差：Lin-KK 幅值达标时相位仍可能系统性偏离（RC 链互相补偿）。
+  // 只显示数值，不染色、不进判定——没有预注册的相位阈值。
+  const pr = (D.kk && D.kk.phase_resid && D.kk.phase_resid.rms_deg !== null
+              && D.kk.phase_resid.rms_deg !== undefined) ? D.kk.phase_resid : null;
+  const prHtml = pr ? `<div class="kv" title="Lin-KK 重建阻抗与实测阻抗的相位差（度）；只记账，不参与判定">
+      <span class="k">相位残差</span><span class="v">${fmt(pr.rms_deg, 2)}°</span></div>` : "";
+
   // Rwp 不上色：它没有预注册阈值，染色等于凭空造一条验收线。
   box.innerHTML = `
   <div class="sec"><h2>数据<span class="n">${D.n} 点</span></h2><div class="sb">
@@ -1148,6 +1155,7 @@ function renderSide() {
   <div class="sec"><h2>判定<span class="n">结构 ${nPass}/${nAll}</span></h2><div class="sb">
     <div style="margin-bottom:8px"><span class="chip ${lv}">${v.label}</span></div>
     <div class="checks">${chkHtml}${kkHtml}</div>
+    ${prHtml}
     <div style="font-size:10.5px;color:var(--sub);margin-top:7px;line-height:1.5">
       ${D.thresholds.acf} / ${D.thresholds.rhat} / ${D.thresholds.div} 是结构判据；
       采样分级达标 ≠ 残差结构过关。

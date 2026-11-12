@@ -1016,6 +1016,49 @@ def case_f9_nested_and_outwindow():
     return "F9-1…F9-4：nested τ 拐点物理自检、nested 定位正反、comp_out_window 三态、清单并存"
 
 
+def case_f10_phase_residual(tmp):
+    """F10：Lin-KK 的**相位**残差 —— 只记账、不改分级；对相位旋转敏感。
+
+    Lin-KK 拟合复阻抗，RC 链可以在幅值上互相补偿：幅值残差达标了，相位
+    仍可能系统性偏离。这里钉住三件事：
+      F10-1 干净谱的相位残差应≈0（不会乱发）
+      F10-2 同一谱整体旋转 2°：相位残差必须看得出来，**而 status 仍是 ok**
+            （幅值残差 3.0% 未超阈）——这正是"只记账不裁决"的契约
+      F10-3 系统性时必须在 attribution 里点名，否则这个量没人会看
+      F10-4 纯电阻谱 ≈0；字段可过 `allow_nan=False`
+    """
+    import bm_kk as KK
+
+    def zarc(f, R_inf=10.0, R=90.0, f0=100.0, phi=0.8):
+        w = 2 * np.pi * f
+        return R_inf + R / (1 + (1j * w / (2 * np.pi * f0)) ** phi)
+
+    f = np.logspace(5, -2, 51)
+    z = zarc(f)
+
+    g0 = KK.kk_check(f, z, auto_tail=False)
+    p0 = g0["phase_resid"]
+    assert p0["n"] == f.size and set(p0["bands"]) == {"low", "mid", "high"}
+    assert p0["rms_deg"] < 0.1, f"干净谱相位残差 {p0['rms_deg']:.4f}° 偏大"
+    json.dumps(p0, ensure_ascii=False, allow_nan=False)   # 不许有 nan/inf
+
+    # 2° 整体相位旋转：幅值不变，但相位对不上
+    g2 = KK.kk_check(f, z * np.exp(1j * np.radians(2.0)), auto_tail=False)
+    p2 = g2["phase_resid"]
+    assert p2["rms_deg"] > 1.0, (
+        f"2° 旋转没被看出来：{p2['rms_deg']:.3f}° vs 干净 {p0['rms_deg']:.4f}°")
+    assert g2["status"] == "ok", (
+        f"相位残差把 status 从 ok 改成了 {g2['status']}——它只该记账"
+        f"（幅值中段 {g2['rms_clean']['mid']:.1%} 未超阈）")
+    assert any("相位残差" in a for a in g2["attribution"]), \
+        "系统性相位偏离没进 attribution，等于没报"
+
+    gR = KK.kk_check(f, np.full(f.size, 50.0) + 0j, auto_tail=False)
+    assert gR["phase_resid"]["rms_deg"] < 1e-9, "纯电阻谱的相位残差不是 0"
+    return (f"干净 {p0['rms_deg']:.4f}° / 旋转2° {p2['rms_deg']:.2f}°"
+            f"（status 仍 {g2['status']}）/ 纯阻 {gR['phase_resid']['rms_deg']:.0e}")
+
+
 CASES = [
     ("A1 合法用法", case_a1_legal_forms, False),
     ("A2 未知开关", case_a2_unknown_flags, False),
@@ -1042,6 +1085,7 @@ CASES = [
     ("F7 spec 嵌套校验", case_f7_spec_nested_keys, False),
     ("F8 guard 族适配", case_f8_guard_semantics, False),
     ("F9 nested/窗口", case_f9_nested_and_outwindow, False),
+    ("F10 相位残差", case_f10_phase_residual, False),
 ]
 
 

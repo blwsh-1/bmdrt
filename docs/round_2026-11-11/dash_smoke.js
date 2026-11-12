@@ -178,4 +178,24 @@ try {
   pass("export-drawer", "5 个配色槽 + spec");
 } catch (e) { fail("export-drawer", e.message); }
 
+/* ---------- ⑧ 相位残差：有值显示、null 不显示、不参与判定 ---------- */
+try {
+  const keep = D.kk;
+  D.kk = { status: "ok", reason: "测试", phase_resid: { rms_deg: 2.5 } };
+  renderSide();
+  const h1 = node("#side").innerHTML;
+  if (!h1.includes("相位残差")) throw new Error("有 phase_resid 时没显示");
+  if (/chk (pass|warn|fail)/.test(h1.split("相位残差")[0].split("Lin-KK").pop() || ""))
+    throw new Error("相位残差被染了色（无预注册阈值，不许上色）");
+  // 旧产物没有该字段：必须安静地不显示，不能出现 undefined
+  D.kk = { status: "ok", reason: "测试", phase_resid: null };
+  renderSide();
+  const h2 = node("#side").innerHTML;
+  if (h2.includes("相位残差") || /undefined/.test(h2))
+    throw new Error("phase_resid 为 null 时仍渲染（或出现 undefined）");
+  D.kk = keep;
+  renderSide();
+  pass("phase-resid", "有值显示 / null 静默 / 不上色");
+} catch (e) { fail("phase-resid", e.message); }
+
 console.log(bad ? `\n${bad} 项失败` : "\n全部通过");process.exit(bad ? 1 : 0);

@@ -309,6 +309,75 @@ def _residual_structure(f, r: dict) -> dict:
     return out
 
 
+def _phase_resid(f, Z, r: dict) -> dict:
+    """Lin-KK 重建阻抗与实测阻抗的**相位**残差（度）。
+
+    为什么单看幅值残差不够
+    ----------------------
+    Lin-KK 拟合的是复阻抗，RC 链可以在幅值上用多个时间常数互相补偿：
+    幅值对上了，相位可以不对。而 K-K 约束的本质就是幅值与相位互为
+    Hilbert 变换 —— 相位侧的偏差同样是"不自洽"的证据，只是更容易被
+    幅值的自由度吸收。
+
+    与 Z-HIT 的分工：Z-HIT 从相位**积分**出幅值再比，自带 1%–3% 的模型
+    误差（见 `bm_zhit.py` 与 `round_2026-11-12/ZHIT_PROTOTYPE.md`）；这里
+    直接拿 Lin-KK 已算出的 `Z_fit` 取相位差，**没有额外模型误差**，代价
+    是它继承了 Lin-KK 的表达力上限 —— 若 Lin-KK 根本拟合不好，相位残差
+    也会跟着大，此时它说明不了"相位不自洽"，只说明"拟合差"。
+
+    只报数、不改 status：相位角的容许偏差随 |Z|、噪声和端部效应变化，
+    本项目没有预注册的相位阈值，不造一个来卡分级。`systematic` 沿用
+    `_residual_structure` 的口径（中段 ac1>0.5），不是新判据。
+    """
+    nan = float("nan")
+    out = {"rms_deg": None, "max_abs_deg": None, "bands": None,
+           "trend_deg_per_decade": None, "ac1": None, "systematic": False,
+           "n": 0}
+    if "Z_fit" not in r or f is None:
+        return out
+    f = np.asarray(f, float)
+    Z = np.asarray(Z, complex)
+    if f.size != Z.size or f.size < 9:
+        return out
+
+    # 折叠到 (-180, 180]：两个相角都很接近时本该是小量，除非发生 ±π 跳变
+    d = np.degrees(np.angle(r["Z_fit"]) - np.angle(Z))
+    d = (d + 180.0) % 360.0 - 180.0
+    out["n"] = int(f.size)
+    out["rms_deg"] = float(np.sqrt(np.mean(d ** 2)))
+    out["max_abs_deg"] = float(np.max(np.abs(d)))
+
+    lf = np.log10(f)
+    q1, q2 = np.quantile(lf, [1.0 / 3.0, 2.0 / 3.0])
+    masks = {"low": lf <= q1, "mid": (lf > q1) & (lf <= q2), "high": lf > q2}
+    if not all(bool(m.any()) for m in masks.values()):
+        masks = {k: np.ones(lf.size, bool) for k in masks}
+    out["bands"] = {k: float(np.sqrt(np.mean(d[m] ** 2)))
+                    for k, m in masks.items()}
+
+    uc = lf - lf.mean()
+    out["trend_deg_per_decade"] = float(
+        np.sum(uc * d) / max(float(np.sum(uc ** 2)), 1e-30))
+
+    # 中段 ac1：与 _residual_structure 同一套间距筛选，避免稀疏谱失真
+    x = d[masks["mid"]]
+    ac1 = nan
+    if x.size >= 4:
+        dlf = np.diff(lf[masks["mid"]])
+        pair = np.ones(dlf.size, bool)
+        if dlf.size >= 4:
+            med = float(np.median(dlf))
+            if med > 0:
+                pair = (dlf >= 0.5 * med) & (dlf <= 2.0 * med)
+        if int(pair.sum()) >= 3:
+            a, b = x[:-1][pair], x[1:][pair]
+            sd = float(np.std(np.concatenate([a, b])))
+            ac1 = 1.0 if sd <= 1e-30 else float(np.corrcoef(a, b)[0, 1])
+    out["ac1"] = None if not np.isfinite(ac1) else float(ac1)
+    out["systematic"] = bool(np.isfinite(ac1) and ac1 > 0.5)
+    return out
+
+
 # --------------------------------------------------------------------------
 # 两种"可解释的端部偏差"诊断量（都不改写数据）
 # --------------------------------------------------------------------------
@@ -578,7 +647,7 @@ def kk_check(f, Z, include_L=None, c: float = 0.85, max_M: int = 50,
     base = dict(status="ok", reason="", mu=None, M=None, mu_converged=None,
                 mu_overfit=None, M_scanned=None,
                         rms_raw=None, rms_cap=None, rms_clean=None,
-                residual_structure=None, res_tol=float(res_tol),
+                residual_structure=None, phase_resid=None, res_tol=float(res_tol),
                 L_fit=None, L_est=None, f_cut=None, tail_slope=None, tail=None,
                 attribution=[], n=int(f.size),
                 f_min=float(f.min()), f_max=float(f.max()))
@@ -635,6 +704,10 @@ def kk_check(f, Z, include_L=None, c: float = 0.85, max_M: int = 50,
     base["rms_clean"] = rms_clean
     struct = _residual_structure(f, raw)
     base["residual_structure"] = struct
+    # 相位侧残差：幅值残差达标 ≠ 相位自洽（RC 链可在幅值上互相补偿）。
+    # 只记账、不参与分级；status 的计算完全不看它，见函数 docstring。
+    pr = _phase_resid(f, Z, raw)
+    base["phase_resid"] = pr
     mu_txt = (f"μ={base['mu']:.2f}" if base["mu"] is not None else "μ=n/a")
 
     # ---- 归因 ----
@@ -680,6 +753,18 @@ def kk_check(f, Z, include_L=None, c: float = 0.85, max_M: int = 50,
     if raw.get("mu_overfit"):
         attr.append(f"μ={base['mu']:.2f} <0.1：RC 系数出现大量负值，接近过拟合，"
                     f"残差判据可能偏松，引用结论前需人工复核")
+    # 相位残差系统性 + 幅值残差达标 = Lin-KK 的幅值补偿盲区。
+    # 两个条件都用现成口径（ac1>0.5、res_tol），不引入新阈值。
+    if (pr.get("bands") and pr["systematic"]
+            and rms_clean["mid"] <= res_tol):
+        b = pr["bands"]
+        attr.append(
+            f"相位残差 {pr['rms_deg']:.2f}°（高/中/低="
+            f"{b['high']:.2f}/{b['mid']:.2f}/{b['low']:.2f}°，"
+            f"趋势 {pr['trend_deg_per_decade']:+.2f}°/decade，"
+            f"ac1={pr['ac1']:.2f}）：幅值中段残差已达标，但相位系统性偏离 → "
+            f"RC 链在幅值上互相补偿；引用相位相关结论（CPE 指数、扩散角、"
+            f"虚部形状）前须复核")
     base["attribution"] = attr
 
     # ---- 分级 ----
@@ -745,6 +830,15 @@ def format_report(g: dict) -> str:
                         else "非系统性 → 更可能是噪声/表达力不足")
             lines.append(f"    中段残差结构 ac1(实/虚)={s['ac1_re']:.2f}/"
                          f"{s['ac1_im']:.2f}；{tail}")
+        pr = g.get("phase_resid") or {}
+        if pr.get("rms_deg") is not None:
+            b = pr["bands"]
+            lines.append(
+                f"    相位残差 RMS={pr['rms_deg']:.2f}°"
+                f"（高/中/低={b['high']:.2f}/{b['mid']:.2f}/{b['low']:.2f}°）"
+                f"，趋势 {pr['trend_deg_per_decade']:+.2f}°/decade"
+                + (f"，ac1={pr['ac1']:.2f}"
+                   if pr.get("ac1") is not None else ""))
         if g.get("L_fit") is not None:
             lines.append(f"    Lin-KK 自由串联电感 L_fit={g['L_fit']:.3g} H"
                          + (f"（高频稳健估计 L={g['L_est']:.3g} H）"
