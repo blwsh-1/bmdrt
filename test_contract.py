@@ -956,6 +956,66 @@ def case_f8_guard_semantics():
     return "F8-1…F8-6 共 6 项：K=1 不误报、K=2 不漏报、φ/ζ/n1 贴边必报、nested 对照、固定参数"
 
 
+def case_f9_nested_and_outwindow():
+    """F9：nested 分量定位（τ 派生）+ voigt 的 `comp_out_window`。
+
+    两件事都只测**该响的响、该静的静**，并守住「comp_out_window 与
+    comp_unresolved 分开报、不压成一个布尔」这条口径。
+    """
+    import bm_select as SEL
+
+    n = 500
+    rng = np.random.default_rng(11)
+
+    # F9-1 nested τ 派生公式：拐点处 |Z_CPE| = R1（物理自检，非循环）
+    R1, Q1, n1, f_ref = 55.0, 200.0, 0.75, 1.0
+    s = dict(R1=np.full(n, R1) + 1e-6 * rng.normal(size=n),
+             Q1=np.full(n, Q1) + 1e-6 * rng.normal(size=n),
+             n1=np.full(n, n1) + 1e-7 * rng.normal(size=n),
+             R_ad=np.full(n, 3000.0), tau_ad=np.full(n, 1.6))
+    d = SEL.nested_component_spans(s, f_ref, "parallel", 1)
+    assert d is not None and "tau1" in d["tau_names"]
+    import bm_top as TOP
+    tau1 = d["tau_med"][d["tau_names"].index("tau1")]
+    zc = TOP.z_cpe(np.array([1.0 / (2 * np.pi * tau1)]), Q1, n1, f_ref=f_ref)
+    assert abs(abs(zc[0]) - R1) / R1 < 0.02, (
+        f"F9-1 τ1 拐点不对：|Z_CPE|={abs(zc[0]):.3f} 应≈R1={R1}")
+
+    # F9-2 nested：τ2 摊开 >2 dec → triggered；全紧 → ok
+    s2 = dict(Rs=10.0 + 0.1 * rng.normal(size=n),
+              R1=55.0 + 1.0 * rng.normal(size=n),
+              Q1=200.0 + 2.0 * rng.normal(size=n),
+              n1=0.75 + 0.01 * rng.normal(size=n),
+              R2=np.exp(np.log(600.0) + 1.5 * rng.normal(size=n)),
+              Q2=900.0 + 3.0 * rng.normal(size=n),
+              n2=0.85 + 0.01 * rng.normal(size=n),
+              R_ad=3000.0 + 5.0 * rng.normal(size=n),
+              tau_ad=1.6 + 0.01 * rng.normal(size=n))
+    c = dict(family="nested", dof=2, branch="parallel",
+             raw=dict(s=s2, f_ref=f_ref), rhat=1.0, div=0, ok=True)
+    assert SEL.guard_state(c, n_draw=n)["comp_unresolved"] == "triggered", \
+        "F9-2 τ2 跨 >2 dec 没被判 unresolved"
+    s2t = dict(s2, R2=600.0 + 3.0 * rng.normal(size=n))
+    c = dict(family="nested", dof=2, branch="parallel",
+             raw=dict(s=s2t, f_ref=f_ref), rhat=1.0, div=0, ok=True)
+    assert SEL.guard_state(c, n_draw=n)["comp_unresolved"] == "ok", \
+        "F9-2b 全紧的 nested 被误判 unresolved"
+
+    # F9-3 voigt comp_out_window：跑出窗口 → triggered；窗内 → ok；缺 → not_evaluable
+    def _voigt_out(p_out):
+        c = dict(family="voigt", dof=2,
+                 raw=dict(s=dict(tau=np.ones((n, 2)), w=np.ones((n, 2))),
+                          p_tau_out=p_out), rhat=1.0, div=0, ok=True)
+        return SEL.guard_state(c, n_draw=n)["comp_out_window"]
+    assert _voigt_out([0.9, 0.1]) == "triggered"
+    assert _voigt_out([0.1, 0.2]) == "ok"
+    assert _voigt_out(None) == "not_evaluable"
+
+    # F9-4 GUARD_B 现在含 comp_out_window 且与 comp_unresolved 并存
+    assert "comp_out_window" in SEL.GUARD_B and "comp_unresolved" in SEL.GUARD_B
+    return "F9-1…F9-4：nested τ 拐点物理自检、nested 定位正反、comp_out_window 三态、清单并存"
+
+
 CASES = [
     ("A1 合法用法", case_a1_legal_forms, False),
     ("A2 未知开关", case_a2_unknown_flags, False),
@@ -981,6 +1041,7 @@ CASES = [
     ("F6 标准化残差半失效", case_f6_norm_sigma_halves, False),
     ("F7 spec 嵌套校验", case_f7_spec_nested_keys, False),
     ("F8 guard 族适配", case_f8_guard_semantics, False),
+    ("F9 nested/窗口", case_f9_nested_and_outwindow, False),
 ]
 
 

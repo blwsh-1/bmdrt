@@ -361,6 +361,23 @@ def part_c():
           all(len(v) >= 1 for v in SEL.PRIOR_BOUNDS.values()),
           "；".join(f"{k}:{list(v)}" for k, v in SEL.PRIOR_BOUNDS.items()))
 
+    # C6 nested 分量 τ 的派生公式：拐点处 |Z_CPE| = R（物理自检，非循环）。
+    # τ1 = (R1/Q1)^(1/n1)/(2π·f_ref)，代入 f = 1/(2π·τ1) 应有 |Z_CPE| = R1。
+    rng = np.random.default_rng(0)
+    n = 200
+    R1, Q1, n1, f_ref = 55.0, 200.0, 0.75, 1.0
+    s = dict(R1=np.full(n, R1) + 1e-6 * rng.normal(size=n),
+             Q1=np.full(n, Q1) + 1e-6 * rng.normal(size=n),
+             n1=np.full(n, n1) + 1e-7 * rng.normal(size=n),
+             R_ad=np.full(n, 3000.0), tau_ad=np.full(n, 1.6))
+    d = SEL.nested_component_spans(s, f_ref, "parallel", 1)
+    tau1 = d["tau_med"][d["tau_names"].index("tau1")] if d else None
+    zc = TOP.z_cpe(np.array([1.0 / (2 * np.pi * (tau1 or 1.0))]),
+                   Q1, n1, f_ref=f_ref)
+    check("C6 nested τ 拐点处 |Z_CPE|≈R1",
+          tau1 is not None and abs(abs(zc[0]) - R1) / R1 < 0.02,
+          f"τ1={tau1:.4g} s  |Z_CPE|={abs(zc[0]):.4g}  R1={R1}")
+
 
 # ==========================================================================
 # 汇总

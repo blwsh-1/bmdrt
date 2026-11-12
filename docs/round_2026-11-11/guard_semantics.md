@@ -64,25 +64,55 @@ K=2 38 条、K=3/4 各 1 条。
   标量路径仍是 `CORR_STRONG=0.95`。两个数值统一（任选一边）会改变其中一族的
   既有状态，属**阈值调整**，需要单独预注册；本轮只在翻转表里用 0.95 复筛
   隔离了这个效应，未改任何常量。
-- `p_tau_out`（分量 τ 跑出窗口）与 nested 侧「分量是否定位」仍不在 guard 里，
-  属下一轮（与 `comp_unresolved` 分开报告，不压成一个布尔）。
 
 ## 5. 契约与自检
 
-- `test_contract.py` F8（`case_f8_guard_semantics`，F8-1…F8-6）：K=1 总量补偿
-  不误报、K=2 的 `w₁–τ₁` 简并必报、`φ/ζ/n1` 贴边必报、nested 对照、固定参数
-  记 `fixed`。**24/24 通过**（全量含 2 次 quick 拟合）。
-- `bm_check.py` C 组（C1–C5）：`PRIOR_BOUNDS` 与 `bm_core.make_model` 签名
-  默认值 / 源码字面量、`bm_top._prior_table` 真实分布逐条对拍。**23/23 通过**。
+- `test_contract.py` F8（`case_f8_guard_semantics`，F8-1…F8-6）+ F9
+  （`case_f9_nested_and_outwindow`，F9-1…F9-4）。全量 **25/25** 通过。
+- `bm_check.py` C 组（C1–C6）：`PRIOR_BOUNDS` 对拍 + nested τ 派生公式物理自检。
+  **24/24 通过**。
 - `bmdrt.py check` **18/18** 通过（生产回归无扰动）。
 
 ## 6. 文件
 
 | 文件 | 改动 |
 |---|---|
-| `bm_select.py` | `_corr_pairs` 留 nested 用；新增 `_guard_deg_pairs`/`at_bound_frac`/`guard_detail`；`guard_state` 两族分判；候选带 `guard_detail` |
-| `bm_check.py` | 新增 C 组先验边界对拍 |
-| `test_contract.py` | 新增 F8 |
+| `bm_select.py` | `_corr_pairs` 留 nested 用；新增 `_guard_deg_pairs`/`at_bound_frac`/`nested_component_spans`/`_comp_out_state`/`guard_detail`；`guard_state` 两族分判；候选带 `guard_detail`/`comp_out_*` |
+| `bm_check.py` | 新增 C 组先验边界对拍（C1–C5）+ nested τ 拐点自检（C6） |
+| `test_contract.py` | 新增 F8、F9 |
 | `docs/round_2026-11-11/guard_fix_flip.py` | 翻转表脚本（含修复前冻结实现） |
 | `out/guard_fix_flip.json` | 381 条翻转明细 + 汇总 |
 | `NESTED_TOPOLOGY_PROJECT.md` | 订正 §9.4.15/§9.4.17 对 `param_degenerate` 的错误归因 |
+| `docs/WS_CRITERION_PLAN.md` | §5.1 补 npj 第三套独立实现外部证据 |
+| `docs/REFS_DIGEST.md` | §2.B3 收窄为「限定元件形态」、§2.C 记 A4 只到第三层 |
+
+## 7. nested `comp_unresolved`（预注册口径，2026-11-12）
+
+补的是主线族的对称缺口：nested 侧此前 `comp_unresolved` 恒 `not_applicable`。
+
+**口径**（写死，实现 `bm_select.nested_component_spans`）：
+
+- 「分量」= 每层 R∥CPE 的拐点时间常数 + 支路：
+  - `τ1 = (R1/Q1)^(1/n1) / (2π·f_ref)`，`τ2 = (R2/Q2)^(1/n2) / (2π·f_ref)`（`layers=2` 才有）；
+  - `τ_branch = tau_ad`（parallel）/ `tau_L`（series）；
+  - `f_ref = sqrt(f_min·f_max)` 取 `fit_top` 返回的 `f_ref`；`Q` 是窗口幅值
+    （`Z_CPE = Q·(ω_ref/ω)^n·e^{-jnπ/2}`），拐点取 `|Z_CPE| = R`。
+- **labeled 标量参数，不做排序/对齐**（无编号跳变），直接按名取；
+- 判据只认 τ 的 5–95% 跨 `> 2 decade`（与 voigt 同一理由：窗口约 5 decade）；
+- **无幅值判据**（nested 无 stick-breaking 权重）；「支路幅值近零」由 `loop_amp`
+  （`R_ad`/`R_L` < 3σ）单独管，与本项互补、不合并。
+
+**语义差异必须写清**：voigt 的 `comp_unresolved` 管「多余分量没被定住（K 冗余）」，
+nested 这里管「结构上的每一层/支路有没有被定住」——同名 guard、两个对象。
+
+## 8. voigt `comp_out_window`（2026-11-12）
+
+把 `bm_real` 早已算好的 `p_tau_out`（`P(f_τ ∉ [f_lo,f_hi])`，逐分量）接成 B 类
+guard：`max_k p_tau_out > 0.5 → triggered`（0.5 与 `bm_real` 既有报警口径一致）。
+与 `comp_unresolved` **分开报、不压成一个布尔**：
+- `comp_unresolved` = 后验 τ 跨 >2 dec 或幅值 <5%（"宽/小"，窗内没定位）；
+- `comp_out_window` = τ 分布落在窗外（"远"，跑到看不见的地方）。
+合成探针已证「远」这一支两个现有 guard 都漏（τ 紧贴推到 ~1e4 s，span 仅 1.3 dec）。
+
+nested 侧 `comp_out_window` 暂 `not_applicable`（`fit_top` 未算 `p_tau_out`；
+其 τ 已在窗外与否可用 §7 的 `tau_med` 对照窗口，留待后续）。

@@ -210,8 +210,13 @@ RETRY_SEED_STEP = 1000    # 重跑换随机流，不复用原 seed
 #: not_applicable —— 算不出来就显式写 not_evaluable，绝不填 ok 冒充通过。
 GUARD_A = ("rhat", "div_frac", "ess_bulk", "ess_tail", "bad_k", "loo_ok", "tree_cap")
 GUARD_B = ("param_at_bound", "param_degenerate", "loop_amp", "loop_corner",
-           "comp_unresolved")
+           "comp_unresolved", "comp_out_window")
 GUARD_NAMES = GUARD_A + GUARD_B
+
+#: `comp_out_window` 的阈值：`P(f_τ ∉ [f_lo, f_hi])` 的最大值超过它就算
+#: 「分量 τ 跑到测量窗口外」。0.5 与 `bm_real` 既有口径一致（那里对
+#: `P(f_c > f_max) > 0.5` 报警），不是新造的数。
+COMP_OUT_FRAC = 0.5
 
 #: 族内「降配参赛」判据（v1.4 修实现缺陷，见 §9.4.1）：被质量门禁剔除的候选，
 #: 若其 elpd 比该族**实际参赛**的最优候选还高出这么多 nats，说明这次剔除改变了
@@ -348,6 +353,7 @@ def fit_voigt(f, Z, K: int, *, seed: int = 0, include_L: bool = False,
     comp_state = ("not_evaluable" if ec is None else
                   "not_applicable" if ec["k"] < 2 else
                   "triggered" if ec["unresolved"] else "ok")
+    cout_state, cout_frac = _comp_out_state(r.get("p_tau_out"))
     cand = dict(family="voigt", dof=K, branch=None, label=f"K={K}{caps}",
                 include_L=bool(include_L), adsorption=adsorption,
                 elpd=float(r["elpd"]), se=float(r["elpd_se"]), pointwise=pt,
@@ -356,7 +362,8 @@ def fit_voigt(f, Z, K: int, *, seed: int = 0, include_L: bool = False,
                 k_eff=(None if ec is None else int(ec["n_resolved"])),
                 comp_state=comp_state,
                 comp_span=(None if ec is None else list(ec["span_dec"])),
-                comp_amp=(None if ec is None else list(ec["amp_frac"])))
+                comp_amp=(None if ec is None else list(ec["amp_frac"])),
+                comp_out_state=cout_state, comp_out_frac=cout_frac)
     # B 类两项的明细（2026-11-11）：判据只有 `guard_state()` 一份，这里只是
     # 把「为什么是这个状态」落盘，避免事后要重跑 MCMC 才能解释状态翻转。
     cand["guard_detail"] = guard_detail(cand)
@@ -390,6 +397,12 @@ def fit_nested(f, Z, layers: int, *, branch: str = BRANCH, seed: int = 0,
                 elpd=float(o["elpd"]), se=float(o["elpd_se"]), pointwise=pt,
                 div=int(o.get("divergences") or 0), rhat=o.get("rhat_max"),
                 grade=None, ok=_usable(pt, o["elpd"]), raw=o)
+    ncs = nested_component_spans(o.get("s") or {}, o.get("f_ref"),
+                                 branch=branch, layers=layers)
+    cand["comp_state"] = ("not_evaluable" if ncs is None else
+                          "triggered" if ncs["unresolved"] else "ok")
+    cand["comp_span"] = None if ncs is None else list(ncs["span_dec"])
+    cand["comp_tau_names"] = None if ncs is None else list(ncs["tau_names"])
     cand["guard_detail"] = guard_detail(cand)
     return cand
 
@@ -564,6 +577,25 @@ def at_bound_frac(s: dict, family: str, *, phi_lo: float | None = None
                              bounds={k: list(v) for k, v in spec.items()})
 
 
+def _comp_out_state(p_tau_out) -> tuple[str, list | None]:
+    """`comp_out_window`（voigt）的判定：分量 τ 跑到窗口外的概率。
+
+    `p_tau_out`（`bm_real` 已算，形状 `(K,)`）= `P(f_τ ∉ [f_lo, f_hi])`。
+    与 `comp_unresolved` 是**两个概念**，不许压成一个布尔：
+      · `comp_unresolved` = 后验 τ 跨 >2 dec 或幅值 <5%（"宽/小"，没定位）；
+      · `comp_out_window` = τ 的中位/分布落在窗外（"远"，跑到看不见的地方）。
+    前者管"窗内定不住"，后者管"根本不在窗内"。合成探针（2026-11-11）证明
+    「远」这一支两个现有 guard 都漏（τ 紧贴地推到 ~1e4 s，span 只有 1.3 dec）。
+    """
+    a = np.asarray(p_tau_out, float).ravel()
+    a = a[np.isfinite(a)]
+    if a.size == 0:
+        return "not_evaluable", None
+    frac = float(np.max(a))
+    # 返回 (状态, 逐分量列表)；状态只由最大值定，逐分量列表供报表
+    return ("triggered" if frac > COMP_OUT_FRAC else "ok", list(a))
+
+
 def guard_detail(c: dict) -> dict:
     """B 类两项（`param_degenerate` / `param_at_bound`）的明细，**只供审计**。
 
@@ -578,10 +610,16 @@ def guard_detail(c: dict) -> dict:
                              phi_lo=raw.get("phi_lo"))
     if is_v:
         dp, dw = _guard_deg_pairs(raw.get("param_corr"), c.get("dof"))
+        comp = dict(span=raw.get("comp_span") or [],
+                    out_frac=raw.get("p_tau_out"))
     else:
         dp = [dict(a=a, b=b, rho=r) for a, b, r in _corr_pairs(s)]
         dw = ""
-    return dict(at_bound_frac=bf, at_bound=bdet, deg_pairs=dp, deg_why=dw)
+        comp = nested_component_spans(s, raw.get("f_ref"),
+                                      branch=(c.get("branch") or BRANCH),
+                                      layers=int(c.get("dof") or 1))
+    return dict(at_bound_frac=bf, at_bound=bdet, deg_pairs=dp, deg_why=dw,
+                comp=comp)
 
 
 def unresolved_components(s: dict, *, amp: float = COMP_UNRES_AMP,
@@ -624,6 +662,74 @@ def unresolved_components(s: dict, *, amp: float = COMP_UNRES_AMP,
     bad = [j for j in range(k) if span[j] > decade or frac[j] < amp]
     return dict(k=k, span_dec=span, amp_frac=frac, unresolved=bad,
                 n_resolved=k - len(bad))
+
+
+def nested_component_spans(s: dict, f_ref: float, branch: str = "parallel",
+                           layers: int = 2,
+                           decade: float = COMP_UNRES_DECADE) -> dict | None:
+    """nested 族每个「分量」的特征 τ 的 5–95% 跨度（decade）。
+
+    口径（2026-11-11 预注册，见 `docs/round_2026-11-11/guard_semantics.md`
+    §7「nested comp_unresolved」）：
+
+    · nested 是 **labeled 标量参数**，不做排序/对齐（无编号跳变），直接按名取；
+    · 「分量」= 每层 R∥CPE 的拐点时间常数 + 支路：
+          τ1      = (R1/Q1)^(1/n1) / (2π·f_ref)
+          τ2      = (R2/Q2)^(1/n2) / (2π·f_ref)     （layers=2 才有）
+          τ_branch = tau_ad（parallel）/ tau_L（series）
+      其中 `f_ref = sqrt(f_min·f_max)` 是 `fit_top` 存的参考频率；Q 是窗口幅值
+      （`Z_CPE = Q·(ω_ref/ω)^n·e^{-jnπ/2}`），拐点取 `|Z_CPE| = R`；
+    · 判据只看 τ 的 5–95% 跨 `> decade`（2 dec，与 voigt 同一理由：窗口约
+      5 decade，定不到 2 decade 不算独立弛豫）；
+    · **无幅值判据**（nested 无 stick-breaking 权重）；「支路幅值近零」由
+      `loop_amp`（`R_ad`/`R_L` < 3σ）单独管，与本项互补，不合并。
+
+    与 voigt 的 `comp_unresolved` 语义对不上一个字都不能混：那边管「多余分量
+    没被数据定住（K 冗余）」，这里管「**结构上的每一层/支路**有没有被定住」。
+    返回 `dict(k, tau_names, span_dec, unresolved, n_resolved)`；
+    `None` = 缺参数（`not_evaluable`）。
+    """
+    if not s or f_ref is None or not np.isfinite(float(f_ref)):
+        return None
+    names, ln_tau_cols = [], []
+    # 每层拐点 τ = exp((ln R − ln Q)/n) / (2π·f_ref)
+    for tag, rk, qk, nk in (("tau1", "R1", "Q1", "n1"),
+                            ("tau2", "R2", "Q2", "n2")):
+        if layers < 2 and tag == "tau2":
+            continue
+        if rk not in s or qk not in s or nk not in s:
+            continue
+        R = np.asarray(s[rk], float).ravel()
+        Q = np.asarray(s[qk], float).ravel()
+        n = np.asarray(s[nk], float).ravel()
+        if R.size < 2 or Q.size < 2 or n.size < 2:
+            continue
+        ok = np.isfinite(R) & np.isfinite(Q) & np.isfinite(n) & \
+            (R > 0) & (Q > 0) & (n > 0)
+        if ok.sum() < 2:
+            continue
+        ln_tau = (np.log(R[ok]) - np.log(Q[ok])) / n[ok] - np.log(2.0 * np.pi * float(f_ref))
+        names.append(tag)
+        ln_tau_cols.append(ln_tau)
+    # 支路：直接采样的 tau_ad / tau_L
+    for tag, tk in (("branch", "tau_ad"), ("branch", "tau_L")):
+        if tk not in s:
+            continue
+        t = np.asarray(s[tk], float).ravel()
+        t = t[np.isfinite(t) & (t > 0)]
+        if t.size < 2:
+            continue
+        names.append(tk)
+        ln_tau_cols.append(np.log(t))
+        break
+    if not names:
+        return None
+    span = [float((np.percentile(lt, 95) - np.percentile(lt, 5)) / np.log(10.0))
+            for lt in ln_tau_cols]
+    tau_med = [float(np.exp(np.median(lt))) for lt in ln_tau_cols]
+    bad = [j for j in range(len(names)) if span[j] > decade]
+    return dict(k=len(names), tau_names=names, span_dec=span, tau_med=tau_med,
+                unresolved=bad, n_resolved=len(names) - len(bad))
 
 
 def guard_state(c: dict, n_draw: int, f_max: float | None = None) -> dict:
@@ -713,10 +819,17 @@ def guard_state(c: dict, n_draw: int, f_max: float | None = None) -> dict:
             g["comp_unresolved"] = "not_applicable"
         else:
             g["comp_unresolved"] = "triggered" if ec["unresolved"] else "ok"
+        # 分量跑出窗口：与 comp_unresolved 分开报（"远" vs "宽/小"）。
+        g["comp_out_window"], _ = _comp_out_state(raw.get("p_tau_out"))
     else:
-        # nested 无 stick-breaking 权重，「冗余分量」的判据口径未定（M5）；
-        # 结构性不提供 ≠ 通过，故 not_applicable 而不是 ok。
-        g["comp_unresolved"] = "not_applicable"
+        # nested 侧「分量定位」：由 labeled 参数派生每层/支路 τ，跨度 >2 dec
+        # 即「该层没被数据定住」（2026-11-11 补，此前恒 not_applicable）。
+        ncs = nested_component_spans(s, raw.get("f_ref"),
+                                     branch=(c.get("branch") or BRANCH),
+                                     layers=int(c.get("dof") or 1))
+        g["comp_unresolved"] = ("not_evaluable" if ncs is None else
+                                "triggered" if ncs["unresolved"] else "ok")
+        g["comp_out_window"] = "not_applicable"
         sig = raw.get("sigma_im") or raw.get("sigma_re")
         R = next((np.asarray(s[k], float).ravel() for k in ("R_ad", "R_L")
                   if k in s), None)
