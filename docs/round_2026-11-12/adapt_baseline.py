@@ -61,7 +61,17 @@ DEFAULT_FILES = [
 
 def _our_side(stem: str) -> dict:
     """读我们已落盘的判定；没有产物就明确写 unavailable，不猜。"""
+    # 一层 glob 会漏掉 out/<批次>/<样本>/real_*.json 这类两层产物
+    # （实测 AZ31-4Li_100 曾被误报 unavailable）。先按一级目录取，
+    # 没有再递归。注意这里只覆盖 bmdrt.py 的 voigt 默认族；
+    # M4 嵌套拓扑是独立的 *.nested.json，见 our_side_az31.py。
     hits = sorted((ROOT / "out").glob(f"*/real_{stem}.json"))
+    deep = not hits
+    if not hits:
+        # 多个批次会有同名产物；优先层级最浅的（最接近主产物），
+        # 并把命中数写出来，避免把「任选一份」误读成唯一正式结果。
+        hits = sorted((ROOT / "out").rglob(f"real_{stem}.json"),
+                      key=lambda p: (len(p.parts), str(p)))
     if not hits:
         return dict(available=False, reason="无对应 real_*.json 产物")
     d = json.loads(hits[0].read_text(encoding="utf-8"))
@@ -79,6 +89,8 @@ def _our_side(stem: str) -> dict:
     return dict(
         available=True,
         path=str(hits[0].relative_to(ROOT)).replace("\\", "/"),
+        n_candidates=len(hits),
+        from_nested_batch_dir=deep,
         verdict=verdict,
         kk_status=kk.get("status"),
         K=d.get("K"),
