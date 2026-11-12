@@ -41,10 +41,11 @@ import bm_corr as CORR       # noqa: E402
 import bm_select as S        # noqa: E402
 
 OUT_JSON = os.path.join("out", "guard_fix_flip.json")
-#: `param_degenerate` 的阈值：修复前是 `S.CORR_STRONG`（0.95）的硬编码，
-#: 修复后读 `param_corr.strong_tol`（`bm_corr.STRONG`，默认 0.90，可被 config
-#: 覆盖）。这里两个数都从生产代码取，不另写。
-OLD_STRONG = S.CORR_STRONG
+#: `param_degenerate` 的阈值：修复前（@6ee7122）是硬编码 0.95，修复后读
+#: `param_corr.strong_tol`（`bm_corr.STRONG`，默认 0.90）。0.95 在此**硬编码**
+#: 冻结，不再从生产代码取——2026-11-12 起 `S.CORR_STRONG` 已统一到 0.90，
+#: 直接引用会污染「修复前」的复现。
+OLD_STRONG = 0.95
 
 
 # --------------------------------------------------------------------------

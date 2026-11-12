@@ -153,12 +153,14 @@ DIV_FRAC_MAX = 0.02
 BAD_K_MAX = 0.10          # Pareto-k>0.7 的点占比
 ESS_MIN = 100.0           # grade() 的「可用」线
 TREE_CAP_MAX = 0.05       # 树深触顶占比
-#: **nested 侧**标量路径的强相关阈值（`_corr_pairs`）。voigt 侧不再用这个数，
-#: 而是直接读 `bm_corr.param_corr()` 的 `strong`（阈值 = `param_corr.strong_tol`，
-#: 默认 `bm_corr.STRONG=0.90`）——那里已经做过分量对齐。两条路径的阈值**目前
-#: 仍不相等**：统一数值会改变 nested 的既有状态，本轮不改（见
-#: `docs/round_2026-11-11/guard_semantics.md` §4「待决策」）。
-CORR_STRONG = 0.95        # 立项书 §9.4 的结构简并护栏（nested 标量路径）
+#: **nested 侧**标量路径的强相关阈值（`_corr_pairs`）。voigt 侧读
+#: `bm_corr.param_corr()` 的 `strong`（阈值 = `param_corr.strong_tol`，
+#: 默认 `bm_corr.STRONG=0.90`）——那里已经做过分量对齐。两条路径的阈值
+#: 已于 2026-11-12 **统一到 0.90**（理由见
+#: `docs/round_2026-11-11/guard_semantics.md` §4：0.90–0.95 区间是真实的分量内
+#: τ–w / w–φ 简并，B 类只记账宁可多记不可漏记；0.90 且有 `MEDIUM=0.70` 配套
+#: 三档语义，0.95 是无配套的孤值）。
+CORR_STRONG = 0.90        # 与 `bm_corr.STRONG` 同源，两族统一
 #: 贴边带宽 = **各自的** Uniform 区间宽度的 1%（`eps_j = 0.01·(U_j−L_j)`）。
 #: 旧实现写死 `0.5·BOUND_EPS`，只对 `[0.5, 1]` 成立：换成 `zeta` 的 `[0.3, 2]`
 #: 就把带宽算成 0.5% 而不是 1%，换区间就错，所以按区间宽度归一。
@@ -426,7 +428,7 @@ def _finite(x) -> bool:
 
 
 def _corr_pairs(s: dict) -> list[tuple]:
-    """后验里 |ρ|>CORR_STRONG 的参数对（**nested 侧**的标量路径）。
+    """后验里 |ρ|≥CORR_STRONG 的参数对（**nested 侧**的标量路径）。
 
     `L_ad` 在 series 支路是 `R_L·tau_L` 的 deterministic 派生量，必然与两者
     强相关，属**定义式**不是简并，故显式排除；噪声位点 `s_*` 同样不参与。
@@ -465,7 +467,7 @@ def _corr_pairs(s: dict) -> list[tuple]:
         C = np.corrcoef(np.stack([arr[k] for k in keys]))
     return [(keys[i], keys[j], round(float(C[i, j]), 3))
             for i in range(len(keys)) for j in range(i + 1, len(keys))
-            if np.isfinite(C[i, j]) and abs(C[i, j]) > CORR_STRONG]
+            if np.isfinite(C[i, j]) and abs(C[i, j]) >= CORR_STRONG]
 
 
 #: `param_degenerate`（voigt 侧）**不**参与判定的列名——它们是已知的、
