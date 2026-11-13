@@ -1,0 +1,4741 @@
+{
+  "status": "finalized",
+  "generator": "docs/round_2026-11-12/truth_dataset.py",
+  "anti_inverse_crime": "生成侧独立实现全部电路正演，不 import bm_top/bm_core；项目正演仅在 --crosscheck 时对拍，结果不参与数据生成",
+  "q_convention": "Z_P = Q_data/(iω)^n；Q_ours = Q_data/ω_ref^n，ω_ref = 2π√(f_min·f_max)",
+  "f_grid": {
+    "f_min": 0.1,
+    "f_max": 100000.0,
+    "n": 60,
+    "order": "ascending"
+  },
+  "noise_note": "噪声为人为生成过程：white=i.i.d. 高斯；correlated=叠加频率相关平滑系统项；heavy=Student-t(3) 重尾。均非真实仪器噪声",
+  "n_spectra": 168,
+  "families": [
+    "nested_L1_inductive",
+    "nested_L2_inductive",
+    "nested_L1_capacitive",
+    "nested_L2_capacitive",
+    "C2_L3",
+    "C3_mixed",
+    "ZARC"
+  ],
+  "difficulties": [
+    "separated",
+    "overlap",
+    "out_of_window",
+    "degenerate"
+  ],
+  "noise_levels": [
+    0.0,
+    0.02,
+    0.05
+  ],
+  "structures": [
+    "white",
+    "correlated",
+    "heavy"
+  ],
+  "seeds": [
+    0,
+    1
+  ],
+  "spectra": [
+    {
+      "id": "nested_L1_inductive__separated__n00__s0",
+      "family": "nested_L1_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + (R_ad∥L))]",
+      "dimension": "baseline",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88,
+        "R_ad": 80000.0,
+        "tau_ad": 15.915494309189533
+      },
+      "csv": "nested_L1_inductive__separated__n00__s0.csv",
+      "csv_sha256": "96859929d63431a3efe62cc1c37a00740cb7ca3bac3d514f46971ca8ecf29392"
+    },
+    {
+      "id": "nested_L1_inductive__separated__n00__s1",
+      "family": "nested_L1_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + (R_ad∥L))]",
+      "dimension": "baseline",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88,
+        "R_ad": 80000.0,
+        "tau_ad": 15.915494309189533
+      },
+      "csv": "nested_L1_inductive__separated__n00__s1.csv",
+      "csv_sha256": "96859929d63431a3efe62cc1c37a00740cb7ca3bac3d514f46971ca8ecf29392"
+    },
+    {
+      "id": "nested_L1_inductive__separated__n02__s0",
+      "family": "nested_L1_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + (R_ad∥L))]",
+      "dimension": "baseline",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88,
+        "R_ad": 80000.0,
+        "tau_ad": 15.915494309189533
+      },
+      "csv": "nested_L1_inductive__separated__n02__s0.csv",
+      "csv_sha256": "622584b5760d862a8c42ed0181750029b08c6aeb7176caef9b8b0918af4e9a58"
+    },
+    {
+      "id": "nested_L1_inductive__separated__n02__s1",
+      "family": "nested_L1_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + (R_ad∥L))]",
+      "dimension": "baseline",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88,
+        "R_ad": 80000.0,
+        "tau_ad": 15.915494309189533
+      },
+      "csv": "nested_L1_inductive__separated__n02__s1.csv",
+      "csv_sha256": "804d704fba7fb06374d6c254242cbb1affdeb93795de03b24f117691cb3f8e41"
+    },
+    {
+      "id": "nested_L1_inductive__separated__n05__s0",
+      "family": "nested_L1_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + (R_ad∥L))]",
+      "dimension": "baseline",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88,
+        "R_ad": 80000.0,
+        "tau_ad": 15.915494309189533
+      },
+      "csv": "nested_L1_inductive__separated__n05__s0.csv",
+      "csv_sha256": "d3c40ec912faa6bac6c68cc71757e0609a6fb719c60e22d6c91b9caaa1d5d596"
+    },
+    {
+      "id": "nested_L1_inductive__separated__n05__s1",
+      "family": "nested_L1_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + (R_ad∥L))]",
+      "dimension": "baseline",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88,
+        "R_ad": 80000.0,
+        "tau_ad": 15.915494309189533
+      },
+      "csv": "nested_L1_inductive__separated__n05__s1.csv",
+      "csv_sha256": "71b3849e5d48b4ea678cde7f6b0538f05cfc7ef2332fffb2e60acd7698c3e657"
+    },
+    {
+      "id": "nested_L1_inductive__overlap__n00__s0",
+      "family": "nested_L1_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + (R_ad∥L))]",
+      "dimension": "baseline",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85,
+        "R_ad": 80000.0,
+        "tau_ad": 0.03183098861837907
+      },
+      "csv": "nested_L1_inductive__overlap__n00__s0.csv",
+      "csv_sha256": "56d29e7c3bb1ba3cd0c1149bbfd3bf96da8c94e83e0774b7b1ace2e617c72322"
+    },
+    {
+      "id": "nested_L1_inductive__overlap__n00__s1",
+      "family": "nested_L1_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + (R_ad∥L))]",
+      "dimension": "baseline",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85,
+        "R_ad": 80000.0,
+        "tau_ad": 0.03183098861837907
+      },
+      "csv": "nested_L1_inductive__overlap__n00__s1.csv",
+      "csv_sha256": "56d29e7c3bb1ba3cd0c1149bbfd3bf96da8c94e83e0774b7b1ace2e617c72322"
+    },
+    {
+      "id": "nested_L1_inductive__overlap__n02__s0",
+      "family": "nested_L1_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + (R_ad∥L))]",
+      "dimension": "baseline",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85,
+        "R_ad": 80000.0,
+        "tau_ad": 0.03183098861837907
+      },
+      "csv": "nested_L1_inductive__overlap__n02__s0.csv",
+      "csv_sha256": "eae490b7b1dc538c2a987d7ebd8381e984c7810c415f921ab6a5e98689743805"
+    },
+    {
+      "id": "nested_L1_inductive__overlap__n02__s1",
+      "family": "nested_L1_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + (R_ad∥L))]",
+      "dimension": "baseline",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85,
+        "R_ad": 80000.0,
+        "tau_ad": 0.03183098861837907
+      },
+      "csv": "nested_L1_inductive__overlap__n02__s1.csv",
+      "csv_sha256": "6a48b5c73fc180b097c43e4290a9ba85899b0935e373f6fec642562af858ec3b"
+    },
+    {
+      "id": "nested_L1_inductive__overlap__n05__s0",
+      "family": "nested_L1_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + (R_ad∥L))]",
+      "dimension": "baseline",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85,
+        "R_ad": 80000.0,
+        "tau_ad": 0.03183098861837907
+      },
+      "csv": "nested_L1_inductive__overlap__n05__s0.csv",
+      "csv_sha256": "16ea74e7844b871c0205b01aed9845134fcf7adad5f2593a6557612147be0fa5"
+    },
+    {
+      "id": "nested_L1_inductive__overlap__n05__s1",
+      "family": "nested_L1_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + (R_ad∥L))]",
+      "dimension": "baseline",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85,
+        "R_ad": 80000.0,
+        "tau_ad": 0.03183098861837907
+      },
+      "csv": "nested_L1_inductive__overlap__n05__s1.csv",
+      "csv_sha256": "662f5614d55c69f20a6a11211dda9788b6542e75eaa1a59ac3e7087c7b542412"
+    },
+    {
+      "id": "nested_L1_inductive__out_of_window__n00__s0",
+      "family": "nested_L1_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + (R_ad∥L))]",
+      "dimension": "baseline",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9,
+        "R_ad": 80000.0,
+        "tau_ad": 1591.5494309189535
+      },
+      "csv": "nested_L1_inductive__out_of_window__n00__s0.csv",
+      "csv_sha256": "c22d09504b9490142e9e5401f960f5b749c0fede8594470626dc0758f4e57a1e"
+    },
+    {
+      "id": "nested_L1_inductive__out_of_window__n00__s1",
+      "family": "nested_L1_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + (R_ad∥L))]",
+      "dimension": "baseline",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9,
+        "R_ad": 80000.0,
+        "tau_ad": 1591.5494309189535
+      },
+      "csv": "nested_L1_inductive__out_of_window__n00__s1.csv",
+      "csv_sha256": "c22d09504b9490142e9e5401f960f5b749c0fede8594470626dc0758f4e57a1e"
+    },
+    {
+      "id": "nested_L1_inductive__out_of_window__n02__s0",
+      "family": "nested_L1_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + (R_ad∥L))]",
+      "dimension": "baseline",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9,
+        "R_ad": 80000.0,
+        "tau_ad": 1591.5494309189535
+      },
+      "csv": "nested_L1_inductive__out_of_window__n02__s0.csv",
+      "csv_sha256": "851f3ba641357dc2be37e845bcc9ee5e34e472ba5b3c239266d1e5ee894ed2dd"
+    },
+    {
+      "id": "nested_L1_inductive__out_of_window__n02__s1",
+      "family": "nested_L1_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + (R_ad∥L))]",
+      "dimension": "baseline",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9,
+        "R_ad": 80000.0,
+        "tau_ad": 1591.5494309189535
+      },
+      "csv": "nested_L1_inductive__out_of_window__n02__s1.csv",
+      "csv_sha256": "4d01f30a6cc4f3f5bfd69f2e158c27e3d3a3d45da0401db48436ae3a1ab5ab4f"
+    },
+    {
+      "id": "nested_L1_inductive__out_of_window__n05__s0",
+      "family": "nested_L1_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + (R_ad∥L))]",
+      "dimension": "baseline",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9,
+        "R_ad": 80000.0,
+        "tau_ad": 1591.5494309189535
+      },
+      "csv": "nested_L1_inductive__out_of_window__n05__s0.csv",
+      "csv_sha256": "f48dd14990950f175d1321f24f6d2215e0fa1ccac7f1d468d0ab6ad1074e3d6c"
+    },
+    {
+      "id": "nested_L1_inductive__out_of_window__n05__s1",
+      "family": "nested_L1_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + (R_ad∥L))]",
+      "dimension": "baseline",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9,
+        "R_ad": 80000.0,
+        "tau_ad": 1591.5494309189535
+      },
+      "csv": "nested_L1_inductive__out_of_window__n05__s1.csv",
+      "csv_sha256": "3c8edf003357f5d2f679805e9f7baaf1ac6d0896cdc523b29de76c86d1fdc3ca"
+    },
+    {
+      "id": "nested_L1_inductive__degenerate__n00__s0",
+      "family": "nested_L1_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + (R_ad∥L))]",
+      "dimension": "baseline",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8,
+        "R_ad": 80000.0,
+        "tau_ad": 0.01768388256576615
+      },
+      "csv": "nested_L1_inductive__degenerate__n00__s0.csv",
+      "csv_sha256": "9dbeeb5f39a534cbc3e90d8b76bde5f5422f23975ba024c6127e7f3c9fd575aa"
+    },
+    {
+      "id": "nested_L1_inductive__degenerate__n00__s1",
+      "family": "nested_L1_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + (R_ad∥L))]",
+      "dimension": "baseline",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8,
+        "R_ad": 80000.0,
+        "tau_ad": 0.01768388256576615
+      },
+      "csv": "nested_L1_inductive__degenerate__n00__s1.csv",
+      "csv_sha256": "9dbeeb5f39a534cbc3e90d8b76bde5f5422f23975ba024c6127e7f3c9fd575aa"
+    },
+    {
+      "id": "nested_L1_inductive__degenerate__n02__s0",
+      "family": "nested_L1_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + (R_ad∥L))]",
+      "dimension": "baseline",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8,
+        "R_ad": 80000.0,
+        "tau_ad": 0.01768388256576615
+      },
+      "csv": "nested_L1_inductive__degenerate__n02__s0.csv",
+      "csv_sha256": "4fd041d1f5660e51222802904140e9edddf4ed50d25279a107b78f7c4945d29c"
+    },
+    {
+      "id": "nested_L1_inductive__degenerate__n02__s1",
+      "family": "nested_L1_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + (R_ad∥L))]",
+      "dimension": "baseline",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8,
+        "R_ad": 80000.0,
+        "tau_ad": 0.01768388256576615
+      },
+      "csv": "nested_L1_inductive__degenerate__n02__s1.csv",
+      "csv_sha256": "96ff0d0a6132e46ce03f674dcab5c70a603f34d64e500e8071bf764eca6d9100"
+    },
+    {
+      "id": "nested_L1_inductive__degenerate__n05__s0",
+      "family": "nested_L1_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + (R_ad∥L))]",
+      "dimension": "baseline",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8,
+        "R_ad": 80000.0,
+        "tau_ad": 0.01768388256576615
+      },
+      "csv": "nested_L1_inductive__degenerate__n05__s0.csv",
+      "csv_sha256": "6b73cef612d069b1e0a53dc7ada6f4b99a796235ab86ae196c60bdc40269cf6d"
+    },
+    {
+      "id": "nested_L1_inductive__degenerate__n05__s1",
+      "family": "nested_L1_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + (R_ad∥L))]",
+      "dimension": "baseline",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8,
+        "R_ad": 80000.0,
+        "tau_ad": 0.01768388256576615
+      },
+      "csv": "nested_L1_inductive__degenerate__n05__s1.csv",
+      "csv_sha256": "067e9df2218159201d98402aa789f533a95cd3ba1353ee40ca2b9674898fd5f2"
+    },
+    {
+      "id": "nested_L2_inductive__separated__n00__s0",
+      "family": "nested_L2_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + (R_ad∥L))])]",
+      "dimension": "baseline",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88,
+        "R2": 100000.0,
+        "Q2": 7340859.650935148,
+        "n2": 0.82,
+        "R_ad": 80000.0,
+        "tau_ad": 15.915494309189533
+      },
+      "csv": "nested_L2_inductive__separated__n00__s0.csv",
+      "csv_sha256": "14c46adb6fd6cc3746013778e70ce3a1bad7b4809a5f8b652c1471358770592f"
+    },
+    {
+      "id": "nested_L2_inductive__separated__n00__s1",
+      "family": "nested_L2_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + (R_ad∥L))])]",
+      "dimension": "baseline",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88,
+        "R2": 100000.0,
+        "Q2": 7340859.650935148,
+        "n2": 0.82,
+        "R_ad": 80000.0,
+        "tau_ad": 15.915494309189533
+      },
+      "csv": "nested_L2_inductive__separated__n00__s1.csv",
+      "csv_sha256": "14c46adb6fd6cc3746013778e70ce3a1bad7b4809a5f8b652c1471358770592f"
+    },
+    {
+      "id": "nested_L2_inductive__separated__n02__s0",
+      "family": "nested_L2_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + (R_ad∥L))])]",
+      "dimension": "baseline",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88,
+        "R2": 100000.0,
+        "Q2": 7340859.650935148,
+        "n2": 0.82,
+        "R_ad": 80000.0,
+        "tau_ad": 15.915494309189533
+      },
+      "csv": "nested_L2_inductive__separated__n02__s0.csv",
+      "csv_sha256": "d0ddc4525bbdd0989b6adb74d63bcb46d229058a1de082800214a2d0d323e1aa"
+    },
+    {
+      "id": "nested_L2_inductive__separated__n02__s1",
+      "family": "nested_L2_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + (R_ad∥L))])]",
+      "dimension": "baseline",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88,
+        "R2": 100000.0,
+        "Q2": 7340859.650935148,
+        "n2": 0.82,
+        "R_ad": 80000.0,
+        "tau_ad": 15.915494309189533
+      },
+      "csv": "nested_L2_inductive__separated__n02__s1.csv",
+      "csv_sha256": "e233777df16bf51f3f8736ccccdcbde248c22e2b15385e20c536e70a4d853170"
+    },
+    {
+      "id": "nested_L2_inductive__separated__n05__s0",
+      "family": "nested_L2_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + (R_ad∥L))])]",
+      "dimension": "baseline",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88,
+        "R2": 100000.0,
+        "Q2": 7340859.650935148,
+        "n2": 0.82,
+        "R_ad": 80000.0,
+        "tau_ad": 15.915494309189533
+      },
+      "csv": "nested_L2_inductive__separated__n05__s0.csv",
+      "csv_sha256": "af97a5367618f04dd52bb46b1877edd749ddf1c653c09d9f6649b26abca8149e"
+    },
+    {
+      "id": "nested_L2_inductive__separated__n05__s1",
+      "family": "nested_L2_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + (R_ad∥L))])]",
+      "dimension": "baseline",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88,
+        "R2": 100000.0,
+        "Q2": 7340859.650935148,
+        "n2": 0.82,
+        "R_ad": 80000.0,
+        "tau_ad": 15.915494309189533
+      },
+      "csv": "nested_L2_inductive__separated__n05__s1.csv",
+      "csv_sha256": "459e8d6460160f2c9e91dacc484ce6d335bc83996df194b8db7d6ebec53624f2"
+    },
+    {
+      "id": "nested_L2_inductive__overlap__n00__s0",
+      "family": "nested_L2_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + (R_ad∥L))])]",
+      "dimension": "baseline",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85,
+        "R2": 100000.0,
+        "Q2": 5062505.056158555,
+        "n2": 0.83,
+        "R_ad": 80000.0,
+        "tau_ad": 0.03183098861837907
+      },
+      "csv": "nested_L2_inductive__overlap__n00__s0.csv",
+      "csv_sha256": "709d4f2aa87e278e5999159c59faafc23c720ab1e22bebd2c1e60f6f226588b8"
+    },
+    {
+      "id": "nested_L2_inductive__overlap__n00__s1",
+      "family": "nested_L2_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + (R_ad∥L))])]",
+      "dimension": "baseline",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85,
+        "R2": 100000.0,
+        "Q2": 5062505.056158555,
+        "n2": 0.83,
+        "R_ad": 80000.0,
+        "tau_ad": 0.03183098861837907
+      },
+      "csv": "nested_L2_inductive__overlap__n00__s1.csv",
+      "csv_sha256": "709d4f2aa87e278e5999159c59faafc23c720ab1e22bebd2c1e60f6f226588b8"
+    },
+    {
+      "id": "nested_L2_inductive__overlap__n02__s0",
+      "family": "nested_L2_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + (R_ad∥L))])]",
+      "dimension": "baseline",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85,
+        "R2": 100000.0,
+        "Q2": 5062505.056158555,
+        "n2": 0.83,
+        "R_ad": 80000.0,
+        "tau_ad": 0.03183098861837907
+      },
+      "csv": "nested_L2_inductive__overlap__n02__s0.csv",
+      "csv_sha256": "6bf6e2bf6139472ca158c10c236bc0e3762e98ddf880feadfec9db00350d4304"
+    },
+    {
+      "id": "nested_L2_inductive__overlap__n02__s1",
+      "family": "nested_L2_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + (R_ad∥L))])]",
+      "dimension": "baseline",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85,
+        "R2": 100000.0,
+        "Q2": 5062505.056158555,
+        "n2": 0.83,
+        "R_ad": 80000.0,
+        "tau_ad": 0.03183098861837907
+      },
+      "csv": "nested_L2_inductive__overlap__n02__s1.csv",
+      "csv_sha256": "d9d9ee037945dc2aa9d426c0261768b3538b3288305ccd4918ce8bbf3b32d270"
+    },
+    {
+      "id": "nested_L2_inductive__overlap__n05__s0",
+      "family": "nested_L2_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + (R_ad∥L))])]",
+      "dimension": "baseline",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85,
+        "R2": 100000.0,
+        "Q2": 5062505.056158555,
+        "n2": 0.83,
+        "R_ad": 80000.0,
+        "tau_ad": 0.03183098861837907
+      },
+      "csv": "nested_L2_inductive__overlap__n05__s0.csv",
+      "csv_sha256": "123b034419765b5edc5c8237c97a9df1b63fc320cbb050ccdf0cc07c9f9089f1"
+    },
+    {
+      "id": "nested_L2_inductive__overlap__n05__s1",
+      "family": "nested_L2_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + (R_ad∥L))])]",
+      "dimension": "baseline",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85,
+        "R2": 100000.0,
+        "Q2": 5062505.056158555,
+        "n2": 0.83,
+        "R_ad": 80000.0,
+        "tau_ad": 0.03183098861837907
+      },
+      "csv": "nested_L2_inductive__overlap__n05__s1.csv",
+      "csv_sha256": "7a5d5eacaa39e363505b6885e31593c244b16b485a6afcd97fb9022988ea614a"
+    },
+    {
+      "id": "nested_L2_inductive__out_of_window__n00__s0",
+      "family": "nested_L2_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + (R_ad∥L))])]",
+      "dimension": "baseline",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9,
+        "R2": 100000.0,
+        "Q2": 9947636.293192955,
+        "n2": 0.8,
+        "R_ad": 80000.0,
+        "tau_ad": 1591.5494309189535
+      },
+      "csv": "nested_L2_inductive__out_of_window__n00__s0.csv",
+      "csv_sha256": "bb32b0cf754952a6054102d6a331c3d2d36444652f0fbe8b7b4045de439bea69"
+    },
+    {
+      "id": "nested_L2_inductive__out_of_window__n00__s1",
+      "family": "nested_L2_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + (R_ad∥L))])]",
+      "dimension": "baseline",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9,
+        "R2": 100000.0,
+        "Q2": 9947636.293192955,
+        "n2": 0.8,
+        "R_ad": 80000.0,
+        "tau_ad": 1591.5494309189535
+      },
+      "csv": "nested_L2_inductive__out_of_window__n00__s1.csv",
+      "csv_sha256": "bb32b0cf754952a6054102d6a331c3d2d36444652f0fbe8b7b4045de439bea69"
+    },
+    {
+      "id": "nested_L2_inductive__out_of_window__n02__s0",
+      "family": "nested_L2_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + (R_ad∥L))])]",
+      "dimension": "baseline",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9,
+        "R2": 100000.0,
+        "Q2": 9947636.293192955,
+        "n2": 0.8,
+        "R_ad": 80000.0,
+        "tau_ad": 1591.5494309189535
+      },
+      "csv": "nested_L2_inductive__out_of_window__n02__s0.csv",
+      "csv_sha256": "d6b7bc7eb01685a66f8e7a5cacbb5500d63f26fa8766cea631dfa00cb1c33ebc"
+    },
+    {
+      "id": "nested_L2_inductive__out_of_window__n02__s1",
+      "family": "nested_L2_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + (R_ad∥L))])]",
+      "dimension": "baseline",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9,
+        "R2": 100000.0,
+        "Q2": 9947636.293192955,
+        "n2": 0.8,
+        "R_ad": 80000.0,
+        "tau_ad": 1591.5494309189535
+      },
+      "csv": "nested_L2_inductive__out_of_window__n02__s1.csv",
+      "csv_sha256": "a8f11bfae6322aec83a8270d2882d232be5cd4da9e9e030e00bbbe4392b9eb57"
+    },
+    {
+      "id": "nested_L2_inductive__out_of_window__n05__s0",
+      "family": "nested_L2_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + (R_ad∥L))])]",
+      "dimension": "baseline",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9,
+        "R2": 100000.0,
+        "Q2": 9947636.293192955,
+        "n2": 0.8,
+        "R_ad": 80000.0,
+        "tau_ad": 1591.5494309189535
+      },
+      "csv": "nested_L2_inductive__out_of_window__n05__s0.csv",
+      "csv_sha256": "f87f6cbe404f22a0e37bfa5a78269585dbcff7533ff3048a9428ecf7607309c5"
+    },
+    {
+      "id": "nested_L2_inductive__out_of_window__n05__s1",
+      "family": "nested_L2_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + (R_ad∥L))])]",
+      "dimension": "baseline",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9,
+        "R2": 100000.0,
+        "Q2": 9947636.293192955,
+        "n2": 0.8,
+        "R_ad": 80000.0,
+        "tau_ad": 1591.5494309189535
+      },
+      "csv": "nested_L2_inductive__out_of_window__n05__s1.csv",
+      "csv_sha256": "dfc11c934cc3ceeb020f1efb34cb4f79f1565c3c987ea7b8a825e46d07d3b753"
+    },
+    {
+      "id": "nested_L2_inductive__degenerate__n00__s0",
+      "family": "nested_L2_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + (R_ad∥L))])]",
+      "dimension": "baseline",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8,
+        "R2": 60000.0,
+        "Q2": 2962497.84303676,
+        "n2": 0.8,
+        "R_ad": 80000.0,
+        "tau_ad": 0.01768388256576615
+      },
+      "csv": "nested_L2_inductive__degenerate__n00__s0.csv",
+      "csv_sha256": "349c5a119133ed5b1e02fe6d8f6e8efaa9f259d4d388460103842bee86ad59ca"
+    },
+    {
+      "id": "nested_L2_inductive__degenerate__n00__s1",
+      "family": "nested_L2_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + (R_ad∥L))])]",
+      "dimension": "baseline",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8,
+        "R2": 60000.0,
+        "Q2": 2962497.84303676,
+        "n2": 0.8,
+        "R_ad": 80000.0,
+        "tau_ad": 0.01768388256576615
+      },
+      "csv": "nested_L2_inductive__degenerate__n00__s1.csv",
+      "csv_sha256": "349c5a119133ed5b1e02fe6d8f6e8efaa9f259d4d388460103842bee86ad59ca"
+    },
+    {
+      "id": "nested_L2_inductive__degenerate__n02__s0",
+      "family": "nested_L2_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + (R_ad∥L))])]",
+      "dimension": "baseline",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8,
+        "R2": 60000.0,
+        "Q2": 2962497.84303676,
+        "n2": 0.8,
+        "R_ad": 80000.0,
+        "tau_ad": 0.01768388256576615
+      },
+      "csv": "nested_L2_inductive__degenerate__n02__s0.csv",
+      "csv_sha256": "5f03f9a2e06404db52624184343068f8adf66f040426b7503c9a2d1a9f51a526"
+    },
+    {
+      "id": "nested_L2_inductive__degenerate__n02__s1",
+      "family": "nested_L2_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + (R_ad∥L))])]",
+      "dimension": "baseline",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8,
+        "R2": 60000.0,
+        "Q2": 2962497.84303676,
+        "n2": 0.8,
+        "R_ad": 80000.0,
+        "tau_ad": 0.01768388256576615
+      },
+      "csv": "nested_L2_inductive__degenerate__n02__s1.csv",
+      "csv_sha256": "6b4eec748b99897bab56a8de442e1ecd15ca649213a8bb429a697cbf9d9be904"
+    },
+    {
+      "id": "nested_L2_inductive__degenerate__n05__s0",
+      "family": "nested_L2_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + (R_ad∥L))])]",
+      "dimension": "baseline",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8,
+        "R2": 60000.0,
+        "Q2": 2962497.84303676,
+        "n2": 0.8,
+        "R_ad": 80000.0,
+        "tau_ad": 0.01768388256576615
+      },
+      "csv": "nested_L2_inductive__degenerate__n05__s0.csv",
+      "csv_sha256": "8a08ab0db37972d7d82f5ed566b22b5712783bbb3c32c672d71cc2a27334be9f"
+    },
+    {
+      "id": "nested_L2_inductive__degenerate__n05__s1",
+      "family": "nested_L2_inductive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + (R_ad∥L))])]",
+      "dimension": "baseline",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8,
+        "R2": 60000.0,
+        "Q2": 2962497.84303676,
+        "n2": 0.8,
+        "R_ad": 80000.0,
+        "tau_ad": 0.01768388256576615
+      },
+      "csv": "nested_L2_inductive__degenerate__n05__s1.csv",
+      "csv_sha256": "fbefb3e0018cdfac177082de91a3c4817dece800ef2990562a7e42d31caa3a95"
+    },
+    {
+      "id": "nested_L1_capacitive__separated__n00__s0",
+      "family": "nested_L1_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + Pb)]",
+      "dimension": "element_type",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88,
+        "Q_b": 11549.955136986544,
+        "n_b": 0.78
+      },
+      "csv": "nested_L1_capacitive__separated__n00__s0.csv",
+      "csv_sha256": "6bd274f1e7fb1be28f29f58e106bec0ca25d62b35f6b8c7e41e03bdfa02046b6"
+    },
+    {
+      "id": "nested_L1_capacitive__separated__n00__s1",
+      "family": "nested_L1_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + Pb)]",
+      "dimension": "element_type",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88,
+        "Q_b": 11549.955136986544,
+        "n_b": 0.78
+      },
+      "csv": "nested_L1_capacitive__separated__n00__s1.csv",
+      "csv_sha256": "6bd274f1e7fb1be28f29f58e106bec0ca25d62b35f6b8c7e41e03bdfa02046b6"
+    },
+    {
+      "id": "nested_L1_capacitive__separated__n02__s0",
+      "family": "nested_L1_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + Pb)]",
+      "dimension": "element_type",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88,
+        "Q_b": 11549.955136986544,
+        "n_b": 0.78
+      },
+      "csv": "nested_L1_capacitive__separated__n02__s0.csv",
+      "csv_sha256": "bbcf89814c1b01a48eef87324a8afe097e2ef2c052fde1aecc507627f8916520"
+    },
+    {
+      "id": "nested_L1_capacitive__separated__n02__s1",
+      "family": "nested_L1_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + Pb)]",
+      "dimension": "element_type",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88,
+        "Q_b": 11549.955136986544,
+        "n_b": 0.78
+      },
+      "csv": "nested_L1_capacitive__separated__n02__s1.csv",
+      "csv_sha256": "a2c7b1d4ed9c1bc2e4040aa70f91aa1dfb6cd5f75d49bdb1618618a305929a4a"
+    },
+    {
+      "id": "nested_L1_capacitive__separated__n05__s0",
+      "family": "nested_L1_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + Pb)]",
+      "dimension": "element_type",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88,
+        "Q_b": 11549.955136986544,
+        "n_b": 0.78
+      },
+      "csv": "nested_L1_capacitive__separated__n05__s0.csv",
+      "csv_sha256": "3c4485a83f29f126fce938fd316a08919c781f8aacd6d00debb9c4e86d5dfdf9"
+    },
+    {
+      "id": "nested_L1_capacitive__separated__n05__s1",
+      "family": "nested_L1_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + Pb)]",
+      "dimension": "element_type",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88,
+        "Q_b": 11549.955136986544,
+        "n_b": 0.78
+      },
+      "csv": "nested_L1_capacitive__separated__n05__s1.csv",
+      "csv_sha256": "e0fd66878fcaac1d1f25e6ef4cd98dbb5efc03cf6e8dbe40201638c016d60319"
+    },
+    {
+      "id": "nested_L1_capacitive__overlap__n00__s0",
+      "family": "nested_L1_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + Pb)]",
+      "dimension": "element_type",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85,
+        "Q_b": 1631891.9379678334,
+        "n_b": 0.81
+      },
+      "csv": "nested_L1_capacitive__overlap__n00__s0.csv",
+      "csv_sha256": "5ee7121b59866c96726da39291101fa833167e4ce8cf6bd7476ee9033df68d61"
+    },
+    {
+      "id": "nested_L1_capacitive__overlap__n00__s1",
+      "family": "nested_L1_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + Pb)]",
+      "dimension": "element_type",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85,
+        "Q_b": 1631891.9379678334,
+        "n_b": 0.81
+      },
+      "csv": "nested_L1_capacitive__overlap__n00__s1.csv",
+      "csv_sha256": "5ee7121b59866c96726da39291101fa833167e4ce8cf6bd7476ee9033df68d61"
+    },
+    {
+      "id": "nested_L1_capacitive__overlap__n02__s0",
+      "family": "nested_L1_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + Pb)]",
+      "dimension": "element_type",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85,
+        "Q_b": 1631891.9379678334,
+        "n_b": 0.81
+      },
+      "csv": "nested_L1_capacitive__overlap__n02__s0.csv",
+      "csv_sha256": "c85ecdd3fc6eda05a7079cfb4eca83cd8d826b8d8bca5c3cb4b6955e07089e20"
+    },
+    {
+      "id": "nested_L1_capacitive__overlap__n02__s1",
+      "family": "nested_L1_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + Pb)]",
+      "dimension": "element_type",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85,
+        "Q_b": 1631891.9379678334,
+        "n_b": 0.81
+      },
+      "csv": "nested_L1_capacitive__overlap__n02__s1.csv",
+      "csv_sha256": "bebba4ed698dc4d670f105c803ffc0b1513f1f85617b42c1ddba5def0dc8e6b3"
+    },
+    {
+      "id": "nested_L1_capacitive__overlap__n05__s0",
+      "family": "nested_L1_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + Pb)]",
+      "dimension": "element_type",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85,
+        "Q_b": 1631891.9379678334,
+        "n_b": 0.81
+      },
+      "csv": "nested_L1_capacitive__overlap__n05__s0.csv",
+      "csv_sha256": "1e6d7dc3b4e904ee2dac0be57b2f6c833958fd92e83a3cd5c6d0bd9676fe7737"
+    },
+    {
+      "id": "nested_L1_capacitive__overlap__n05__s1",
+      "family": "nested_L1_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + Pb)]",
+      "dimension": "element_type",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85,
+        "Q_b": 1631891.9379678334,
+        "n_b": 0.81
+      },
+      "csv": "nested_L1_capacitive__overlap__n05__s1.csv",
+      "csv_sha256": "e4a6b914006a57618584f05c1f63dbf3415ed6a56ea759e674e0f39f9599445e"
+    },
+    {
+      "id": "nested_L1_capacitive__out_of_window__n00__s0",
+      "family": "nested_L1_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + Pb)]",
+      "dimension": "element_type",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9,
+        "Q_b": 396.85778240728024,
+        "n_b": 0.75
+      },
+      "csv": "nested_L1_capacitive__out_of_window__n00__s0.csv",
+      "csv_sha256": "1538ecb25e6d4c394c9f375f5d000420d188ed39600f2ac51ebe0e5b966bcfa3"
+    },
+    {
+      "id": "nested_L1_capacitive__out_of_window__n00__s1",
+      "family": "nested_L1_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + Pb)]",
+      "dimension": "element_type",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9,
+        "Q_b": 396.85778240728024,
+        "n_b": 0.75
+      },
+      "csv": "nested_L1_capacitive__out_of_window__n00__s1.csv",
+      "csv_sha256": "1538ecb25e6d4c394c9f375f5d000420d188ed39600f2ac51ebe0e5b966bcfa3"
+    },
+    {
+      "id": "nested_L1_capacitive__out_of_window__n02__s0",
+      "family": "nested_L1_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + Pb)]",
+      "dimension": "element_type",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9,
+        "Q_b": 396.85778240728024,
+        "n_b": 0.75
+      },
+      "csv": "nested_L1_capacitive__out_of_window__n02__s0.csv",
+      "csv_sha256": "c4f27817a67a2dc40839cd152a3efdb4480e81836a0f8753e37b9268b3048d1b"
+    },
+    {
+      "id": "nested_L1_capacitive__out_of_window__n02__s1",
+      "family": "nested_L1_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + Pb)]",
+      "dimension": "element_type",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9,
+        "Q_b": 396.85778240728024,
+        "n_b": 0.75
+      },
+      "csv": "nested_L1_capacitive__out_of_window__n02__s1.csv",
+      "csv_sha256": "f85d88e70ee0096c6520dd0c61634f47b410c8b0e1fd3db105dff63d314bd112"
+    },
+    {
+      "id": "nested_L1_capacitive__out_of_window__n05__s0",
+      "family": "nested_L1_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + Pb)]",
+      "dimension": "element_type",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9,
+        "Q_b": 396.85778240728024,
+        "n_b": 0.75
+      },
+      "csv": "nested_L1_capacitive__out_of_window__n05__s0.csv",
+      "csv_sha256": "355f0ee2c4eb048ae5e3d04bb8a9a08dd53201e87cbe786ad5179b1a55413c94"
+    },
+    {
+      "id": "nested_L1_capacitive__out_of_window__n05__s1",
+      "family": "nested_L1_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + Pb)]",
+      "dimension": "element_type",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9,
+        "Q_b": 396.85778240728024,
+        "n_b": 0.75
+      },
+      "csv": "nested_L1_capacitive__out_of_window__n05__s1.csv",
+      "csv_sha256": "7b69a9ef565de746625f579bfb22c39975ddf2753c671eb0a2a28851da842b80"
+    },
+    {
+      "id": "nested_L1_capacitive__degenerate__n00__s0",
+      "family": "nested_L1_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + Pb)]",
+      "dimension": "element_type",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8,
+        "Q_b": 2523119.977415195,
+        "n_b": 0.8
+      },
+      "csv": "nested_L1_capacitive__degenerate__n00__s0.csv",
+      "csv_sha256": "d1a5eeb32aa2cc978ed2e1318ab4756c10ce818926181985155dd07157704ca1"
+    },
+    {
+      "id": "nested_L1_capacitive__degenerate__n00__s1",
+      "family": "nested_L1_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + Pb)]",
+      "dimension": "element_type",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8,
+        "Q_b": 2523119.977415195,
+        "n_b": 0.8
+      },
+      "csv": "nested_L1_capacitive__degenerate__n00__s1.csv",
+      "csv_sha256": "d1a5eeb32aa2cc978ed2e1318ab4756c10ce818926181985155dd07157704ca1"
+    },
+    {
+      "id": "nested_L1_capacitive__degenerate__n02__s0",
+      "family": "nested_L1_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + Pb)]",
+      "dimension": "element_type",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8,
+        "Q_b": 2523119.977415195,
+        "n_b": 0.8
+      },
+      "csv": "nested_L1_capacitive__degenerate__n02__s0.csv",
+      "csv_sha256": "5dadc3c8875ed1958f3fe5124235898974b66f7ae2613d87a52fb82a13154b4d"
+    },
+    {
+      "id": "nested_L1_capacitive__degenerate__n02__s1",
+      "family": "nested_L1_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + Pb)]",
+      "dimension": "element_type",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8,
+        "Q_b": 2523119.977415195,
+        "n_b": 0.8
+      },
+      "csv": "nested_L1_capacitive__degenerate__n02__s1.csv",
+      "csv_sha256": "f74315bb223ee7ef037d000bb1fbf99b64861dd78a79c7211d1b1ac5350bb068"
+    },
+    {
+      "id": "nested_L1_capacitive__degenerate__n05__s0",
+      "family": "nested_L1_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + Pb)]",
+      "dimension": "element_type",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8,
+        "Q_b": 2523119.977415195,
+        "n_b": 0.8
+      },
+      "csv": "nested_L1_capacitive__degenerate__n05__s0.csv",
+      "csv_sha256": "2c81ce47f5ce0302ce588bee20134a4539a649e3f2fa6e4fc22ad06660ca1428"
+    },
+    {
+      "id": "nested_L1_capacitive__degenerate__n05__s1",
+      "family": "nested_L1_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + Pb)]",
+      "dimension": "element_type",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8,
+        "Q_b": 2523119.977415195,
+        "n_b": 0.8
+      },
+      "csv": "nested_L1_capacitive__degenerate__n05__s1.csv",
+      "csv_sha256": "9dea975abf12f8a95f0c4ac88b9a6740bbc7ae1fb47451df93f70f564287756b"
+    },
+    {
+      "id": "nested_L2_capacitive__separated__n00__s0",
+      "family": "nested_L2_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + Pb)])]",
+      "dimension": "element_type",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88,
+        "R2": 100000.0,
+        "Q2": 7340859.650935148,
+        "n2": 0.82,
+        "Q_b": 11549.955136986544,
+        "n_b": 0.78
+      },
+      "csv": "nested_L2_capacitive__separated__n00__s0.csv",
+      "csv_sha256": "38f5e8c76fce863f997745571b4ab3395b8a86381b126287371709352c1dc20b"
+    },
+    {
+      "id": "nested_L2_capacitive__separated__n00__s1",
+      "family": "nested_L2_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + Pb)])]",
+      "dimension": "element_type",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88,
+        "R2": 100000.0,
+        "Q2": 7340859.650935148,
+        "n2": 0.82,
+        "Q_b": 11549.955136986544,
+        "n_b": 0.78
+      },
+      "csv": "nested_L2_capacitive__separated__n00__s1.csv",
+      "csv_sha256": "38f5e8c76fce863f997745571b4ab3395b8a86381b126287371709352c1dc20b"
+    },
+    {
+      "id": "nested_L2_capacitive__separated__n02__s0",
+      "family": "nested_L2_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + Pb)])]",
+      "dimension": "element_type",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88,
+        "R2": 100000.0,
+        "Q2": 7340859.650935148,
+        "n2": 0.82,
+        "Q_b": 11549.955136986544,
+        "n_b": 0.78
+      },
+      "csv": "nested_L2_capacitive__separated__n02__s0.csv",
+      "csv_sha256": "a077bf5a59a85774a6a9454f933f9fbdfa087e055981c2503bc1e2407eebe9df"
+    },
+    {
+      "id": "nested_L2_capacitive__separated__n02__s1",
+      "family": "nested_L2_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + Pb)])]",
+      "dimension": "element_type",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88,
+        "R2": 100000.0,
+        "Q2": 7340859.650935148,
+        "n2": 0.82,
+        "Q_b": 11549.955136986544,
+        "n_b": 0.78
+      },
+      "csv": "nested_L2_capacitive__separated__n02__s1.csv",
+      "csv_sha256": "227ebfe0d7cf6db3ec3c9b734532c0e678787c8387c1677178358c1ec64e069f"
+    },
+    {
+      "id": "nested_L2_capacitive__separated__n05__s0",
+      "family": "nested_L2_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + Pb)])]",
+      "dimension": "element_type",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88,
+        "R2": 100000.0,
+        "Q2": 7340859.650935148,
+        "n2": 0.82,
+        "Q_b": 11549.955136986544,
+        "n_b": 0.78
+      },
+      "csv": "nested_L2_capacitive__separated__n05__s0.csv",
+      "csv_sha256": "e251b4d34b901d56785743ead659be18807656fbb43144bd04a0fe97b4f9e976"
+    },
+    {
+      "id": "nested_L2_capacitive__separated__n05__s1",
+      "family": "nested_L2_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + Pb)])]",
+      "dimension": "element_type",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88,
+        "R2": 100000.0,
+        "Q2": 7340859.650935148,
+        "n2": 0.82,
+        "Q_b": 11549.955136986544,
+        "n_b": 0.78
+      },
+      "csv": "nested_L2_capacitive__separated__n05__s1.csv",
+      "csv_sha256": "75f29e764dde5a5599889b39581d869568d03a1f6561b57efabdc8fa93b017ac"
+    },
+    {
+      "id": "nested_L2_capacitive__overlap__n00__s0",
+      "family": "nested_L2_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + Pb)])]",
+      "dimension": "element_type",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85,
+        "R2": 100000.0,
+        "Q2": 5062505.056158555,
+        "n2": 0.83,
+        "Q_b": 1631891.9379678334,
+        "n_b": 0.81
+      },
+      "csv": "nested_L2_capacitive__overlap__n00__s0.csv",
+      "csv_sha256": "a7f1920a05ce19ce8e1505456c00a34a1da4335f4797f9ac13e60176b32d5336"
+    },
+    {
+      "id": "nested_L2_capacitive__overlap__n00__s1",
+      "family": "nested_L2_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + Pb)])]",
+      "dimension": "element_type",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85,
+        "R2": 100000.0,
+        "Q2": 5062505.056158555,
+        "n2": 0.83,
+        "Q_b": 1631891.9379678334,
+        "n_b": 0.81
+      },
+      "csv": "nested_L2_capacitive__overlap__n00__s1.csv",
+      "csv_sha256": "a7f1920a05ce19ce8e1505456c00a34a1da4335f4797f9ac13e60176b32d5336"
+    },
+    {
+      "id": "nested_L2_capacitive__overlap__n02__s0",
+      "family": "nested_L2_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + Pb)])]",
+      "dimension": "element_type",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85,
+        "R2": 100000.0,
+        "Q2": 5062505.056158555,
+        "n2": 0.83,
+        "Q_b": 1631891.9379678334,
+        "n_b": 0.81
+      },
+      "csv": "nested_L2_capacitive__overlap__n02__s0.csv",
+      "csv_sha256": "1b57d38585a7de7d2940ff66c8d94f21b3e230edd07e8afa28adb45327970d6e"
+    },
+    {
+      "id": "nested_L2_capacitive__overlap__n02__s1",
+      "family": "nested_L2_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + Pb)])]",
+      "dimension": "element_type",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85,
+        "R2": 100000.0,
+        "Q2": 5062505.056158555,
+        "n2": 0.83,
+        "Q_b": 1631891.9379678334,
+        "n_b": 0.81
+      },
+      "csv": "nested_L2_capacitive__overlap__n02__s1.csv",
+      "csv_sha256": "e9da41264cac87a80e877a621b842c0c48b57fa98f1b3f6d495dbebf8360400a"
+    },
+    {
+      "id": "nested_L2_capacitive__overlap__n05__s0",
+      "family": "nested_L2_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + Pb)])]",
+      "dimension": "element_type",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85,
+        "R2": 100000.0,
+        "Q2": 5062505.056158555,
+        "n2": 0.83,
+        "Q_b": 1631891.9379678334,
+        "n_b": 0.81
+      },
+      "csv": "nested_L2_capacitive__overlap__n05__s0.csv",
+      "csv_sha256": "62239ae0656ad03f0b131a2b54a0c0c57000c96c912be0708cbc3893342b81cc"
+    },
+    {
+      "id": "nested_L2_capacitive__overlap__n05__s1",
+      "family": "nested_L2_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + Pb)])]",
+      "dimension": "element_type",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85,
+        "R2": 100000.0,
+        "Q2": 5062505.056158555,
+        "n2": 0.83,
+        "Q_b": 1631891.9379678334,
+        "n_b": 0.81
+      },
+      "csv": "nested_L2_capacitive__overlap__n05__s1.csv",
+      "csv_sha256": "5037672784da5dc012efae2baeaf5db507f8890e2836ad0fc7fd2ab278bfa8b1"
+    },
+    {
+      "id": "nested_L2_capacitive__out_of_window__n00__s0",
+      "family": "nested_L2_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + Pb)])]",
+      "dimension": "element_type",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9,
+        "R2": 100000.0,
+        "Q2": 9947636.293192955,
+        "n2": 0.8,
+        "Q_b": 396.85778240728024,
+        "n_b": 0.75
+      },
+      "csv": "nested_L2_capacitive__out_of_window__n00__s0.csv",
+      "csv_sha256": "f2104812f10b32fb10d681433d999a03336d79ab9ec477c4f1bd3c7d93f8f6f1"
+    },
+    {
+      "id": "nested_L2_capacitive__out_of_window__n00__s1",
+      "family": "nested_L2_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + Pb)])]",
+      "dimension": "element_type",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9,
+        "R2": 100000.0,
+        "Q2": 9947636.293192955,
+        "n2": 0.8,
+        "Q_b": 396.85778240728024,
+        "n_b": 0.75
+      },
+      "csv": "nested_L2_capacitive__out_of_window__n00__s1.csv",
+      "csv_sha256": "f2104812f10b32fb10d681433d999a03336d79ab9ec477c4f1bd3c7d93f8f6f1"
+    },
+    {
+      "id": "nested_L2_capacitive__out_of_window__n02__s0",
+      "family": "nested_L2_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + Pb)])]",
+      "dimension": "element_type",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9,
+        "R2": 100000.0,
+        "Q2": 9947636.293192955,
+        "n2": 0.8,
+        "Q_b": 396.85778240728024,
+        "n_b": 0.75
+      },
+      "csv": "nested_L2_capacitive__out_of_window__n02__s0.csv",
+      "csv_sha256": "ee64f29841754b6ecfaac79d525543de833406b48facc455dcf0f29dda60ed9a"
+    },
+    {
+      "id": "nested_L2_capacitive__out_of_window__n02__s1",
+      "family": "nested_L2_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + Pb)])]",
+      "dimension": "element_type",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9,
+        "R2": 100000.0,
+        "Q2": 9947636.293192955,
+        "n2": 0.8,
+        "Q_b": 396.85778240728024,
+        "n_b": 0.75
+      },
+      "csv": "nested_L2_capacitive__out_of_window__n02__s1.csv",
+      "csv_sha256": "03df1a28f69b39932f90f7cf9b7ce49426954723f0978ffa3a5c7c85904d1031"
+    },
+    {
+      "id": "nested_L2_capacitive__out_of_window__n05__s0",
+      "family": "nested_L2_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + Pb)])]",
+      "dimension": "element_type",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9,
+        "R2": 100000.0,
+        "Q2": 9947636.293192955,
+        "n2": 0.8,
+        "Q_b": 396.85778240728024,
+        "n_b": 0.75
+      },
+      "csv": "nested_L2_capacitive__out_of_window__n05__s0.csv",
+      "csv_sha256": "dcf169c73e6c7741bbd43798ebf16b38c966def8324540c7ecb4a5368f507623"
+    },
+    {
+      "id": "nested_L2_capacitive__out_of_window__n05__s1",
+      "family": "nested_L2_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + Pb)])]",
+      "dimension": "element_type",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9,
+        "R2": 100000.0,
+        "Q2": 9947636.293192955,
+        "n2": 0.8,
+        "Q_b": 396.85778240728024,
+        "n_b": 0.75
+      },
+      "csv": "nested_L2_capacitive__out_of_window__n05__s1.csv",
+      "csv_sha256": "c807609c3be01a9b09d89ddc9939da2934030de7a322255e51c5be1d00872c2b"
+    },
+    {
+      "id": "nested_L2_capacitive__degenerate__n00__s0",
+      "family": "nested_L2_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + Pb)])]",
+      "dimension": "element_type",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8,
+        "R2": 60000.0,
+        "Q2": 2962497.84303676,
+        "n2": 0.8,
+        "Q_b": 2523119.977415195,
+        "n_b": 0.8
+      },
+      "csv": "nested_L2_capacitive__degenerate__n00__s0.csv",
+      "csv_sha256": "5ae07914124323d8113ec3cf86fc7d4dc1c53e25bd161d761c5e4cd053c8c5fd"
+    },
+    {
+      "id": "nested_L2_capacitive__degenerate__n00__s1",
+      "family": "nested_L2_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + Pb)])]",
+      "dimension": "element_type",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8,
+        "R2": 60000.0,
+        "Q2": 2962497.84303676,
+        "n2": 0.8,
+        "Q_b": 2523119.977415195,
+        "n_b": 0.8
+      },
+      "csv": "nested_L2_capacitive__degenerate__n00__s1.csv",
+      "csv_sha256": "5ae07914124323d8113ec3cf86fc7d4dc1c53e25bd161d761c5e4cd053c8c5fd"
+    },
+    {
+      "id": "nested_L2_capacitive__degenerate__n02__s0",
+      "family": "nested_L2_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + Pb)])]",
+      "dimension": "element_type",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8,
+        "R2": 60000.0,
+        "Q2": 2962497.84303676,
+        "n2": 0.8,
+        "Q_b": 2523119.977415195,
+        "n_b": 0.8
+      },
+      "csv": "nested_L2_capacitive__degenerate__n02__s0.csv",
+      "csv_sha256": "a338fac4f7cff12194815b7b6e6049ecc76743aa72eac6cf9450892cc9b58e67"
+    },
+    {
+      "id": "nested_L2_capacitive__degenerate__n02__s1",
+      "family": "nested_L2_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + Pb)])]",
+      "dimension": "element_type",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8,
+        "R2": 60000.0,
+        "Q2": 2962497.84303676,
+        "n2": 0.8,
+        "Q_b": 2523119.977415195,
+        "n_b": 0.8
+      },
+      "csv": "nested_L2_capacitive__degenerate__n02__s1.csv",
+      "csv_sha256": "faa35a34f7eeb13fb390b505d71595993f9f542d9235040d736ec17e3a8f02ee"
+    },
+    {
+      "id": "nested_L2_capacitive__degenerate__n05__s0",
+      "family": "nested_L2_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + Pb)])]",
+      "dimension": "element_type",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8,
+        "R2": 60000.0,
+        "Q2": 2962497.84303676,
+        "n2": 0.8,
+        "Q_b": 2523119.977415195,
+        "n_b": 0.8
+      },
+      "csv": "nested_L2_capacitive__degenerate__n05__s0.csv",
+      "csv_sha256": "efcff3030f345be3e3b45225e913491bd0d794ffc5dfaed2b8579e7acfcef0fe"
+    },
+    {
+      "id": "nested_L2_capacitive__degenerate__n05__s1",
+      "family": "nested_L2_capacitive",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + Pb)])]",
+      "dimension": "element_type",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8,
+        "R2": 60000.0,
+        "Q2": 2962497.84303676,
+        "n2": 0.8,
+        "Q_b": 2523119.977415195,
+        "n_b": 0.8
+      },
+      "csv": "nested_L2_capacitive__degenerate__n05__s1.csv",
+      "csv_sha256": "1171ca3347d76b6cad1ac1b32bf9a349d5dd463397ddf560117be37bc184eab2"
+    },
+    {
+      "id": "C2_L3__separated__n00__s0",
+      "family": "C2_L3",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + [P3 ∥ (R3 + (R_ad∥L))])])]",
+      "dimension": "network_level",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88,
+        "R2": 100000.0,
+        "Q2": 7340859.650935148,
+        "n2": 0.82,
+        "R3": 50000.0,
+        "Q3": 81979.42735341964,
+        "n3": 0.78,
+        "R_ad": 80000.0,
+        "tau_ad": 15.915494309189533
+      },
+      "csv": "C2_L3__separated__n00__s0.csv",
+      "csv_sha256": "ca3aefce26461ec34d4bef1f78dbefa299b531b8cea4b423fb0e487c370a46b6"
+    },
+    {
+      "id": "C2_L3__separated__n00__s1",
+      "family": "C2_L3",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + [P3 ∥ (R3 + (R_ad∥L))])])]",
+      "dimension": "network_level",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88,
+        "R2": 100000.0,
+        "Q2": 7340859.650935148,
+        "n2": 0.82,
+        "R3": 50000.0,
+        "Q3": 81979.42735341964,
+        "n3": 0.78,
+        "R_ad": 80000.0,
+        "tau_ad": 15.915494309189533
+      },
+      "csv": "C2_L3__separated__n00__s1.csv",
+      "csv_sha256": "ca3aefce26461ec34d4bef1f78dbefa299b531b8cea4b423fb0e487c370a46b6"
+    },
+    {
+      "id": "C2_L3__separated__n02__s0",
+      "family": "C2_L3",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + [P3 ∥ (R3 + (R_ad∥L))])])]",
+      "dimension": "network_level",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88,
+        "R2": 100000.0,
+        "Q2": 7340859.650935148,
+        "n2": 0.82,
+        "R3": 50000.0,
+        "Q3": 81979.42735341964,
+        "n3": 0.78,
+        "R_ad": 80000.0,
+        "tau_ad": 15.915494309189533
+      },
+      "csv": "C2_L3__separated__n02__s0.csv",
+      "csv_sha256": "5ad48844b5115ef8fe4bd2b10cbe55c21aba7f75093b2c80956f6c9cc19521a7"
+    },
+    {
+      "id": "C2_L3__separated__n02__s1",
+      "family": "C2_L3",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + [P3 ∥ (R3 + (R_ad∥L))])])]",
+      "dimension": "network_level",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88,
+        "R2": 100000.0,
+        "Q2": 7340859.650935148,
+        "n2": 0.82,
+        "R3": 50000.0,
+        "Q3": 81979.42735341964,
+        "n3": 0.78,
+        "R_ad": 80000.0,
+        "tau_ad": 15.915494309189533
+      },
+      "csv": "C2_L3__separated__n02__s1.csv",
+      "csv_sha256": "a272cdffea59d66b960a2659f7b429d7b4d8864267abfc5e471587e3b3187d46"
+    },
+    {
+      "id": "C2_L3__separated__n05__s0",
+      "family": "C2_L3",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + [P3 ∥ (R3 + (R_ad∥L))])])]",
+      "dimension": "network_level",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88,
+        "R2": 100000.0,
+        "Q2": 7340859.650935148,
+        "n2": 0.82,
+        "R3": 50000.0,
+        "Q3": 81979.42735341964,
+        "n3": 0.78,
+        "R_ad": 80000.0,
+        "tau_ad": 15.915494309189533
+      },
+      "csv": "C2_L3__separated__n05__s0.csv",
+      "csv_sha256": "e930221c6f9ecb4a9a892f975c96c06b9ed2b54ae54aef03a8e7afd4b51bd491"
+    },
+    {
+      "id": "C2_L3__separated__n05__s1",
+      "family": "C2_L3",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + [P3 ∥ (R3 + (R_ad∥L))])])]",
+      "dimension": "network_level",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88,
+        "R2": 100000.0,
+        "Q2": 7340859.650935148,
+        "n2": 0.82,
+        "R3": 50000.0,
+        "Q3": 81979.42735341964,
+        "n3": 0.78,
+        "R_ad": 80000.0,
+        "tau_ad": 15.915494309189533
+      },
+      "csv": "C2_L3__separated__n05__s1.csv",
+      "csv_sha256": "d5d5c2097b0bb10ad7d67e2f9406dda605961344d319f24287b1712d891e4c46"
+    },
+    {
+      "id": "C2_L3__overlap__n00__s0",
+      "family": "C2_L3",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + [P3 ∥ (R3 + (R_ad∥L))])])]",
+      "dimension": "network_level",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85,
+        "R2": 100000.0,
+        "Q2": 5062505.056158555,
+        "n2": 0.83,
+        "R3": 50000.0,
+        "Q3": 1313506.2098965186,
+        "n3": 0.81,
+        "R_ad": 80000.0,
+        "tau_ad": 0.03183098861837907
+      },
+      "csv": "C2_L3__overlap__n00__s0.csv",
+      "csv_sha256": "3fbacb8094ea4e8efeb44951acf80677a7df4dbdcf3f27bee470441d08a4da1a"
+    },
+    {
+      "id": "C2_L3__overlap__n00__s1",
+      "family": "C2_L3",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + [P3 ∥ (R3 + (R_ad∥L))])])]",
+      "dimension": "network_level",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85,
+        "R2": 100000.0,
+        "Q2": 5062505.056158555,
+        "n2": 0.83,
+        "R3": 50000.0,
+        "Q3": 1313506.2098965186,
+        "n3": 0.81,
+        "R_ad": 80000.0,
+        "tau_ad": 0.03183098861837907
+      },
+      "csv": "C2_L3__overlap__n00__s1.csv",
+      "csv_sha256": "3fbacb8094ea4e8efeb44951acf80677a7df4dbdcf3f27bee470441d08a4da1a"
+    },
+    {
+      "id": "C2_L3__overlap__n02__s0",
+      "family": "C2_L3",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + [P3 ∥ (R3 + (R_ad∥L))])])]",
+      "dimension": "network_level",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85,
+        "R2": 100000.0,
+        "Q2": 5062505.056158555,
+        "n2": 0.83,
+        "R3": 50000.0,
+        "Q3": 1313506.2098965186,
+        "n3": 0.81,
+        "R_ad": 80000.0,
+        "tau_ad": 0.03183098861837907
+      },
+      "csv": "C2_L3__overlap__n02__s0.csv",
+      "csv_sha256": "727a18b0c3cf3bdd2de0a913ccad717f50708665cd930842de4ed803b5c54baf"
+    },
+    {
+      "id": "C2_L3__overlap__n02__s1",
+      "family": "C2_L3",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + [P3 ∥ (R3 + (R_ad∥L))])])]",
+      "dimension": "network_level",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85,
+        "R2": 100000.0,
+        "Q2": 5062505.056158555,
+        "n2": 0.83,
+        "R3": 50000.0,
+        "Q3": 1313506.2098965186,
+        "n3": 0.81,
+        "R_ad": 80000.0,
+        "tau_ad": 0.03183098861837907
+      },
+      "csv": "C2_L3__overlap__n02__s1.csv",
+      "csv_sha256": "cf2f719179fe162cda569b4b875f77d5942dd78f01852512400ed51a467a91fa"
+    },
+    {
+      "id": "C2_L3__overlap__n05__s0",
+      "family": "C2_L3",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + [P3 ∥ (R3 + (R_ad∥L))])])]",
+      "dimension": "network_level",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85,
+        "R2": 100000.0,
+        "Q2": 5062505.056158555,
+        "n2": 0.83,
+        "R3": 50000.0,
+        "Q3": 1313506.2098965186,
+        "n3": 0.81,
+        "R_ad": 80000.0,
+        "tau_ad": 0.03183098861837907
+      },
+      "csv": "C2_L3__overlap__n05__s0.csv",
+      "csv_sha256": "329a987a1d66347cffa7c2d8c275ca71be62a03326b17a2db756ec33a6d4aa6d"
+    },
+    {
+      "id": "C2_L3__overlap__n05__s1",
+      "family": "C2_L3",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + [P3 ∥ (R3 + (R_ad∥L))])])]",
+      "dimension": "network_level",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85,
+        "R2": 100000.0,
+        "Q2": 5062505.056158555,
+        "n2": 0.83,
+        "R3": 50000.0,
+        "Q3": 1313506.2098965186,
+        "n3": 0.81,
+        "R_ad": 80000.0,
+        "tau_ad": 0.03183098861837907
+      },
+      "csv": "C2_L3__overlap__n05__s1.csv",
+      "csv_sha256": "8e22310bf32d708b8c3584b063dec43f771660819233d7cfa1e6b09d4e2a1f4f"
+    },
+    {
+      "id": "C2_L3__out_of_window__n00__s0",
+      "family": "C2_L3",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + [P3 ∥ (R3 + (R_ad∥L))])])]",
+      "dimension": "network_level",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9,
+        "R2": 100000.0,
+        "Q2": 9947636.293192955,
+        "n2": 0.8,
+        "R3": 50000.0,
+        "Q3": 1876.6245883964673,
+        "n3": 0.75,
+        "R_ad": 80000.0,
+        "tau_ad": 1591.5494309189535
+      },
+      "csv": "C2_L3__out_of_window__n00__s0.csv",
+      "csv_sha256": "2e3ebfd5ae7547f32ba8a20936582231de514257e782f2a99da5ac8cbbe8fba4"
+    },
+    {
+      "id": "C2_L3__out_of_window__n00__s1",
+      "family": "C2_L3",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + [P3 ∥ (R3 + (R_ad∥L))])])]",
+      "dimension": "network_level",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9,
+        "R2": 100000.0,
+        "Q2": 9947636.293192955,
+        "n2": 0.8,
+        "R3": 50000.0,
+        "Q3": 1876.6245883964673,
+        "n3": 0.75,
+        "R_ad": 80000.0,
+        "tau_ad": 1591.5494309189535
+      },
+      "csv": "C2_L3__out_of_window__n00__s1.csv",
+      "csv_sha256": "2e3ebfd5ae7547f32ba8a20936582231de514257e782f2a99da5ac8cbbe8fba4"
+    },
+    {
+      "id": "C2_L3__out_of_window__n02__s0",
+      "family": "C2_L3",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + [P3 ∥ (R3 + (R_ad∥L))])])]",
+      "dimension": "network_level",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9,
+        "R2": 100000.0,
+        "Q2": 9947636.293192955,
+        "n2": 0.8,
+        "R3": 50000.0,
+        "Q3": 1876.6245883964673,
+        "n3": 0.75,
+        "R_ad": 80000.0,
+        "tau_ad": 1591.5494309189535
+      },
+      "csv": "C2_L3__out_of_window__n02__s0.csv",
+      "csv_sha256": "2f224ec058850fe590a6af8fd345e61e9be699d49e2e3ca8a62adfcfb7d5f9af"
+    },
+    {
+      "id": "C2_L3__out_of_window__n02__s1",
+      "family": "C2_L3",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + [P3 ∥ (R3 + (R_ad∥L))])])]",
+      "dimension": "network_level",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9,
+        "R2": 100000.0,
+        "Q2": 9947636.293192955,
+        "n2": 0.8,
+        "R3": 50000.0,
+        "Q3": 1876.6245883964673,
+        "n3": 0.75,
+        "R_ad": 80000.0,
+        "tau_ad": 1591.5494309189535
+      },
+      "csv": "C2_L3__out_of_window__n02__s1.csv",
+      "csv_sha256": "f7d208a93ae4622ed677610b2d3340e423bfbfb9c252206764af8bf875c7b234"
+    },
+    {
+      "id": "C2_L3__out_of_window__n05__s0",
+      "family": "C2_L3",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + [P3 ∥ (R3 + (R_ad∥L))])])]",
+      "dimension": "network_level",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9,
+        "R2": 100000.0,
+        "Q2": 9947636.293192955,
+        "n2": 0.8,
+        "R3": 50000.0,
+        "Q3": 1876.6245883964673,
+        "n3": 0.75,
+        "R_ad": 80000.0,
+        "tau_ad": 1591.5494309189535
+      },
+      "csv": "C2_L3__out_of_window__n05__s0.csv",
+      "csv_sha256": "53f808828cdf5d59a898fdb45da811bf5d1a1b35ce21e20e3d78f93dac9e16c9"
+    },
+    {
+      "id": "C2_L3__out_of_window__n05__s1",
+      "family": "C2_L3",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + [P3 ∥ (R3 + (R_ad∥L))])])]",
+      "dimension": "network_level",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9,
+        "R2": 100000.0,
+        "Q2": 9947636.293192955,
+        "n2": 0.8,
+        "R3": 50000.0,
+        "Q3": 1876.6245883964673,
+        "n3": 0.75,
+        "R_ad": 80000.0,
+        "tau_ad": 1591.5494309189535
+      },
+      "csv": "C2_L3__out_of_window__n05__s1.csv",
+      "csv_sha256": "34913b7c4a20068d9d397141a2410379709ad211b288e8466b8b1f9b5fa0d6f7"
+    },
+    {
+      "id": "C2_L3__degenerate__n00__s0",
+      "family": "C2_L3",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + [P3 ∥ (R3 + (R_ad∥L))])])]",
+      "dimension": "network_level",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8,
+        "R2": 60000.0,
+        "Q2": 2962497.84303676,
+        "n2": 0.8,
+        "R3": 60000.0,
+        "Q3": 1372504.8855146407,
+        "n3": 0.8,
+        "R_ad": 80000.0,
+        "tau_ad": 0.01768388256576615
+      },
+      "csv": "C2_L3__degenerate__n00__s0.csv",
+      "csv_sha256": "d4b5beed6b004545a55ad1fe837e62e497dfeab464d2ed38563ee1b71e1deade"
+    },
+    {
+      "id": "C2_L3__degenerate__n00__s1",
+      "family": "C2_L3",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + [P3 ∥ (R3 + (R_ad∥L))])])]",
+      "dimension": "network_level",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8,
+        "R2": 60000.0,
+        "Q2": 2962497.84303676,
+        "n2": 0.8,
+        "R3": 60000.0,
+        "Q3": 1372504.8855146407,
+        "n3": 0.8,
+        "R_ad": 80000.0,
+        "tau_ad": 0.01768388256576615
+      },
+      "csv": "C2_L3__degenerate__n00__s1.csv",
+      "csv_sha256": "d4b5beed6b004545a55ad1fe837e62e497dfeab464d2ed38563ee1b71e1deade"
+    },
+    {
+      "id": "C2_L3__degenerate__n02__s0",
+      "family": "C2_L3",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + [P3 ∥ (R3 + (R_ad∥L))])])]",
+      "dimension": "network_level",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8,
+        "R2": 60000.0,
+        "Q2": 2962497.84303676,
+        "n2": 0.8,
+        "R3": 60000.0,
+        "Q3": 1372504.8855146407,
+        "n3": 0.8,
+        "R_ad": 80000.0,
+        "tau_ad": 0.01768388256576615
+      },
+      "csv": "C2_L3__degenerate__n02__s0.csv",
+      "csv_sha256": "ca1295012d76dd57aacbef9dc8d0bc420960209d36d1f443c0b5a5ccd163e1c1"
+    },
+    {
+      "id": "C2_L3__degenerate__n02__s1",
+      "family": "C2_L3",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + [P3 ∥ (R3 + (R_ad∥L))])])]",
+      "dimension": "network_level",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8,
+        "R2": 60000.0,
+        "Q2": 2962497.84303676,
+        "n2": 0.8,
+        "R3": 60000.0,
+        "Q3": 1372504.8855146407,
+        "n3": 0.8,
+        "R_ad": 80000.0,
+        "tau_ad": 0.01768388256576615
+      },
+      "csv": "C2_L3__degenerate__n02__s1.csv",
+      "csv_sha256": "ff2c0a72c7e7ff36c37b055b5523729a8205ef81c252a438cfb7226c8f5137e2"
+    },
+    {
+      "id": "C2_L3__degenerate__n05__s0",
+      "family": "C2_L3",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + [P3 ∥ (R3 + (R_ad∥L))])])]",
+      "dimension": "network_level",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8,
+        "R2": 60000.0,
+        "Q2": 2962497.84303676,
+        "n2": 0.8,
+        "R3": 60000.0,
+        "Q3": 1372504.8855146407,
+        "n3": 0.8,
+        "R_ad": 80000.0,
+        "tau_ad": 0.01768388256576615
+      },
+      "csv": "C2_L3__degenerate__n05__s0.csv",
+      "csv_sha256": "2712c1e07fe0a9174b005159765b3f2695cb0f50c6899dcc7c066e6550cb8b1a"
+    },
+    {
+      "id": "C2_L3__degenerate__n05__s1",
+      "family": "C2_L3",
+      "topology": "Rs + [P1 ∥ (R1 + [P2 ∥ (R2 + [P3 ∥ (R3 + (R_ad∥L))])])]",
+      "dimension": "network_level",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8,
+        "R2": 60000.0,
+        "Q2": 2962497.84303676,
+        "n2": 0.8,
+        "R3": 60000.0,
+        "Q3": 1372504.8855146407,
+        "n3": 0.8,
+        "R_ad": 80000.0,
+        "tau_ad": 0.01768388256576615
+      },
+      "csv": "C2_L3__degenerate__n05__s1.csv",
+      "csv_sha256": "c3d3addd29a43722cbc535324823e3fddd9cb9cc08ebc2373a9b8d1693e63f79"
+    },
+    {
+      "id": "C3_mixed__separated__n00__s0",
+      "family": "C3_mixed",
+      "topology": "Rs + (P0∥R0) + nested_L2_capacitive",
+      "dimension": "topology_connection",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "Q0": 33844093.31116244,
+        "n0": 0.85,
+        "R0": 20000.0,
+        "R1": 30000.0,
+        "R2": 100000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88,
+        "Q2": 7340859.650935148,
+        "n2": 0.82,
+        "Q_b": 11549.955136986544,
+        "n_b": 0.78
+      },
+      "csv": "C3_mixed__separated__n00__s0.csv",
+      "csv_sha256": "05ffc285e93c4a987b24b8d71cde4e5c43a27b6c7543b1df470241c58afa274d"
+    },
+    {
+      "id": "C3_mixed__separated__n00__s1",
+      "family": "C3_mixed",
+      "topology": "Rs + (P0∥R0) + nested_L2_capacitive",
+      "dimension": "topology_connection",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "Q0": 33844093.31116244,
+        "n0": 0.85,
+        "R0": 20000.0,
+        "R1": 30000.0,
+        "R2": 100000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88,
+        "Q2": 7340859.650935148,
+        "n2": 0.82,
+        "Q_b": 11549.955136986544,
+        "n_b": 0.78
+      },
+      "csv": "C3_mixed__separated__n00__s1.csv",
+      "csv_sha256": "05ffc285e93c4a987b24b8d71cde4e5c43a27b6c7543b1df470241c58afa274d"
+    },
+    {
+      "id": "C3_mixed__separated__n02__s0",
+      "family": "C3_mixed",
+      "topology": "Rs + (P0∥R0) + nested_L2_capacitive",
+      "dimension": "topology_connection",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "Q0": 33844093.31116244,
+        "n0": 0.85,
+        "R0": 20000.0,
+        "R1": 30000.0,
+        "R2": 100000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88,
+        "Q2": 7340859.650935148,
+        "n2": 0.82,
+        "Q_b": 11549.955136986544,
+        "n_b": 0.78
+      },
+      "csv": "C3_mixed__separated__n02__s0.csv",
+      "csv_sha256": "9bc848f06ca4a750e349fbe209e1db207733d0facadeec28fc5fe9ee653b4629"
+    },
+    {
+      "id": "C3_mixed__separated__n02__s1",
+      "family": "C3_mixed",
+      "topology": "Rs + (P0∥R0) + nested_L2_capacitive",
+      "dimension": "topology_connection",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "Q0": 33844093.31116244,
+        "n0": 0.85,
+        "R0": 20000.0,
+        "R1": 30000.0,
+        "R2": 100000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88,
+        "Q2": 7340859.650935148,
+        "n2": 0.82,
+        "Q_b": 11549.955136986544,
+        "n_b": 0.78
+      },
+      "csv": "C3_mixed__separated__n02__s1.csv",
+      "csv_sha256": "8626447b5031f860da77a6a426ec944708ab6d25e76e33f3eed21011b4b08270"
+    },
+    {
+      "id": "C3_mixed__separated__n05__s0",
+      "family": "C3_mixed",
+      "topology": "Rs + (P0∥R0) + nested_L2_capacitive",
+      "dimension": "topology_connection",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "Q0": 33844093.31116244,
+        "n0": 0.85,
+        "R0": 20000.0,
+        "R1": 30000.0,
+        "R2": 100000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88,
+        "Q2": 7340859.650935148,
+        "n2": 0.82,
+        "Q_b": 11549.955136986544,
+        "n_b": 0.78
+      },
+      "csv": "C3_mixed__separated__n05__s0.csv",
+      "csv_sha256": "a4fb0b4bb3e1c4461aad3840484bffac7c0813bec0f26e8a2fa807e5c49b71bd"
+    },
+    {
+      "id": "C3_mixed__separated__n05__s1",
+      "family": "C3_mixed",
+      "topology": "Rs + (P0∥R0) + nested_L2_capacitive",
+      "dimension": "topology_connection",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "Q0": 33844093.31116244,
+        "n0": 0.85,
+        "R0": 20000.0,
+        "R1": 30000.0,
+        "R2": 100000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88,
+        "Q2": 7340859.650935148,
+        "n2": 0.82,
+        "Q_b": 11549.955136986544,
+        "n_b": 0.78
+      },
+      "csv": "C3_mixed__separated__n05__s1.csv",
+      "csv_sha256": "a96cf73ee718dbc128644f0d6eb2e27190ca07f68e1c023586460496a1d579ed"
+    },
+    {
+      "id": "C3_mixed__overlap__n00__s0",
+      "family": "C3_mixed",
+      "topology": "Rs + (P0∥R0) + nested_L2_capacitive",
+      "dimension": "topology_connection",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "Q0": 862344.524003027,
+        "n0": 0.85,
+        "R0": 20000.0,
+        "R1": 30000.0,
+        "R2": 100000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85,
+        "Q2": 5062505.056158555,
+        "n2": 0.83,
+        "Q_b": 1631891.9379678334,
+        "n_b": 0.81
+      },
+      "csv": "C3_mixed__overlap__n00__s0.csv",
+      "csv_sha256": "e44be2ddf862263b05777fa43ed4f0eb590049ae3e200593ea40a34cb037fa59"
+    },
+    {
+      "id": "C3_mixed__overlap__n00__s1",
+      "family": "C3_mixed",
+      "topology": "Rs + (P0∥R0) + nested_L2_capacitive",
+      "dimension": "topology_connection",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "Q0": 862344.524003027,
+        "n0": 0.85,
+        "R0": 20000.0,
+        "R1": 30000.0,
+        "R2": 100000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85,
+        "Q2": 5062505.056158555,
+        "n2": 0.83,
+        "Q_b": 1631891.9379678334,
+        "n_b": 0.81
+      },
+      "csv": "C3_mixed__overlap__n00__s1.csv",
+      "csv_sha256": "e44be2ddf862263b05777fa43ed4f0eb590049ae3e200593ea40a34cb037fa59"
+    },
+    {
+      "id": "C3_mixed__overlap__n02__s0",
+      "family": "C3_mixed",
+      "topology": "Rs + (P0∥R0) + nested_L2_capacitive",
+      "dimension": "topology_connection",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "Q0": 862344.524003027,
+        "n0": 0.85,
+        "R0": 20000.0,
+        "R1": 30000.0,
+        "R2": 100000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85,
+        "Q2": 5062505.056158555,
+        "n2": 0.83,
+        "Q_b": 1631891.9379678334,
+        "n_b": 0.81
+      },
+      "csv": "C3_mixed__overlap__n02__s0.csv",
+      "csv_sha256": "64d25723a4f943f598354fcc8a764a57679ef37751dc57bece8be03f8cf36235"
+    },
+    {
+      "id": "C3_mixed__overlap__n02__s1",
+      "family": "C3_mixed",
+      "topology": "Rs + (P0∥R0) + nested_L2_capacitive",
+      "dimension": "topology_connection",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "Q0": 862344.524003027,
+        "n0": 0.85,
+        "R0": 20000.0,
+        "R1": 30000.0,
+        "R2": 100000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85,
+        "Q2": 5062505.056158555,
+        "n2": 0.83,
+        "Q_b": 1631891.9379678334,
+        "n_b": 0.81
+      },
+      "csv": "C3_mixed__overlap__n02__s1.csv",
+      "csv_sha256": "3f442d088639b8f79dd208263d6ddf158e30c3265c11665ac001981e86260c6d"
+    },
+    {
+      "id": "C3_mixed__overlap__n05__s0",
+      "family": "C3_mixed",
+      "topology": "Rs + (P0∥R0) + nested_L2_capacitive",
+      "dimension": "topology_connection",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "Q0": 862344.524003027,
+        "n0": 0.85,
+        "R0": 20000.0,
+        "R1": 30000.0,
+        "R2": 100000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85,
+        "Q2": 5062505.056158555,
+        "n2": 0.83,
+        "Q_b": 1631891.9379678334,
+        "n_b": 0.81
+      },
+      "csv": "C3_mixed__overlap__n05__s0.csv",
+      "csv_sha256": "e92554fce199b6b710099ca8e71cb7f74fd9ebc8ac6a145107391c9ab5aa670f"
+    },
+    {
+      "id": "C3_mixed__overlap__n05__s1",
+      "family": "C3_mixed",
+      "topology": "Rs + (P0∥R0) + nested_L2_capacitive",
+      "dimension": "topology_connection",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "Q0": 862344.524003027,
+        "n0": 0.85,
+        "R0": 20000.0,
+        "R1": 30000.0,
+        "R2": 100000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85,
+        "Q2": 5062505.056158555,
+        "n2": 0.83,
+        "Q_b": 1631891.9379678334,
+        "n_b": 0.81
+      },
+      "csv": "C3_mixed__overlap__n05__s1.csv",
+      "csv_sha256": "edee22ca217b351870679f652a78d5b5a1d3d6bca7559442c1c5a2cb5d706e2f"
+    },
+    {
+      "id": "C3_mixed__out_of_window__n00__s0",
+      "family": "C3_mixed",
+      "topology": "Rs + (P0∥R0) + nested_L2_capacitive",
+      "dimension": "topology_connection",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "Q0": 169748253.08946893,
+        "n0": 0.85,
+        "R0": 20000.0,
+        "R1": 30000.0,
+        "R2": 100000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9,
+        "Q2": 9947636.293192955,
+        "n2": 0.8,
+        "Q_b": 396.85778240728024,
+        "n_b": 0.75
+      },
+      "csv": "C3_mixed__out_of_window__n00__s0.csv",
+      "csv_sha256": "a5362ad23405c141b40c4ce9ca11cd995c2af5a4c765ae6d1555d971fcc3e8a8"
+    },
+    {
+      "id": "C3_mixed__out_of_window__n00__s1",
+      "family": "C3_mixed",
+      "topology": "Rs + (P0∥R0) + nested_L2_capacitive",
+      "dimension": "topology_connection",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "Q0": 169748253.08946893,
+        "n0": 0.85,
+        "R0": 20000.0,
+        "R1": 30000.0,
+        "R2": 100000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9,
+        "Q2": 9947636.293192955,
+        "n2": 0.8,
+        "Q_b": 396.85778240728024,
+        "n_b": 0.75
+      },
+      "csv": "C3_mixed__out_of_window__n00__s1.csv",
+      "csv_sha256": "a5362ad23405c141b40c4ce9ca11cd995c2af5a4c765ae6d1555d971fcc3e8a8"
+    },
+    {
+      "id": "C3_mixed__out_of_window__n02__s0",
+      "family": "C3_mixed",
+      "topology": "Rs + (P0∥R0) + nested_L2_capacitive",
+      "dimension": "topology_connection",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "Q0": 169748253.08946893,
+        "n0": 0.85,
+        "R0": 20000.0,
+        "R1": 30000.0,
+        "R2": 100000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9,
+        "Q2": 9947636.293192955,
+        "n2": 0.8,
+        "Q_b": 396.85778240728024,
+        "n_b": 0.75
+      },
+      "csv": "C3_mixed__out_of_window__n02__s0.csv",
+      "csv_sha256": "8852384e207c8a4e57c3a4254024b092aa64f6901e227fd1b43a8d426406550a"
+    },
+    {
+      "id": "C3_mixed__out_of_window__n02__s1",
+      "family": "C3_mixed",
+      "topology": "Rs + (P0∥R0) + nested_L2_capacitive",
+      "dimension": "topology_connection",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "Q0": 169748253.08946893,
+        "n0": 0.85,
+        "R0": 20000.0,
+        "R1": 30000.0,
+        "R2": 100000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9,
+        "Q2": 9947636.293192955,
+        "n2": 0.8,
+        "Q_b": 396.85778240728024,
+        "n_b": 0.75
+      },
+      "csv": "C3_mixed__out_of_window__n02__s1.csv",
+      "csv_sha256": "e28a441e9975a94baaf4ccca929a3302d6b44dde15cd8bec3413e0aab52d3738"
+    },
+    {
+      "id": "C3_mixed__out_of_window__n05__s0",
+      "family": "C3_mixed",
+      "topology": "Rs + (P0∥R0) + nested_L2_capacitive",
+      "dimension": "topology_connection",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "Q0": 169748253.08946893,
+        "n0": 0.85,
+        "R0": 20000.0,
+        "R1": 30000.0,
+        "R2": 100000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9,
+        "Q2": 9947636.293192955,
+        "n2": 0.8,
+        "Q_b": 396.85778240728024,
+        "n_b": 0.75
+      },
+      "csv": "C3_mixed__out_of_window__n05__s0.csv",
+      "csv_sha256": "29ec1fc7c3e3b7b66789a38d856e9d32a32cc41c6ac8b3e8ee6045b2155d7efc"
+    },
+    {
+      "id": "C3_mixed__out_of_window__n05__s1",
+      "family": "C3_mixed",
+      "topology": "Rs + (P0∥R0) + nested_L2_capacitive",
+      "dimension": "topology_connection",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "Q0": 169748253.08946893,
+        "n0": 0.85,
+        "R0": 20000.0,
+        "R1": 30000.0,
+        "R2": 100000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9,
+        "Q2": 9947636.293192955,
+        "n2": 0.8,
+        "Q_b": 396.85778240728024,
+        "n_b": 0.75
+      },
+      "csv": "C3_mixed__out_of_window__n05__s1.csv",
+      "csv_sha256": "f5eed5845e9319320c68316c432b361dd775a076a26052846d55e5590cf19bc0"
+    },
+    {
+      "id": "C3_mixed__degenerate__n00__s0",
+      "family": "C3_mixed",
+      "topology": "Rs + (P0∥R0) + nested_L2_capacitive",
+      "dimension": "topology_connection",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "Q0": 309908.77716172056,
+        "n0": 0.85,
+        "R0": 20000.0,
+        "R1": 60000.0,
+        "R2": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8,
+        "Q2": 2962497.84303676,
+        "n2": 0.8,
+        "Q_b": 2523119.977415195,
+        "n_b": 0.8
+      },
+      "csv": "C3_mixed__degenerate__n00__s0.csv",
+      "csv_sha256": "d24ab6489b8f8ef6eef39c54193b26ffbae73644364312431addafb8a39d28f5"
+    },
+    {
+      "id": "C3_mixed__degenerate__n00__s1",
+      "family": "C3_mixed",
+      "topology": "Rs + (P0∥R0) + nested_L2_capacitive",
+      "dimension": "topology_connection",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "Q0": 309908.77716172056,
+        "n0": 0.85,
+        "R0": 20000.0,
+        "R1": 60000.0,
+        "R2": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8,
+        "Q2": 2962497.84303676,
+        "n2": 0.8,
+        "Q_b": 2523119.977415195,
+        "n_b": 0.8
+      },
+      "csv": "C3_mixed__degenerate__n00__s1.csv",
+      "csv_sha256": "d24ab6489b8f8ef6eef39c54193b26ffbae73644364312431addafb8a39d28f5"
+    },
+    {
+      "id": "C3_mixed__degenerate__n02__s0",
+      "family": "C3_mixed",
+      "topology": "Rs + (P0∥R0) + nested_L2_capacitive",
+      "dimension": "topology_connection",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "Q0": 309908.77716172056,
+        "n0": 0.85,
+        "R0": 20000.0,
+        "R1": 60000.0,
+        "R2": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8,
+        "Q2": 2962497.84303676,
+        "n2": 0.8,
+        "Q_b": 2523119.977415195,
+        "n_b": 0.8
+      },
+      "csv": "C3_mixed__degenerate__n02__s0.csv",
+      "csv_sha256": "15bd7f4003021c5e8d00ee133acb6d246515abdc492c845ac98d38b65715a00f"
+    },
+    {
+      "id": "C3_mixed__degenerate__n02__s1",
+      "family": "C3_mixed",
+      "topology": "Rs + (P0∥R0) + nested_L2_capacitive",
+      "dimension": "topology_connection",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "Q0": 309908.77716172056,
+        "n0": 0.85,
+        "R0": 20000.0,
+        "R1": 60000.0,
+        "R2": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8,
+        "Q2": 2962497.84303676,
+        "n2": 0.8,
+        "Q_b": 2523119.977415195,
+        "n_b": 0.8
+      },
+      "csv": "C3_mixed__degenerate__n02__s1.csv",
+      "csv_sha256": "5d3a74f1ce02feff92b577eb2191d153691c91b3b22decb8369e843e0b10ed2f"
+    },
+    {
+      "id": "C3_mixed__degenerate__n05__s0",
+      "family": "C3_mixed",
+      "topology": "Rs + (P0∥R0) + nested_L2_capacitive",
+      "dimension": "topology_connection",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "Q0": 309908.77716172056,
+        "n0": 0.85,
+        "R0": 20000.0,
+        "R1": 60000.0,
+        "R2": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8,
+        "Q2": 2962497.84303676,
+        "n2": 0.8,
+        "Q_b": 2523119.977415195,
+        "n_b": 0.8
+      },
+      "csv": "C3_mixed__degenerate__n05__s0.csv",
+      "csv_sha256": "aa7efb687b55de478fe5c475cd63d287bf9553b73277335a878fc9c7156f41f1"
+    },
+    {
+      "id": "C3_mixed__degenerate__n05__s1",
+      "family": "C3_mixed",
+      "topology": "Rs + (P0∥R0) + nested_L2_capacitive",
+      "dimension": "topology_connection",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "Q0": 309908.77716172056,
+        "n0": 0.85,
+        "R0": 20000.0,
+        "R1": 60000.0,
+        "R2": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8,
+        "Q2": 2962497.84303676,
+        "n2": 0.8,
+        "Q_b": 2523119.977415195,
+        "n_b": 0.8
+      },
+      "csv": "C3_mixed__degenerate__n05__s1.csv",
+      "csv_sha256": "06fd441a0b72fa88eab89de3319f9b6ee5ab45f79a0f7260c79c97184c8c81bd"
+    },
+    {
+      "id": "ZARC__separated__n00__s0",
+      "family": "ZARC",
+      "topology": "Rs + (R1 ∥ P1)",
+      "dimension": "baseline",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88
+      },
+      "csv": "ZARC__separated__n00__s0.csv",
+      "csv_sha256": "990f98ba0253021102ed9b7af93da2eb71add21c13575b595069c2b3dc9c7bf1"
+    },
+    {
+      "id": "ZARC__separated__n00__s1",
+      "family": "ZARC",
+      "topology": "Rs + (R1 ∥ P1)",
+      "dimension": "baseline",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88
+      },
+      "csv": "ZARC__separated__n00__s1.csv",
+      "csv_sha256": "990f98ba0253021102ed9b7af93da2eb71add21c13575b595069c2b3dc9c7bf1"
+    },
+    {
+      "id": "ZARC__separated__n02__s0",
+      "family": "ZARC",
+      "topology": "Rs + (R1 ∥ P1)",
+      "dimension": "baseline",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88
+      },
+      "csv": "ZARC__separated__n02__s0.csv",
+      "csv_sha256": "14b07dd7811d634d15ec15ad12cde6ce3a9378e7e35c47d0d02a55f41894ad79"
+    },
+    {
+      "id": "ZARC__separated__n02__s1",
+      "family": "ZARC",
+      "topology": "Rs + (R1 ∥ P1)",
+      "dimension": "baseline",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88
+      },
+      "csv": "ZARC__separated__n02__s1.csv",
+      "csv_sha256": "989c452f9bddec2832c23a7f15d99038a5823d811e54d6bd55b8f69beb573dea"
+    },
+    {
+      "id": "ZARC__separated__n05__s0",
+      "family": "ZARC",
+      "topology": "Rs + (R1 ∥ P1)",
+      "dimension": "baseline",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88
+      },
+      "csv": "ZARC__separated__n05__s0.csv",
+      "csv_sha256": "db79b05df860a9620449a5ba88c02a15e564406deb46e6abec433f928d0de37e"
+    },
+    {
+      "id": "ZARC__separated__n05__s1",
+      "family": "ZARC",
+      "topology": "Rs + (R1 ∥ P1)",
+      "dimension": "baseline",
+      "difficulty": "separated",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 173534665.5122168,
+        "n1": 0.88
+      },
+      "csv": "ZARC__separated__n05__s1.csv",
+      "csv_sha256": "af0af36204ac1d56b55117e5950c3d3cc45619be7473055ec7a36bac07e3c892"
+    },
+    {
+      "id": "ZARC__overlap__n00__s0",
+      "family": "ZARC",
+      "topology": "Rs + (R1 ∥ P1)",
+      "dimension": "baseline",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85
+      },
+      "csv": "ZARC__overlap__n00__s0.csv",
+      "csv_sha256": "7c71e49c11a1f4cf013973d9bea988f1bc82f0155d6ec8d95ebf472bb798ed73"
+    },
+    {
+      "id": "ZARC__overlap__n00__s1",
+      "family": "ZARC",
+      "topology": "Rs + (R1 ∥ P1)",
+      "dimension": "baseline",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85
+      },
+      "csv": "ZARC__overlap__n00__s1.csv",
+      "csv_sha256": "7c71e49c11a1f4cf013973d9bea988f1bc82f0155d6ec8d95ebf472bb798ed73"
+    },
+    {
+      "id": "ZARC__overlap__n02__s0",
+      "family": "ZARC",
+      "topology": "Rs + (R1 ∥ P1)",
+      "dimension": "baseline",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85
+      },
+      "csv": "ZARC__overlap__n02__s0.csv",
+      "csv_sha256": "cf3c14cf2ef3f859458b53dbf69f2e35bad09f6b3619bc56d948c8484f58597d"
+    },
+    {
+      "id": "ZARC__overlap__n02__s1",
+      "family": "ZARC",
+      "topology": "Rs + (R1 ∥ P1)",
+      "dimension": "baseline",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85
+      },
+      "csv": "ZARC__overlap__n02__s1.csv",
+      "csv_sha256": "d0a5a0b0eec303ba7bad7ffe5cbb5a47a0df91df2778b44539f6abf2a8bb1463"
+    },
+    {
+      "id": "ZARC__overlap__n05__s0",
+      "family": "ZARC",
+      "topology": "Rs + (R1 ∥ P1)",
+      "dimension": "baseline",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85
+      },
+      "csv": "ZARC__overlap__n05__s0.csv",
+      "csv_sha256": "46be113974b457427d2b91b0ce593564b8aae491bfaa6e9ad3d613117c1b6dd4"
+    },
+    {
+      "id": "ZARC__overlap__n05__s1",
+      "family": "ZARC",
+      "topology": "Rs + (R1 ∥ P1)",
+      "dimension": "baseline",
+      "difficulty": "overlap",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 3290979.185029249,
+        "n1": 0.85
+      },
+      "csv": "ZARC__overlap__n05__s1.csv",
+      "csv_sha256": "ecf4b85a3424d20735767a92305ded86c16ad154239e88937610e68824e722cd"
+    },
+    {
+      "id": "ZARC__out_of_window__n00__s0",
+      "family": "ZARC",
+      "topology": "Rs + (R1 ∥ P1)",
+      "dimension": "baseline",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9
+      },
+      "csv": "ZARC__out_of_window__n00__s0.csv",
+      "csv_sha256": "4a4c325c38d15dfab766691884e9d26e2e8824b52d345c378357dfc64ae257b5"
+    },
+    {
+      "id": "ZARC__out_of_window__n00__s1",
+      "family": "ZARC",
+      "topology": "Rs + (R1 ∥ P1)",
+      "dimension": "baseline",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9
+      },
+      "csv": "ZARC__out_of_window__n00__s1.csv",
+      "csv_sha256": "4a4c325c38d15dfab766691884e9d26e2e8824b52d345c378357dfc64ae257b5"
+    },
+    {
+      "id": "ZARC__out_of_window__n02__s0",
+      "family": "ZARC",
+      "topology": "Rs + (R1 ∥ P1)",
+      "dimension": "baseline",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9
+      },
+      "csv": "ZARC__out_of_window__n02__s0.csv",
+      "csv_sha256": "131bcb8897ddf0afa3899c7651f4688dc07dc95a1b3a744c0e7cbe4efc5a07be"
+    },
+    {
+      "id": "ZARC__out_of_window__n02__s1",
+      "family": "ZARC",
+      "topology": "Rs + (R1 ∥ P1)",
+      "dimension": "baseline",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9
+      },
+      "csv": "ZARC__out_of_window__n02__s1.csv",
+      "csv_sha256": "fab47a5968ef6a28f5897196d2438ef5e53319416980fc0e8522a404494c57c3"
+    },
+    {
+      "id": "ZARC__out_of_window__n05__s0",
+      "family": "ZARC",
+      "topology": "Rs + (R1 ∥ P1)",
+      "dimension": "baseline",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9
+      },
+      "csv": "ZARC__out_of_window__n05__s0.csv",
+      "csv_sha256": "c9dd106ce0d00e9a7c188cef6239e5fa302bbf6006db3045452e6d8cab75f882"
+    },
+    {
+      "id": "ZARC__out_of_window__n05__s1",
+      "family": "ZARC",
+      "topology": "Rs + (R1 ∥ P1)",
+      "dimension": "baseline",
+      "difficulty": "out_of_window",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 30000.0,
+        "Q1": 1165225908.0971565,
+        "n1": 0.9
+      },
+      "csv": "ZARC__out_of_window__n05__s1.csv",
+      "csv_sha256": "ee9535cc247e5c1c2b0eae7bdce79d76ea0975a514051852ca0cac95949a14ad"
+    },
+    {
+      "id": "ZARC__degenerate__n00__s0",
+      "family": "ZARC",
+      "topology": "Rs + (R1 ∥ P1)",
+      "dimension": "baseline",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8
+      },
+      "csv": "ZARC__degenerate__n00__s0.csv",
+      "csv_sha256": "2feef8557e7e89473b875920058bcb1ad442843340f657aecd426390615e7a8f"
+    },
+    {
+      "id": "ZARC__degenerate__n00__s1",
+      "family": "ZARC",
+      "topology": "Rs + (R1 ∥ P1)",
+      "dimension": "baseline",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "none",
+        "pct": 0.0
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8
+      },
+      "csv": "ZARC__degenerate__n00__s1.csv",
+      "csv_sha256": "2feef8557e7e89473b875920058bcb1ad442843340f657aecd426390615e7a8f"
+    },
+    {
+      "id": "ZARC__degenerate__n02__s0",
+      "family": "ZARC",
+      "topology": "Rs + (R1 ∥ P1)",
+      "dimension": "baseline",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8
+      },
+      "csv": "ZARC__degenerate__n02__s0.csv",
+      "csv_sha256": "ea89765c43538369a9cad462b3107218c10599eec4110a008b3851f858eb3f08"
+    },
+    {
+      "id": "ZARC__degenerate__n02__s1",
+      "family": "ZARC",
+      "topology": "Rs + (R1 ∥ P1)",
+      "dimension": "baseline",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "correlated",
+        "pct": 0.02,
+        "systematic_shape": "0.4σ·[sin(1.5·2πt)+0.5sin(3.2·2πt+0.7)]·(1−0.6j)",
+        "note": "频率相关结构由生成过程给出，不是仪器噪声；会抬高 acf"
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8
+      },
+      "csv": "ZARC__degenerate__n02__s1.csv",
+      "csv_sha256": "ef05fda95d5e0646db401f82719eb3ed457e2f5dcb0df26e295380272ae6d0f4"
+    },
+    {
+      "id": "ZARC__degenerate__n05__s0",
+      "family": "ZARC",
+      "topology": "Rs + (R1 ∥ P1)",
+      "dimension": "baseline",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 0,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8
+      },
+      "csv": "ZARC__degenerate__n05__s0.csv",
+      "csv_sha256": "f7a80977306eeffefe20d7caa89868ab2624841412c75022f0530eb4dd611926"
+    },
+    {
+      "id": "ZARC__degenerate__n05__s1",
+      "family": "ZARC",
+      "topology": "Rs + (R1 ∥ P1)",
+      "dimension": "baseline",
+      "difficulty": "degenerate",
+      "noise": {
+        "kind": "heavy",
+        "pct": 0.05
+      },
+      "seed": 1,
+      "f_min": 0.1,
+      "f_max": 100000.0,
+      "n_points": 60,
+      "truth_params": {
+        "Rs": 150.0,
+        "R1": 60000.0,
+        "Q1": 952818.4240705444,
+        "n1": 0.8
+      },
+      "csv": "ZARC__degenerate__n05__s1.csv",
+      "csv_sha256": "f2ba8178af84eb3f0fc48c853d9f658e055be63318a20d058595425c29b775d7"
+    }
+  ]
+}
