@@ -61,9 +61,20 @@ AZ31 上 voigt 被结构排除、只剩 nested，只说明候选集剩一个，�
 - L0 只出 `excluded` / `not_excluded` / `unknown`，必须是**确定性判据**
   （如 `bm_select.voigt_can_represent`：只看感抗落在哪个频段/哪个接点，不采样）；
 - L1 只出 `promote` / `defer` / `not_evaluated_budget`，**永远不出 `excluded`**。
-  单次快速拟合不收敛 ≠ 模型不适用（钝化谱：默认初值塌陷，换数据驱动初值 13.1s
-  收敛、R̂ 1.004）；
+  单次快速拟合不收敛 ≠ 模型不适用：钝化 P1 在默认初值下是 98.40% / R̂ 197.79，
+  而 `diag_passivation_init.py` 用**文件名里的真值参数**做初值（`truth_init`，
+  即 oracle，生产环境拿不到）能到 6.65% / R̂ 1.004 / acf −0.244。
+  这条只证明"拓扑能表达这条谱"；**P1 目前没有生产可达的初始化解法**。
+  真正验证过的数据驱动初值出现在另外三条钝化谱（6.03–6.09%）与涂层 46 条；
 - L2 出最终证据，但"采样成功"也不等于"模型成立"。
+
+观测记录为什么拆成三块（0.2.0）
+--------------------------------
+`run_status`（拟合跑完没有）/ `sampling_status`（后验诊断过没过）/
+`fit_observation`（算出了哪些残差、能不能当证据）是**三个维度**，不能用一个
+`converged` 布尔代替。历史产物里到处是"跑完了、残差算了、R̂ 没过"的记录，
+用一个布尔要么丢掉真实残差，要么把它伪装成收敛。0.1.0 的 E3 约束
+（未收敛不得报 rms/acf）就是被这一条推翻的——它只适用于"根本没跑完"。
 
 边界
 ----
@@ -80,12 +91,21 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
-REGISTRY_VERSION = "0.1.0"
+REGISTRY_VERSION = "0.2.0"        # 0.2：拆 run/sampling、预检绑候选、manifest 可校验
 PRECHECK_VERSION = "0.1.0"
 
 PRECHECK_STATES = ("excluded", "not_excluded", "unknown")
 L1_OUTCOMES = ("promote", "defer", "not_evaluated_budget")
 EXEC_STATES = ("completed", "failed", "not_run")
+#: 采样/后验诊断是**独立维度**：拟合跑完了不等于后验可用，反之亦然。
+SAMPLING_STATES = ("passed", "failed", "not_evaluated")
+#: 残差指标算出来了、但后验不可用时，只允许这一种解读，避免被读成"拟合得还行"。
+INTERPRETATIONS = ("reliable", "descriptive_only")
+#: 一个指标为 `None` 时的原因。**`None` 不许裸奔**——三种语义必须可区分：
+#: 不适用（该配置没有这个量）/ 没算（能算但没跑）/ 算了但失败。
+NULL_REASONS = ("not_applicable", "not_computed", "failed")
+#: 单个候选的观测记录里允许出现、也允许缺席的指标名。
+OBSERVATION_METRICS = ("rms_rel", "acf", "rhat_max", "ess_min", "divergences")
 EVIDENCE_STATES = ("identified", "weak_preference", "non_identifiable",
                    "model_inadequate", "insufficient_evidence")
 PRECHECK_LEVELS = ("L0", "L1", "L2")
@@ -136,6 +156,7 @@ class TopologySpec:
     min_level: str = "L1"
     precheck_ref: str | None = None
     consistency: Any = None          # (elements_by_slot, config) -> None，违规抛 ValueError
+    consistency_id: str | None = None   # 结构校验规则的**显式版本**，进 registry_digest
     notes: tuple = ()
 
     def __post_init__(self):
@@ -146,6 +167,12 @@ class TopologySpec:
         _check_ref(self.forward_ref, f"拓扑 {self.id}.forward_ref")
         if self.precheck_ref is not None:
             _check_ref(self.precheck_ref, f"拓扑 {self.id}.precheck_ref")
+        if (self.consistency is None) != (self.consistency_id is None):
+            raise ValueError(
+                f"拓扑 {self.id}：consistency 与 consistency_id 必须同时给或同时不给。"
+                "校验规则改了而 id 不变，registry_digest 就发现不了结构约束变化。")
+        if self.consistency_id is not None and len(str(self.consistency_id).strip()) < 4:
+            raise ValueError(f"拓扑 {self.id}：consistency_id 太短，需要可读的版本标识")
         if self.maturity not in MATURITY:
             raise ValueError(f"拓扑 {self.id}：maturity={self.maturity!r} 不在 {MATURITY}")
         if self.min_level not in PRECHECK_LEVELS:
@@ -215,7 +242,9 @@ class Candidate:
         return {
             "candidate_id": self.candidate_id,
             "topology": self.topology_id,
-            "elements": dict(self.elements),
+            # 用 list 不用 dict：voigt 的 K 个 HN 单元挂的是同一槽位，
+            # dict 会把它们压成一条，定义里就看不出实际有几个单元。
+            "elements": [list(e) for e in self.elements],
             "config": self.config_dict,
             "init_profile": self.init_profile,
             "budget_profile": self.budget_profile,
@@ -382,11 +411,16 @@ def validate_candidate(cand: Candidate) -> None:
 # --------------------------------------------------------------------------
 def screening_block(*, registered: int, excluded: int, not_excluded: int,
                     unknown: int, survivors: int | None = None,
+                    precheck_records: "list | tuple | None" = None,
                     notes: tuple = ()) -> dict:
     """筛选层。只记数量关系，不出任何证据结论。
 
     `survivors` 是**拟合后仍 viable 的候选数**（阶段 0 不跑拟合，传 None）。
     `only_survivor` 由这里算，不接受调用方传入——这是硬约束。
+
+    `precheck_records` 是 `l0_precheck` 对每个候选的逐条结果。**数量汇总必须
+    能被逐条记录复算出来**，否则"2 个被排除"就只能靠调用方自述，无法核对。
+    给了记录就必须覆盖全部候选，且各状态计数与四个入参一致。
     """
     for k, v in dict(registered=registered, excluded=excluded,
                      not_excluded=not_excluded, unknown=unknown).items():
@@ -404,6 +438,26 @@ def screening_block(*, registered: int, excluded: int, not_excluded: int,
                 f"screening.survivors={survivors} 超过进入拟合的候选数 "
                 f"{not_excluded + unknown}")
 
+    records = None
+    if precheck_records is not None:
+        records = [_check_precheck_record(r) for r in precheck_records]
+        if len(records) != registered:
+            raise ValueError(
+                f"screening：逐条预检记录 {len(records)} 条，与 registered={registered} 不符")
+        ids = [r["candidate_id"] for r in records]
+        if len(set(ids)) != len(ids):
+            raise ValueError("screening：逐条预检记录里有重复 candidate_id")
+        tally = {s: 0 for s in PRECHECK_STATES}
+        for r in records:
+            tally[r["precheck_state"]] += 1
+        got = dict(excluded=tally["excluded"],
+                   not_excluded=tally["not_excluded"], unknown=tally["unknown"])
+        want = dict(excluded=excluded, not_excluded=not_excluded, unknown=unknown)
+        if got != want:
+            raise ValueError(
+                f"screening：数量汇总 {want} 与逐条记录复算 {got} 不一致；"
+                "汇总不能脱离逐条记录自述")
+
     return {
         "registered": registered,
         "excluded": excluded,
@@ -412,7 +466,35 @@ def screening_block(*, registered: int, excluded: int, not_excluded: int,
         "entered_fit": not_excluded + unknown,
         "survivors": survivors,
         "only_survivor": survivors == 1,
+        "precheck_records": records,
         "notes": list(notes),
+    }
+
+
+def _check_precheck_record(rec: Mapping) -> dict:
+    """校验单条 L0 预检记录，返回规范化副本。"""
+    if not isinstance(rec, Mapping):
+        raise ValueError("precheck 记录必须是映射")
+    need = ("candidate_id", "precheck_state", "precheck_config",
+            "precheck_reason", "precheck_version")
+    missing = [k for k in need if k not in rec]
+    if missing:
+        raise ValueError(
+            f"precheck 记录缺 {missing}；排除理由与所用配置必须随记录保存，"
+            "否则事后无法核对它凭什么被排除")
+    if rec["precheck_state"] not in PRECHECK_STATES:
+        raise ValueError(
+            f"precheck_state={rec['precheck_state']!r} 不在 {PRECHECK_STATES}")
+    if rec["precheck_state"] == "excluded" and not str(rec["precheck_reason"]).strip():
+        raise ValueError("precheck_state=excluded 必须给 precheck_reason")
+    if not isinstance(rec["precheck_config"], Mapping):
+        raise ValueError("precheck_config 必须是映射（记录实际参与的配置项）")
+    return {
+        "candidate_id": str(rec["candidate_id"]),
+        "precheck_state": str(rec["precheck_state"]),
+        "precheck_config": {str(k): _jsonable(v) for k, v in rec["precheck_config"].items()},
+        "precheck_reason": str(rec["precheck_reason"]),
+        "precheck_version": str(rec["precheck_version"]),
     }
 
 
@@ -442,16 +524,42 @@ def execution_block(*, total: int, completed: int = 0, failed: int = 0,
     }
 
 
-def observation_block(*, candidate_id: str, converged: bool,
+def observation_block(*, candidate_id: str, run_status: str,
+                      sampling_status: str = "not_evaluated",
                       rms_rel: float | None = None, acf: float | None = None,
                       rhat_max: float | None = None, ess_min: float | None = None,
                       divergences: int | None = None,
                       param_stability: Mapping | None = None,
+                      interpretation: str | None = None,
+                      unavailable: Mapping | None = None,
                       notes: tuple = ()) -> dict:
     """单个候选单次运行的**描述性**记录。不出结论、不排序、不合成总分。
 
-    硬约束（沿用 E3 纪律）：`converged=False` 时**不许**报 `rms_rel` / `acf`。
-    没收敛却报"残差 5%"，会被读成"拟合得还行"，而它只是某条链的最后一步。
+    三件事分开记，任何一个都不能代表另外两个：
+
+    | 字段 | 回答的问题 | 取值 |
+    |---|---|---|
+    | `run_status` | 拟合过程跑完了吗 | `completed` / `failed` / `not_run` |
+    | `sampling_status` | 后验诊断过了吗 | `passed` / `failed` / `not_evaluated` |
+    | `fit_observation` | 已经算出了哪些残差、能否当证据 | 指标 + `interpretation` |
+
+    **为什么不能用一个 `converged` 布尔**（0.1.0 的错，已改）：历史产物里到处是
+    "跑完了、残差也算出来了、但 R̂ 没过"的记录——涂层 `parallel` 是
+    10.81% / acf 0.944 / R̂ 14.21，钝化默认初值是 98.40% / 0.750 / R̂ 197.79。
+    用单布尔表达，要么把真实残差丢掉（schema 装不下自己的压测数据），
+    要么把它伪装成 `converged=True`（污染证据）。这两种都违背阶段 0 的初衷。
+
+    硬约束（都可执行，不是注释）：
+    - `run_status != "completed"` 时**不得**报任何残差指标：没跑完就没有残差。
+      原来的 E3「未收敛不报数」只适用于这一种情形，不适用于"跑完但采样没过"。
+    - `sampling_status == "failed"` 而报了指标，`interpretation` 必须**显式**为
+      `descriptive_only`。不设默认值——默认值会让调用方忘掉这句限定。
+    - `sampling_status == "not_evaluated"` 同样只能是 `descriptive_only`：
+      没做过诊断就不能声称可靠。
+    - `run_status == "completed"` 时，`rms_rel` / `acf` 要么给值，要么在
+      `unavailable` 里给原因；不许静默缺席。
+    - `unavailable` 的键必须是指标名，值必须是 `NULL_REASONS` 之一；
+      给了值的指标不许同时出现在 `unavailable` 里。
 
     `acf` 允许负值（钝化那条 `truth_init` 实测 −0.244），不要假设它在 [0,1]。
 
@@ -460,10 +568,66 @@ def observation_block(*, candidate_id: str, converged: bool,
     """
     if not isinstance(candidate_id, str) or not candidate_id:
         raise ValueError("observation.candidate_id 必须是非空字符串")
-    if not converged and (rms_rel is not None or acf is not None):
+    if run_status not in EXEC_STATES:
         raise ValueError(
-            f"候选 {candidate_id} 未收敛，不得报 rms_rel/acf"
-            "（E3：not_converged 不报数）")
+            f"observation.run_status={run_status!r} 不在 {EXEC_STATES}；"
+            "它只描述拟合过程，不描述后验质量（后者用 sampling_status）")
+    if sampling_status not in SAMPLING_STATES:
+        raise ValueError(
+            f"observation.sampling_status={sampling_status!r} 不在 {SAMPLING_STATES}")
+
+    raw = dict(rms_rel=rms_rel, acf=acf, rhat_max=rhat_max,
+               ess_min=ess_min, divergences=divergences)
+    provided = {k: v for k, v in raw.items() if v is not None}
+
+    if run_status != "completed" and provided:
+        raise ValueError(
+            f"候选 {candidate_id} run_status={run_status!r}，不得报 {sorted(provided)}："
+            "没跑完就没有残差。「跑完了但采样没过」请用 "
+            "run_status='completed' + sampling_status='failed' + "
+            "interpretation='descriptive_only'，不要走这一支。")
+
+    unavail = {}
+    if unavailable is not None:
+        if not isinstance(unavailable, Mapping):
+            raise ValueError("unavailable 必须是 指标名→原因 的映射")
+        for k, why in unavailable.items():
+            if k not in OBSERVATION_METRICS:
+                raise ValueError(f"unavailable[{k!r}] 不是已知指标；可用 {OBSERVATION_METRICS}")
+            if why not in NULL_REASONS:
+                raise ValueError(
+                    f"unavailable[{k!r}]={why!r} 不在 {NULL_REASONS}；"
+                    "三种缺失语义必须分开：不适用 / 没算 / 算了但失败")
+            if k in provided:
+                raise ValueError(
+                    f"候选 {candidate_id}：{k} 既有值 {provided[k]!r} 又被标成 "
+                    f"{why!r}，二者互斥")
+            unavail[str(k)] = str(why)
+
+    if run_status == "completed":
+        silent = [k for k in ("rms_rel", "acf") if raw[k] is None and k not in unavail]
+        if silent:
+            raise ValueError(
+                f"候选 {candidate_id} 已跑完，但 {silent} 既无值也无原因；"
+                f"请在 unavailable 里标明 {NULL_REASONS} 之一")
+
+    if provided:
+        if sampling_status == "passed":
+            interp = interpretation or "reliable"
+        else:
+            interp = interpretation
+            if interp != "descriptive_only":
+                raise ValueError(
+                    f"候选 {candidate_id} sampling_status={sampling_status!r} "
+                    f"却报了解读 {interp!r}。"
+                    "后验没通过（或没诊断）时，残差只能作描述性记录，"
+                    "必须显式写 interpretation='descriptive_only'")
+        if interp not in INTERPRETATIONS:
+            raise ValueError(f"interpretation={interp!r} 不在 {INTERPRETATIONS}")
+    else:
+        if interpretation is not None:
+            raise ValueError("没有报任何指标时不应给 interpretation")
+        interp = None
 
     stab = None
     if param_stability is not None:
@@ -480,15 +644,36 @@ def observation_block(*, candidate_id: str, converged: bool,
 
     return {
         "candidate_id": candidate_id,
-        "converged": bool(converged),
-        "rms_rel": None if rms_rel is None else float(rms_rel),
-        "acf": None if acf is None else float(acf),
-        "rhat_max": None if rhat_max is None else float(rhat_max),
-        "ess_min": None if ess_min is None else float(ess_min),
-        "divergences": None if divergences is None else int(divergences),
+        "run_status": run_status,
+        "sampling_status": sampling_status,
+        "fit_observation": {
+            "rms_rel": None if rms_rel is None else float(rms_rel),
+            "acf": None if acf is None else float(acf),
+            "sampling_diagnostics": {
+                "rhat_max": None if rhat_max is None else float(rhat_max),
+                "ess_min": None if ess_min is None else float(ess_min),
+                "divergences": None if divergences is None else int(divergences),
+            },
+            "interpretation": interp,
+            "unavailable": unavail,
+        },
         "param_stability": stab,
         "notes": list(notes),
     }
+
+
+def sampling_status_from(*, run_status: str, rhat_max: float | None,
+                         ess_min: float | None = None,
+                         rhat_tol: float = 1.05, ess_min_tol: float = 100.0) -> str:
+    """把 R̂/ESS 折算成 `sampling_status`。**只做折算，不做判定**。
+
+    阈值来自生产口径（`bm_real` 的 R̂ ≤1.05 当门）。这里不判断模型对不对，
+    只回答"后验诊断过没过"——所以本函数永远不出 `excluded` 之类的结构结论。
+    """
+    if run_status != "completed" or rhat_max is None:
+        return "not_evaluated"
+    bad = rhat_max > rhat_tol or (ess_min is not None and ess_min < ess_min_tol)
+    return "failed" if bad else "passed"
 
 
 def evidence_block(*, status: str, n_viable: int,
@@ -552,22 +737,79 @@ def l1_outcome(*, converged: bool, init_explored: bool,
     return "promote" if converged else "defer"
 
 
-def l0_precheck(topology_id: str, f, Z, **kw) -> tuple:
-    """调用拓扑登记的确定性预检，返回 `(state, reason)`。
+#: 预检会读取的候选配置键。预检结论依赖它们，所以**必须来自 Candidate 本身**，
+#: 不能由调用方另传——否则同一个 voigt 在 include_L=True/False 下会被同一个名字
+#: 给出看起来很确定的结论。
+PRECHECK_CONFIG_KEYS = ("include_L", "adsorption")
 
-    `state` 严格落在 `PRECHECK_STATES`。未登记预检的拓扑一律返回 `unknown`——
+
+def l0_precheck(cand, f, Z) -> dict:
+    """对一个**具体候选**跑确定性 L0 预检，返回可入库的记录。
+
+    接口是 `l0_precheck(candidate, f, Z)`，不再是
+    `l0_precheck(topology_id, f, Z, **kw)`（0.1.0 的写法已废）：同一拓扑的不同
+    配置可能得出不同结论，把配置做成可选关键字，调用方一旦忘记传，就会拿到一个
+    "看起来确定"的错误答案。现在配置只能来自 `cand.config_dict`。
+
+    `bm_select.voigt_can_represent` 的 `include_L=None` / `adsorption` 未传时
+    会回落到全局 `VOIGT_CAPS`，那反映的是**生产默认**而不是这个候选。所以这里
+    总是显式传值，并把实际传入的配置会话写进 `precheck_config`。
+
+    返回：
+        {candidate_id, precheck_state, precheck_config, precheck_reason,
+         precheck_version}
+    `precheck_state` 严格落在 `PRECHECK_STATES`；未登记预检的拓扑一律 `unknown`，
     "没有判据"不等于"通过"。
     """
-    topo = get_topology(topology_id)
+    if not isinstance(cand, Candidate):
+        raise ValueError(
+            "l0_precheck 只接受 Candidate；按拓扑名+关键字调用会让预检脱离候选配置"
+            "（旧签名 l0_precheck(topology_id, f, Z, **kw) 已废弃）")
+    topo = get_topology(cand.topology_id)
+    cfg = cand.config_dict
+    used = {k: cfg.get(k) for k in PRECHECK_CONFIG_KEYS if k in cfg}
+
     if topo.precheck_ref is None:
-        return "unknown", "该拓扑未登记确定性预检"
+        return {
+            "candidate_id": cand.candidate_id,
+            "precheck_state": "unknown",
+            "precheck_config": used,
+            "precheck_reason": "该拓扑未登记确定性预检",
+            "precheck_version": PRECHECK_VERSION,
+        }
+
     fn = resolve_forward(topo.precheck_ref)
-    ok, reason = fn(f, Z, **kw)
+    kwargs = {}
+    if topo.id == "voigt":
+        # 显式传，避免回落到全局 VOIGT_CAPS
+        kwargs["include_L"] = bool(cfg.get("include_L", False))
+        kwargs["adsorption"] = cfg.get("adsorption")
+        used = {"include_L": kwargs["include_L"],
+                "adsorption": kwargs["adsorption"]}
+    ok, reason = fn(f, Z, **kwargs)
     if ok is True:
-        return "not_excluded", ""
-    if ok is False:
-        return "excluded", str(reason)
-    raise ValueError(f"预检 {topo.precheck_ref} 返回值必须是 bool，收到 {ok!r}")
+        state = "not_excluded"
+    elif ok is False:
+        state = "excluded"
+    else:
+        raise ValueError(f"预检 {topo.precheck_ref} 返回值必须是 bool，收到 {ok!r}")
+
+    return {
+        "candidate_id": cand.candidate_id,
+        "precheck_state": state,
+        "precheck_config": used,
+        "precheck_reason": "" if ok is True else str(reason),
+        "precheck_version": PRECHECK_VERSION,
+    }
+
+
+def precheck_candidates(candidates, f, Z) -> dict:
+    """对一组候选逐条预检，直接产出可喂给 `screening_block` 的汇总 + 记录。"""
+    records = [l0_precheck(c, f, Z) for c in candidates]
+    tally = {s: 0 for s in PRECHECK_STATES}
+    for r in records:
+        tally[r["precheck_state"]] += 1
+    return {"records": records, "registered": len(records), **tally}
 
 
 # --------------------------------------------------------------------------
@@ -594,7 +836,7 @@ def candidate_set_manifest(*, candidate_set_id: str, candidates,
         dup = [i for i in set(ids) if ids.count(i) > 1]
         raise ValueError(f"候选集里有重复 candidate_id：{dup}")
 
-    return {
+    out = {
         "candidate_set_id": candidate_set_id,
         "candidate_ids": ids,
         "candidate_definitions": [c.describe() for c in cands],
@@ -608,10 +850,85 @@ def candidate_set_manifest(*, candidate_set_id: str, candidates,
         "immutable": True,
         "extra": dict(extra or {}),
     }
+    out["manifest_digest"] = manifest_digest(out)
+    return out
+
+
+MANIFEST_DIGEST_FIELD = "manifest_digest"
+
+
+def manifest_digest(manifest: Mapping) -> str:
+    """对 manifest 除 `manifest_digest` 外的全部内容做指纹。
+
+    `immutable=True` 只是个字段，它自己不阻止任何修改。真正能发现"冻结后被改"
+    的是这个指纹：手改任一候选定义、预算档或 registry 指纹，校验都会失败。
+    """
+    payload = {k: _jsonable(v) for k, v in manifest.items()
+               if k != MANIFEST_DIGEST_FIELD}
+    blob = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    return hashlib.sha256(blob).hexdigest()[:16]
+
+
+def verify_manifest(manifest: Mapping, candidates) -> None:
+    """校验一份已冻结的 manifest 与当前候选集/注册表仍然一致。
+
+    `assert_no_append` 只看"有没有新增"，会漏掉三类更隐蔽的改动：删候选、
+    改写已有候选定义、直接篡改 manifest 内容。这里一并挡住：
+
+    1. `manifest_digest` 与内容自洽（防手改）；
+    2. `registry_digest` 与当前注册表一致（防结构约束在事后变化）；
+    3. 候选 ID 集合**相等**（多出=追加，缺少=删除）；
+    4. 每个 `candidate_definitions` 与当前 `describe()` 逐字段相同（防同名换定义）。
+    """
+    if not isinstance(manifest, Mapping):
+        raise ValueError("manifest 必须是映射")
+    if manifest.get("created_before_fit") is not True:
+        raise ValueError("manifest.created_before_fit 不是 True，这份候选集不是拟合前写入的")
+
+    stored = manifest.get(MANIFEST_DIGEST_FIELD)
+    if not stored:
+        raise ValueError(
+            f"manifest 缺 {MANIFEST_DIGEST_FIELD}，无法判断冻结后是否被改动；"
+            "请用 candidate_set_manifest() 重新生成")
+    if stored != manifest_digest(manifest):
+        raise ValueError(
+            f"manifest 内容与其指纹不符（记录 {stored}，实算 {manifest_digest(manifest)}）："
+            "冻结后的候选集被修改过")
+
+    reg_now = registry_digest()
+    if manifest.get("registry_digest") != reg_now:
+        raise ValueError(
+            f"registry_digest 变化：manifest 记 {manifest.get('registry_digest')}，"
+            f"当前为 {reg_now}。拓扑、元件、结构校验规则或观测 schema 的任何改动都会"
+            "影响历史候选集的可比性；请建立新的 candidate_set_id")
+
+    frozen_ids = list(manifest.get("candidate_ids", ()))
+    incoming = [c.candidate_id for c in candidates]
+    extra = sorted(set(incoming) - set(frozen_ids))
+    if extra:
+        raise ValueError(
+            f"候选集 {manifest.get('candidate_set_id')} 已冻结；新增 {extra} "
+            "需要建立新的 candidate_set_id（这是一次新分析，不是原集合的延伸）")
+    gone = sorted(set(frozen_ids) - set(incoming))
+    if gone:
+        raise ValueError(
+            f"候选集 {manifest.get('candidate_set_id')} 已冻结；缺少 {gone}。"
+            "删候选同样是改变候选集，需要新的 candidate_set_id")
+
+    frozen_defs = {d["candidate_id"]: d for d in manifest.get("candidate_definitions", ())}
+    for c in candidates:
+        old = frozen_defs.get(c.candidate_id)
+        if old is None:
+            raise ValueError(f"manifest 缺少 {c.candidate_id} 的定义")
+        now = _jsonable(c.describe())
+        if _jsonable(old) != now:
+            raise ValueError(
+                f"候选 {c.candidate_id} 的定义与冻结时不同（同名换定义）；"
+                "candidate_id 必须覆盖全部字段，定义变了 id 就该变")
 
 
 def assert_no_append(manifest: Mapping, candidates) -> None:
-    """拒绝往已冻结的候选集里追加新候选。"""
+    """拒绝往已冻结的候选集里追加新候选（只查追加；完整校验用 `verify_manifest`）。"""
     frozen = set(manifest.get("candidate_ids", ()))
     incoming = {c.candidate_id for c in candidates}
     extra = incoming - frozen
@@ -622,7 +939,13 @@ def assert_no_append(manifest: Mapping, candidates) -> None:
 
 
 def registry_digest() -> str:
-    """注册表内容指纹。manifest 记下它，注册表被改动后可被发现。"""
+    """注册表内容指纹。manifest 记下它，注册表被改动后可被发现。
+
+    **结构校验规则也进指纹**（`consistency_id`）：只哈希字段的话，改
+    `_nested_consistency` 的判断逻辑而字段不动时，指纹不会变，manifest 就无法
+    发现"数学结构约束变了"。这里不对函数对象做 repr 哈希（不稳定），而是要求
+    拓扑给一个显式、可读的版本标识。
+    """
     payload = {
         "topologies": {
             k: {
@@ -637,6 +960,7 @@ def registry_digest() -> str:
                 "maturity": v.maturity,
                 "min_level": v.min_level,
                 "precheck_ref": v.precheck_ref,
+                "consistency_id": v.consistency_id,
             }
             for k, v in TOPOLOGIES.items()
         },
@@ -651,6 +975,14 @@ def registry_digest() -> str:
             }
             for k, v in ELEMENTS.items()
         },
+        "precheck_config_keys": list(PRECHECK_CONFIG_KEYS),
+        "observation_schema": {
+            "exec_states": list(EXEC_STATES),
+            "sampling_states": list(SAMPLING_STATES),
+            "interpretations": list(INTERPRETATIONS),
+            "null_reasons": list(NULL_REASONS),
+            "metrics": list(OBSERVATION_METRICS),
+        },
         "registry_version": REGISTRY_VERSION,
         "precheck_version": PRECHECK_VERSION,
     }
@@ -661,9 +993,68 @@ def registry_digest() -> str:
 # --------------------------------------------------------------------------
 # 已登记内容
 # --------------------------------------------------------------------------
+def _voigt_consistency(by_slot: Mapping, cfg: Mapping) -> None:
+    """voigt 的结构约束：K 必须等于实际挂上的 HN 单元数。
+
+    没有这条，`config={"K": 3}` 配一个 HN 单元也能通过槽位校验——登记表里写的
+    数学结构和实际要拟合的结构就对不上了，而这正是"名称统一了、模型却没法公平比较"
+    的来源（2026-11-13 二轮评审 §4）。
+    """
+    units = by_slot.get("relaxation_unit", [])
+    if not units:
+        raise ValueError("voigt：至少要有一个 relaxation_unit（HN 单元）")
+    if any(u != "hn" for u in units):
+        raise ValueError(f"voigt：relaxation_unit 只接受 hn，实得 {units}")
+
+    if "K" not in cfg:
+        raise ValueError(
+            f"voigt：config 必须显式给 K（实得 {len(units)} 个 HN 单元），"
+            "不允许由槽位数量隐含推出——manifest 里要能一眼核对")
+    try:
+        K = int(cfg["K"])
+    except (TypeError, ValueError):
+        raise ValueError(f"voigt：config['K']={cfg['K']!r} 不是整数")
+    if K != len(units):
+        raise ValueError(
+            f"voigt：config['K']={K} 与实际挂载的 HN 单元数 {len(units)} 不一致；"
+            "数学结构与登记定义对不上")
+
+    inc = bool(cfg.get("include_L", False))
+    inductors = by_slot.get("series_inductor", [])
+    if inc and len(inductors) != 1:
+        raise ValueError(
+            f"voigt：include_L=True 需要恰好一个 series_inductor，实得 {inductors}")
+    if not inc and inductors:
+        raise ValueError(
+            f"voigt：include_L=False 但挂了 series_inductor={inductors}；"
+            "顶层感抗只在 include_L=True 时采样")
+
+
 def _nested_consistency(by_slot: Mapping, cfg: Mapping) -> None:
-    """nested 的两条结构约束（写在这里而不是注释里，错误当场抛）。"""
-    layers = int(cfg.get("layers", 2))
+    """nested 的结构约束（写在这里而不是注释里，错误当场抛）。
+
+    `layers` 必须**严格**属于 {1,2}：`z_nested` 的签名虽然写着 1..3，
+    但 3 层从未实现（§6.3 已订正）。旧实现只分支 1 和 2，传 3 会静默通过，
+    于是"登记了 3 层"这种不存在的结构能一路走进 manifest。
+    """
+    if "layers" not in cfg:
+        raise ValueError("nested：config 必须显式给 layers（1 或 2）")
+    raw_layers = cfg["layers"]
+    if isinstance(raw_layers, bool) or not isinstance(raw_layers, int):
+        # 允许 "2" 这种字符串，但必须在整数集里；bool 单独挡掉（True == 1）
+        try:
+            layers = int(raw_layers)
+        except (TypeError, ValueError):
+            raise ValueError(f"nested.config.layers={raw_layers!r} 不是整数")
+        if str(layers) != str(raw_layers).strip():
+            raise ValueError(f"nested.config.layers={raw_layers!r} 不是整数")
+    else:
+        layers = raw_layers
+    if layers not in (1, 2):
+        raise ValueError(
+            f"nested.config.layers={layers} 不支持；只有 1、2 两层实现过"
+            "（z_nested 文档的 1..3 是笔误，§6.3 已订正，3 层从未实现）")
+
     branch = str(cfg.get("branch", "parallel"))
     expect = {"parallel": "rl_parallel", "series": "rl_series", "capacitive": "cpe"}
     if branch not in expect:
@@ -706,6 +1097,8 @@ register_topology(TopologySpec(
     maturity="production",
     min_level="L1",
     precheck_ref="bm_select:voigt_can_represent",
+    consistency=_voigt_consistency,
+    consistency_id="voigt_consistency_v1",
     notes=(
         "预检只判感抗接点，不判容性最内层，因此对涂层/钝化返回 not_excluded 而非 excluded",
         "§13 留出 0/3、§14 全量 4/14；默认族的准入结论被这两项卡住",
@@ -749,6 +1142,7 @@ register_topology(TopologySpec(
     min_level="L1",
     precheck_ref=None,
     consistency=_nested_consistency,
+    consistency_id="nested_consistency_v2",
     notes=(
         "§13 留出 0/3、§14 全量 4/14，卡 M-b acf≤0.50；不接 bmdrt.py 主流程",
         "骨架与 测试数据/涂层、钝化 对到 1e-15；这两族只是同构，不构成通用证据",

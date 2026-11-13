@@ -1,23 +1,24 @@
 # -*- coding: utf-8 -*-
-"""test_circuit_registry.py —— 阶段 0C：schema 契约测试。
+"""test_circuit_registry.py —— 阶段 0C：schema 契约测试（registry 0.2.0）。
 
-目的：`circuit_registry.py` 的 schema 必须能**表达**下面六类事实，且不能把
+目的：`circuit_registry.py` 的 schema 必须能**表达**下面这些事实，且不能把
 不该合并的维度合并掉。这里测的是"能不能装下 + 乱填会不会报错"，不是模型好坏。
 
-    A  定义完整性      —— 两个拓扑、元件接线状态、registry 指纹
-    B  候选构造        —— 槽位/元件/初始化档的约束真的在拦
-    C  screening       —— only_survivor 只能由 survivors==1 算出来
+    A  定义完整性      —— 拓扑、元件接线、registry 指纹覆盖结构校验规则
+    B  候选构造        —— 槽位/元件/初始化档/**数学结构一致性**真的在拦
+    C  screening       —— only_survivor 只由 survivors==1 算；汇总必须能被逐条复算
     D  execution       —— 跑没跑成与失败原因分开记账
-    E  observation     —— 贴底但参数不稳要能同时保留；未收敛不许报数
+    E  observation     —— 执行 / 采样 / 观测三块分开；跑完但采样失败仍保留残差
     F  evidence 五态   —— identified / model_inadequate 的硬条件真的在拦
     G  L1 三态         —— 快速拟合失败**永远**不返回 excluded
-    H  manifest        —— 拟合前冻结、不可追加
-    I  L0 预检         —— 真实调用 `voigt_can_represent` 的三条路径
+    H  manifest        —— 拟合前冻结、不可追加/删除/改写、指纹可校验
+    I  L0 预检         —— 绑定候选配置，真实调用 `voigt_can_represent`
 
 用法：python test_circuit_registry.py
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 import sys
 from pathlib import Path
@@ -37,10 +38,13 @@ def _expect_raise(fn, *a, **kw) -> str:
     raise AssertionError("期望报错但成功了")
 
 
-def _voigt(K: int = 2, **kw):
+def _voigt(K: int = 2, include_L: bool = False, **kw):
+    els = [("relaxation_unit", "hn")] * K
+    cfg = {"K": K, "include_L": include_L}
+    if include_L:
+        els.append(("series_inductor", "rl_series"))
     return R.make_candidate(
-        "voigt", [("relaxation_unit", "hn")] * K,
-        {"K": K}, init_profile=kw.pop("init_profile", "uniform"), **kw)
+        "voigt", els, cfg, init_profile=kw.pop("init_profile", "uniform"), **kw)
 
 
 def _nested(branch="capacitive", layers=2, init="uniform", **kw):
@@ -54,6 +58,15 @@ def _nested(branch="capacitive", layers=2, init="uniform", **kw):
                             init_profile=init, **kw)
 
 
+def _manifest(cs, **kw):
+    return R.candidate_set_manifest(
+        candidate_set_id=kw.pop("candidate_set_id", "CS-1"), candidates=cs,
+        likelihood_profile=kw.pop("likelihood_profile", "perpoint-2pct"),
+        budget_profile=kw.pop("budget_profile", "standard"),
+        seed_policy=kw.pop("seed_policy", "seed=0..2"),
+        created_before_fit=kw.pop("created_before_fit", True), **kw)
+
+
 # --------------------------------------------------------------------------
 # A 定义完整性
 # --------------------------------------------------------------------------
@@ -64,6 +77,9 @@ def case_definitions():
         assert "Z" in t.skeleton and len(t.skeleton) > 40, tid
         assert t.param_space and t.priors, tid
         assert t.maturity in R.MATURITY
+        # 每个拓扑都必须有显式的结构校验版本，否则 digest 发现不了规则变化
+        assert t.consistency_id, tid
+        assert t.consistency is not None, tid
     wired = set(R.list_elements(wired_only=True))
     assert {"hn", "cpe", "rl_parallel", "rl_series"} <= wired, wired
     for eid in set(R.list_elements()) - wired:
@@ -86,6 +102,20 @@ def case_ref_whitelist():
                   priors={"a": "x"}, init_profiles={"uniform": "x"},
                   slots=(R.SlotSpec("s", "s", ("hn",)),), maturity="production")
     return "非法模块名被拒"
+
+
+def case_digest_covers_consistency():
+    old = R.TOPOLOGIES["nested"]
+    before = R.registry_digest()
+    R.TOPOLOGIES["nested"] = dataclasses.replace(
+        old, consistency_id="nested_consistency_v99")
+    try:
+        after = R.registry_digest()
+    finally:
+        R.TOPOLOGIES["nested"] = old
+    assert after != before, "改了 consistency_id 指纹却没变"
+    assert R.registry_digest() == before, "恢复后指纹应回到原值"
+    return "consistency_id 进指纹：改校验规则版本 → digest 变"
 
 
 # --------------------------------------------------------------------------
@@ -122,6 +152,49 @@ def case_layers1_with_inner():
                    ("branch", "cpe")],
                   {"branch": "capacitive", "layers": 1}, init_profile="uniform")
     return "layers=1 带 inner_cpe 被拒"
+
+
+def case_layers3_rejected():
+    """旧实现只分支 1 和 2，layers=3 会静默通过（z_nested 的 1..3 是笔误）。"""
+    msg = _expect_raise(R.make_candidate, "nested",
+                        [("outer_cpe", "cpe"), ("branch", "cpe")],
+                        {"branch": "capacitive", "layers": 3},
+                        init_profile="uniform")
+    assert "1、2" in msg or "不支持" in msg, msg
+    _expect_raise(R.make_candidate, "nested",
+                  [("outer_cpe", "cpe"), ("branch", "cpe")],
+                  {"branch": "capacitive"}, init_profile="uniform")
+    return "layers=3 与缺 layers 都被拒"
+
+
+def case_voigt_K_mismatch():
+    """登记的是 K 个 HN，就必须真挂 K 个；否则 manifest 里的数学结构是假的。"""
+    msg = _expect_raise(R.make_candidate, "voigt",
+                        [("relaxation_unit", "hn")], {"K": 3},
+                        init_profile="uniform")
+    assert "不一致" in msg, msg
+    _expect_raise(R.make_candidate, "voigt",
+                  [("relaxation_unit", "hn")], {}, init_profile="uniform")
+    return "voigt K≠HN 数、缺 K 都被拒"
+
+
+def case_voigt_include_L_binding():
+    _expect_raise(R.make_candidate, "voigt",
+                  [("relaxation_unit", "hn")], {"K": 1, "include_L": True},
+                  init_profile="uniform")
+    _expect_raise(R.make_candidate, "voigt",
+                  [("relaxation_unit", "hn"), ("series_inductor", "rl_series")],
+                  {"K": 1, "include_L": False}, init_profile="uniform")
+    c = _voigt(1, include_L=True)
+    assert any(s == "series_inductor" for s, _ in c.elements)
+    return "include_L 与 series_inductor 必须同侧"
+
+
+def case_describe_keeps_duplicate_slots():
+    d = _voigt(3).describe()
+    assert isinstance(d["elements"], list), d["elements"]
+    assert len([e for e in d["elements"] if e[0] == "relaxation_unit"]) == 3
+    return "describe 用 list 保留 K 个重复槽位（dict 会压成一条）"
 
 
 def case_unknown_init_profile():
@@ -163,6 +236,31 @@ def case_only_survivor_is_count():
     return "only_survivor 只由 survivors==1 得出；超界被拒"
 
 
+def case_screening_records_must_match_tally():
+    import numpy as np
+    import bm_top as T
+    f = np.logspace(-2, 5, 50)
+    Z = 100.0 + T.z_rl_parallel(f, 1000.0, 10.0)
+    cs = [_voigt(2), _nested("capacitive", 2)]
+    p = R.precheck_candidates(cs, f, Z)
+    s = R.screening_block(registered=p["registered"], excluded=p["excluded"],
+                          not_excluded=p["not_excluded"], unknown=p["unknown"],
+                          precheck_records=p["records"])
+    assert len(s["precheck_records"]) == 2
+    assert {r["candidate_id"] for r in s["precheck_records"]} == {c.candidate_id for c in cs}
+    # 自述的汇总不能与逐条记录矛盾
+    _expect_raise(R.screening_block, registered=2, excluded=0,
+                  not_excluded=1, unknown=1, precheck_records=p["records"])
+    # 记录条数必须等于 registered
+    _expect_raise(R.screening_block, registered=3, excluded=1,
+                  not_excluded=2, unknown=0, precheck_records=p["records"])
+    # excluded 必须给理由
+    _expect_raise(R.screening_block, registered=1, excluded=1,
+                  not_excluded=0, unknown=0,
+                  precheck_records=[{**p["records"][0], "precheck_reason": ""}])
+    return "汇总必须由逐条预检记录复算得出"
+
+
 # --------------------------------------------------------------------------
 # D execution
 # --------------------------------------------------------------------------
@@ -177,42 +275,117 @@ def case_execution_closes():
 
 
 # --------------------------------------------------------------------------
-# E observation
+# E observation：执行 / 采样 / 观测三块
 # --------------------------------------------------------------------------
-def case_observation_floor_but_unstable():
+def case_observation_sampling_failed_keeps_residuals():
+    """P0-1 的核心用例：跑完了、残差算了、R̂ 没过——三者必须能同时表达。
+
+    数值取真实历史产物（涂层 nested parallel：10.81% / acf 0.944 / R̂ 14.21）。
+    """
     o = R.observation_block(
-        candidate_id="C-demo", converged=True, rms_rel=2.40, acf=0.279,
-        rhat_max=1.01, param_stability={
-            "R2": {"median": 1.31e5, "ci90": [0.9e5, 1.9e5], "flag": "wide"},
-            "n2": {"median": 0.899, "flag": "at_bound"},
-        })
-    assert o["rms_rel"] == 2.40 and o["acf"] == 0.279
-    assert o["param_stability"]["n2"]["flag"] == "at_bound"
-    return "贴底（2.40%）与参数不稳（n2 at_bound）可同时保留"
+        candidate_id="C-coating-parallel", run_status="completed",
+        sampling_status="failed", rms_rel=10.8101, acf=0.9444,
+        rhat_max=14.2089, ess_min=1.0042, divergences=0,
+        interpretation="descriptive_only")
+    fo = o["fit_observation"]
+    assert o["run_status"] == "completed" and o["sampling_status"] == "failed"
+    assert abs(fo["rms_rel"] - 10.8101) < 1e-9 and abs(fo["acf"] - 0.9444) < 1e-9
+    assert fo["sampling_diagnostics"]["rhat_max"] == 14.2089
+    assert fo["interpretation"] == "descriptive_only"
+    return "跑完但采样失败：残差保留且强制 descriptive_only"
+
+
+def case_observation_sampling_failed_needs_explicit_interp():
+    msg = _expect_raise(R.observation_block, candidate_id="C-x",
+                        run_status="completed", sampling_status="failed",
+                        rms_rel=5.0, acf=0.4)
+    assert "descriptive_only" in msg, msg
+    msg2 = _expect_raise(R.observation_block, candidate_id="C-x",
+                         run_status="completed", sampling_status="not_evaluated",
+                         rms_rel=5.0, acf=0.4)
+    assert "descriptive_only" in msg2, msg2
+    return "采样未通过/未诊断时不给解读 → 报错，不给默认值"
+
+
+def case_observation_passed_defaults_reliable():
+    o = R.observation_block(candidate_id="C-ok", run_status="completed",
+                            sampling_status="passed", rms_rel=7.0765,
+                            acf=0.2794, rhat_max=1.0047)
+    assert o["fit_observation"]["interpretation"] == "reliable"
+    return "采样通过时默认 reliable"
+
+
+def case_observation_no_numbers_when_not_completed():
+    """E3 的语义修正版：只有"根本没跑完"才不许报残差。"""
+    msg = _expect_raise(R.observation_block, candidate_id="C-x",
+                        run_status="failed", rms_rel=5.0, acf=0.4)
+    assert "没跑完" in msg, msg
+    o = R.observation_block(candidate_id="C-y", run_status="not_run")
+    assert o["fit_observation"]["rms_rel"] is None
+    assert o["fit_observation"]["interpretation"] is None
+    return "run_status≠completed 不报数（不再用 converged 布尔）"
+
+
+def case_observation_null_reason():
+    o = R.observation_block(
+        candidate_id="C", run_status="completed", sampling_status="passed",
+        rms_rel=7.0, acf=None, unavailable={"acf": "not_computed"})
+    assert o["fit_observation"]["unavailable"]["acf"] == "not_computed"
+    _expect_raise(R.observation_block, candidate_id="C", run_status="completed",
+                  sampling_status="passed", rms_rel=7.0, acf=None,
+                  unavailable={"acf": "没算"})
+    _expect_raise(R.observation_block, candidate_id="C", run_status="completed",
+                  sampling_status="passed", rms_rel=7.0, acf=-0.2,
+                  unavailable={"acf": "failed"})
+    _expect_raise(R.observation_block, candidate_id="C", run_status="completed",
+                  sampling_status="passed", rms_rel=7.0, acf=None,
+                  unavailable={"不存在的量": "not_applicable"})
+    return "null 三语义（不适用/没算/失败）可表达；与有值互斥"
+
+
+def case_observation_silent_absence_rejected():
+    _expect_raise(R.observation_block, candidate_id="C",
+                  run_status="completed", sampling_status="passed", rms_rel=7.0)
+    return "已跑完但 acf 既无值也无原因 → 报错"
 
 
 def case_observation_acf_can_be_negative():
-    o = R.observation_block(candidate_id="C-neg", converged=True,
-                            rms_rel=6.65, acf=-0.244)
-    assert o["acf"] == -0.244
+    o = R.observation_block(candidate_id="C-neg", run_status="completed",
+                            sampling_status="passed", rms_rel=6.65, acf=-0.244)
+    assert o["fit_observation"]["acf"] == -0.244
     return "acf 允许负值"
 
 
-def case_observation_no_numbers_when_unconverged():
-    msg = _expect_raise(R.observation_block, candidate_id="C-x",
-                        converged=False, rms_rel=5.0, acf=0.4)
-    assert "未收敛" in msg
-    o = R.observation_block(candidate_id="C-y", converged=False)
-    assert o["rms_rel"] is None and o["acf"] is None
-    return "未收敛不得报 rms/acf（E3）"
+def case_observation_floor_but_unstable():
+    o = R.observation_block(
+        candidate_id="C-demo", run_status="completed", sampling_status="passed",
+        rms_rel=7.0765, acf=0.2794, rhat_max=1.0047,
+        param_stability={
+            "R2": {"median": 1.31e5, "ci90": [0.9e5, 1.9e5], "flag": "wide"},
+            "n2": {"median": 0.899, "flag": "at_bound"},
+        })
+    assert o["fit_observation"]["rms_rel"] == 7.0765
+    assert o["param_stability"]["n2"]["flag"] == "at_bound"
+    return "贴底（rms_rel 7.08%）与参数不稳（n2 at_bound）可同时保留"
 
 
 def case_observation_no_scalar_score():
-    _expect_raise(R.observation_block, candidate_id="C-z", converged=True,
+    _expect_raise(R.observation_block, candidate_id="C-z", run_status="completed",
+                  sampling_status="passed", rms_rel=5.0, acf=0.1,
                   param_stability={"n2": 0.42})
-    _expect_raise(R.observation_block, candidate_id="C-z", converged=True,
+    _expect_raise(R.observation_block, candidate_id="C-z", run_status="completed",
+                  sampling_status="passed", rms_rel=5.0, acf=0.1,
                   param_stability={"n2": {"median": 0.5}})
     return "参数可信度不许压成标量"
+
+
+def case_sampling_status_from():
+    assert R.sampling_status_from(run_status="not_run", rhat_max=None) == "not_evaluated"
+    assert R.sampling_status_from(run_status="completed", rhat_max=14.21) == "failed"
+    assert R.sampling_status_from(run_status="completed", rhat_max=1.0047) == "passed"
+    assert R.sampling_status_from(run_status="completed", rhat_max=1.01,
+                                  ess_min=0.9) == "failed"
+    return "R̂/ESS 折算采样态（只折算，不出结构结论）"
 
 
 # --------------------------------------------------------------------------
@@ -289,28 +462,21 @@ def case_l1_init_not_explored_defers():
 # --------------------------------------------------------------------------
 def case_manifest_frozen():
     cs = [_voigt(2), _nested("capacitive", 2), _nested("parallel", 1)]
-    m = R.candidate_set_manifest(candidate_set_id="CS-1", candidates=cs,
-                                 likelihood_profile="perpoint-2pct",
-                                 budget_profile="standard",
-                                 seed_policy="seed=0..2",
-                                 created_before_fit=True)
+    m = _manifest(cs)
     for k in ("candidate_set_id", "candidate_ids", "candidate_definitions",
               "registry_version", "precheck_version", "likelihood_profile",
-              "budget_profile", "seed_policy", "created_before_fit"):
+              "budget_profile", "seed_policy", "created_before_fit",
+              "manifest_digest"):
         assert k in m, k
     assert len(m["candidate_ids"]) == 3 and m["immutable"] is True
     json.dumps(m, ensure_ascii=False)
-    _expect_raise(R.candidate_set_manifest, candidate_set_id="CS-2",
-                  candidates=cs, likelihood_profile="x", budget_profile="x",
-                  seed_policy="x", created_before_fit=False)
-    return "9 字段齐 + 可序列化；created_before_fit=False 被拒"
+    _expect_raise(_manifest, cs, created_before_fit=False)
+    return "10 字段齐（含指纹）+ 可序列化；created_before_fit=False 被拒"
 
 
 def case_manifest_no_append():
     cs = [_voigt(2)]
-    m = R.candidate_set_manifest(candidate_set_id="CS-1", candidates=cs,
-                                 likelihood_profile="x", budget_profile="x",
-                                 seed_policy="x", created_before_fit=True)
+    m = _manifest(cs)
     R.assert_no_append(m, cs)
     msg = _expect_raise(R.assert_no_append, m, [_voigt(2), _nested("capacitive", 2)])
     assert "新的 candidate_set_id" in msg
@@ -319,24 +485,72 @@ def case_manifest_no_append():
 
 def case_manifest_duplicate():
     cs = [_voigt(2), _voigt(2)]
-    _expect_raise(R.candidate_set_manifest, candidate_set_id="CS-1",
-                  candidates=cs, likelihood_profile="x", budget_profile="x",
-                  seed_policy="x", created_before_fit=True)
+    _expect_raise(_manifest, cs)
     return "重复 candidate_id 被拒"
 
 
+def case_verify_manifest_ok_and_tamper():
+    cs = [_voigt(2), _nested("capacitive", 2)]
+    m = _manifest(cs)
+    R.verify_manifest(m, cs)
+
+    bad = dict(m)
+    bad["budget_profile"] = "quick"
+    msg = _expect_raise(R.verify_manifest, bad, cs)
+    assert "指纹" in msg, msg
+
+    no_digest = {k: v for k, v in m.items() if k != "manifest_digest"}
+    _expect_raise(R.verify_manifest, no_digest, cs)
+    return "verify_manifest 通过；改内容/缺指纹都被抓"
+
+
+def case_verify_manifest_rejects_removal_and_swap():
+    cs = [_voigt(2), _nested("capacitive", 2)]
+    m = _manifest(cs)
+    msg = _expect_raise(R.verify_manifest, m, [_voigt(2)])
+    assert "缺少" in msg, msg
+
+    # 同名换定义：候选集里用不同 init 的候选，但把 manifest 的定义改成另一个
+    a = _nested("capacitive", 2, init="uniform")
+    b = _nested("capacitive", 2, init="data_driven")
+    m2 = _manifest([a])
+    forged = dict(m2)
+    forged["candidate_definitions"] = [
+        {**m2["candidate_definitions"][0], "init_profile": "data_driven"}]
+    forged["manifest_digest"] = R.manifest_digest(forged)
+    msg2 = _expect_raise(R.verify_manifest, forged, [a])
+    assert "同名换定义" in msg2, msg2
+    assert b.candidate_id != a.candidate_id
+    return "删除候选、同名换定义都被抓"
+
+
+def case_verify_manifest_registry_drift():
+    cs = [_voigt(2)]
+    m = _manifest(cs)
+    old = R.TOPOLOGIES["voigt"]
+    R.TOPOLOGIES["voigt"] = dataclasses.replace(old, maturity="exploratory")
+    try:
+        msg = _expect_raise(R.verify_manifest, m, cs)
+    finally:
+        R.TOPOLOGIES["voigt"] = old
+    assert "registry_digest" in msg, msg
+    return "注册表结构变化 → 历史候选集不可直接续用"
+
+
 # --------------------------------------------------------------------------
-# I L0 预检（真实调用）
+# I L0 预检（真实调用，绑定候选配置）
 # --------------------------------------------------------------------------
 def case_l0_az31_style_excluded():
     import numpy as np
     import bm_top as T
     f = np.logspace(-2, 5, 50)
     Z = 100.0 + T.z_rl_parallel(f, 1000.0, 10.0)
-    state, why = R.l0_precheck("voigt", f, Z)
-    assert state == "excluded", (state, why)
-    assert "低频感抗" in why
-    return "低频感抗谱 → voigt excluded"
+    rec = R.l0_precheck(_voigt(2), f, Z)
+    assert rec["precheck_state"] == "excluded", rec
+    assert "低频感抗" in rec["precheck_reason"]
+    assert rec["precheck_config"]["include_L"] is False
+    assert rec["precheck_version"] == R.PRECHECK_VERSION
+    return "低频感抗谱 → voigt excluded（记录含配置与理由）"
 
 
 def case_l0_capacitive_not_excluded():
@@ -346,36 +560,65 @@ def case_l0_capacitive_not_excluded():
     p = dict(Rs=141.2, R1=9.28e6, Q1=6.62e4, n1=0.782,
              Q_b=3.30e5, n_b=0.5002)
     Z = T.z_nested(f, p, branch="capacitive", layers=1)
-    state, why = R.l0_precheck("voigt", f, Z)
-    assert state == "not_excluded", (state, why)
-    return "容性嵌套谱 → voigt not_excluded（预检覆盖不到，这是已知的洞）"
+    rec = R.l0_precheck(_voigt(2), f, Z)
+    assert rec["precheck_state"] == "not_excluded", rec
+    assert rec["precheck_reason"] == ""
+    return "容性嵌套谱 → voigt not_excluded（预检覆盖不到，已知的洞）"
 
 
 def case_l0_nested_unknown():
     import numpy as np
     f = np.logspace(0, 4, 30)
-    state, why = R.l0_precheck("nested", f, 1.0 + 0j)
-    assert state == "unknown" and why
+    rec = R.l0_precheck(_nested("capacitive", 1), f, 1.0 + 0j)
+    assert rec["precheck_state"] == "unknown" and rec["precheck_reason"]
     return "nested 未登记预检 → unknown"
+
+
+def case_l0_binds_candidate_config():
+    """同一 voigt，include_L 不同必须能产生不同记录；旧签名靠关键字传，容易漏。"""
+    import numpy as np
+    import bm_top as T
+    f = np.logspace(-2, 5, 50)
+    Z = 100.0 + T.z_rl_parallel(f, 1000.0, 10.0)
+    a = R.l0_precheck(_voigt(2, include_L=False), f, Z)
+    b = R.l0_precheck(_voigt(2, include_L=True), f, Z)
+    assert a["candidate_id"] != b["candidate_id"]
+    assert a["precheck_config"]["include_L"] is False
+    assert b["precheck_config"]["include_L"] is True
+    msg = _expect_raise(R.l0_precheck, "voigt", f, Z)
+    assert "Candidate" in msg, msg
+    return "预检绑定候选；旧签名（拓扑名+关键字）被拒"
 
 
 CASES = [
     ("A1 定义完整性", case_definitions),
     ("A2 未接线须给原因", case_unwired_needs_reason),
     ("A3 正演引用白名单", case_ref_whitelist),
+    ("A4 指纹覆盖结构校验版本", case_digest_covers_consistency),
     ("B1 候选可构造", case_candidate_ok),
     ("B2 candidate_id 覆盖 init/budget", case_candidate_id_covers_init),
     ("B3 branch 不一致", case_branch_mismatch),
     ("B4 layers=1 带 inner_cpe", case_layers1_with_inner),
     ("B5 未知 init_profile", case_unknown_init_profile),
     ("B6 未知槽位", case_bad_slot),
+    ("B7 layers=3 被拒", case_layers3_rejected),
+    ("B8 voigt K≠HN 数", case_voigt_K_mismatch),
+    ("B9 include_L 与感抗件同侧", case_voigt_include_L_binding),
+    ("B10 describe 保留重复槽位", case_describe_keeps_duplicate_slots),
     ("C1 screening 闭合", case_screening_closes),
     ("C2 only_survivor 是计数", case_only_survivor_is_count),
+    ("C3 汇总须由逐条复算", case_screening_records_must_match_tally),
     ("D1 execution 闭合", case_execution_closes),
-    ("E1 贴底但参数不稳", case_observation_floor_but_unstable),
-    ("E2 acf 允许负值", case_observation_acf_can_be_negative),
-    ("E3 未收敛不报数", case_observation_no_numbers_when_unconverged),
-    ("E4 参数不许压成标量", case_observation_no_scalar_score),
+    ("E1 采样失败仍保留残差", case_observation_sampling_failed_keeps_residuals),
+    ("E2 sampling 未过须显式解读", case_observation_sampling_failed_needs_explicit_interp),
+    ("E3 采样通过默认 reliable", case_observation_passed_defaults_reliable),
+    ("E4 未跑完不报数", case_observation_no_numbers_when_not_completed),
+    ("E5 null 三语义", case_observation_null_reason),
+    ("E6 静默缺席被拒", case_observation_silent_absence_rejected),
+    ("E7 acf 允许负值", case_observation_acf_can_be_negative),
+    ("E8 贴底但参数不稳", case_observation_floor_but_unstable),
+    ("E9 参数不许压成标量", case_observation_no_scalar_score),
+    ("E10 采样态折算", case_sampling_status_from),
     ("F1 真实谱默认证据不足", case_evidence_insufficient_default),
     ("F2 不可区分需>=2", case_evidence_non_identifiable_needs_two),
     ("F3 identified 被拦", case_evidence_identified_blocked),
@@ -386,9 +629,13 @@ CASES = [
     ("H1 manifest 冻结", case_manifest_frozen),
     ("H2 不可追加", case_manifest_no_append),
     ("H3 重复候选", case_manifest_duplicate),
+    ("H4 指纹自洽与篡改", case_verify_manifest_ok_and_tamper),
+    ("H5 删除/同名换定义", case_verify_manifest_rejects_removal_and_swap),
+    ("H6 注册表漂移", case_verify_manifest_registry_drift),
     ("I1 AZ31 风格 excluded", case_l0_az31_style_excluded),
     ("I2 容性谱 not_excluded", case_l0_capacitive_not_excluded),
     ("I3 nested unknown", case_l0_nested_unknown),
+    ("I4 预检绑定候选配置", case_l0_binds_candidate_config),
 ]
 
 
