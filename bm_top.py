@@ -30,6 +30,18 @@
 **这是本项目与立项书 v1.2 §2.2 的一处修正**：立项书只写了 R∥L；文献 #3 用的是
 R+L 串联。两者低频极限不同，合成标定与可辨识性必须分别验证。
 
+容性支路（``branch="capacitive"``，2026-11-12 新增，**仅研究接口**）
+----------------------------------------------------------------------
+    Z_branch = Z_CPE(Q_b, n_b)     （纯 CPE，不是 R∥CPE）
+
+串联电阻由网络已有的 ``R2``（L=2）或 ``R1``（L=1）承担，所以支路本身只多
+**2 个参数**。用途：`测试数据/` 的涂层 ``R1-[P2,R3-[P4,R5-P6]]``（L=2）与
+钝化 ``[P1,P2-R3]-R4``（L=1）最内层都是 ``R + CPE``（**容性**），两条感性
+支路都表示不了；骨架本身已对到 1e-15，缺的只是元件类型。
+
+**默认仍是 `parallel`**；`bm_select.py` 的 `BRANCHES` 不含这一档，跨族选择、
+门禁、§13/§14 验收线一律不变。本档全标 `exploratory`，不接 `bmdrt.py`。
+
 物理校准（文献 #3）
 -------------------
 低频感抗环来自**吸附中间体表面覆盖度的有限时间弛豫与活性位再生**，
@@ -38,10 +50,13 @@ R+L 串联。两者低频极限不同，合成标定与可辨识性必须分别�
 
 渐近极限（推导见 `_selftest`，数值核对见 `NESTED_TOPOLOGY_PROJECT.md` §2.3）
 --------------------------------------------------------------------------
-    branch="parallel"：ω→∞ → Rs；          ω→0 → Rs + R1 + R2
-    branch="series"  ：ω→∞ → Rs；          ω→0 → Rs + R1 + R2 + R_L
+    branch="parallel"   ：ω→∞ → Rs；  ω→0 → Rs + R1 + R2
+    branch="series"     ：ω→∞ → Rs；  ω→0 → Rs + R1 + R2 + R_L
+    branch="capacitive"：ω→∞ → Rs；  ω→0 → ∞（最内层 CPE 阻断直流）
 
-高频端两者都趋于 Rs（CPE 短路）；低频端的差别全部来自支路本身。
+高频端三者都趋于 Rs（CPE 短路）；低频端的差别全部来自支路本身。
+容性支路的低频发散不是数值问题：涂层/钝化真值谱的低频端本来就由最内层
+电容堵住，把 `R + CPE` 写成 `R∥L` 会在低频符号与极限上同时错。
 
 CPE 参数化（避免直接采 Y）
 --------------------------
@@ -136,7 +151,11 @@ def j_z_rl_series(omega, R, L):
 # 完整元数据表（含派生量与两种支路），**不是**采样清单；
 # 采样参数请用 sampled_keys(branch, layers)。
 ALL_PARAM_KEYS = ("Rs", "R1", "R2", "Q1", "n1", "Q2", "n2",
-                  "R_ad", "tau_ad", "R_L", "tau_L", "L_ad")
+                  "R_ad", "tau_ad", "R_L", "tau_L", "L_ad", "Q_b", "n_b")
+
+#: 正演允许的支路。`bm_select.py` / `bm_top_gen.py` 各有自己的两支路常量，
+#: 加入容性档**不会**改变跨族候选池或合成标定矩阵（回归红线）。
+VALID_BRANCHES = ("parallel", "series", "capacitive")
 PARAM_KEYS = ALL_PARAM_KEYS          # 向后兼容别名
 
 
@@ -149,14 +168,19 @@ def sampled_keys(branch: str = "parallel", layers: int = 2) -> tuple:
 
     给未使用的参数也建先验，会引入纯由先验决定的无效维度，NUTS 会在那里空转。
     """
-    if branch not in ("parallel", "series"):
-        raise ValueError(f"branch 只能是 'parallel'/'series'，收到 {branch!r}")
+    if branch not in VALID_BRANCHES:
+        raise ValueError(f"branch 只能是 {VALID_BRANCHES}，收到 {branch!r}")
     if layers not in (1, 2):
         raise ValueError(f"layers 只能是 1/2，收到 {layers!r}")
     keys = ["Rs", "R1", "Q1", "n1"]
     if layers >= 2:
         keys += ["R2", "Q2", "n2"]
-    keys += ["R_ad", "tau_ad"] if branch == "parallel" else ["R_L", "tau_L"]
+    if branch == "parallel":
+        keys += ["R_ad", "tau_ad"]
+    elif branch == "series":
+        keys += ["R_L", "tau_L"]
+    else:
+        keys += ["Q_b", "n_b"]
     return tuple(keys)
 
 
@@ -175,8 +199,8 @@ def z_nested(f, p: dict, f_ref: float | None = None,
     layers=1 时退化为 `Rs + 1/(1/CPE1 + 1/(R1 + Z_branch))`，用于 M3 的
     拓扑退化检查。
     """
-    if branch not in ("parallel", "series"):
-        raise ValueError(f"branch 只能是 'parallel'/'series'，收到 {branch!r}")
+    if branch not in VALID_BRANCHES:
+        raise ValueError(f"branch 只能是 {VALID_BRANCHES}，收到 {branch!r}")
     if layers not in (1, 2):
         raise ValueError(f"layers 只能是 1/2，收到 {layers!r}")
     f = np.asarray(f, float)
@@ -185,8 +209,11 @@ def z_nested(f, p: dict, f_ref: float | None = None,
     zc1 = z_cpe(f, float(p["Q1"]), float(p["n1"]), f_ref=w_ref / (2 * np.pi))
     if branch == "parallel":
         zb = z_rl_parallel(f, float(p["R_ad"]), float(p["tau_ad"]))
-    else:
+    elif branch == "series":
         zb = z_rl_series(f, float(p["R_L"]), float(p["L_ad"]))
+    else:
+        zb = z_cpe(f, float(p["Q_b"]), float(p["n_b"]),
+                   f_ref=w_ref / (2.0 * np.pi))
 
     if layers >= 2:
         z_inner = float(p["R2"]) + zb
@@ -202,15 +229,17 @@ def z_nested(f, p: dict, f_ref: float | None = None,
 
 def j_z_nested(omega, p: dict, w_ref, branch: str = "parallel", layers: int = 2):
     """jax 版（omega、w_ref 为角频率）。"""
-    if branch not in ("parallel", "series"):
-        raise ValueError(f"branch 只能是 'parallel'/'series'，收到 {branch!r}")
+    if branch not in VALID_BRANCHES:
+        raise ValueError(f"branch 只能是 {VALID_BRANCHES}，收到 {branch!r}")
     if layers not in (1, 2):
         raise ValueError(f"layers 只能是 1/2，收到 {layers!r}")
     zc1 = j_z_cpe(omega, p["Q1"], p["n1"], w_ref)
     if branch == "parallel":
         zb = j_z_rl_parallel(omega, p["R_ad"], p["tau_ad"])
-    else:
+    elif branch == "series":
         zb = j_z_rl_series(omega, p["R_L"], p["L_ad"])
+    else:
+        zb = j_z_cpe(omega, p["Q_b"], p["n_b"], w_ref)
     if layers >= 2:
         z_inner = p["R2"] + zb
         zc2 = j_z_cpe(omega, p["Q2"], p["n2"], w_ref)
@@ -237,6 +266,8 @@ def param_spec():
         "R_L":  ("感抗支路串联电阻（branch=series）", "Ω", "LogNormal(log(0.1·zmax), 2.0)"),
         "tau_L": ("感抗支路特征时间 L/R_L（branch=series）", "s", "LogNormal(log(1/ω_ref), 2.0)"),
         "L_ad": ("感抗支路电感 = R_L·tau_L（**派生量，不采样**）", "H", "—"),
+        "Q_b":  ("容性最内层支路 CPE 的窗口幅值 |Z(ω_ref)|", "Ω", "LogNormal(log(zmax), 2.0)"),
+        "n_b":  ("容性最内层支路 CPE 指数", "—", "Uniform(0.5, 1.0)"),
     }
 
 
@@ -560,6 +591,45 @@ def _selftest():
         print(f"[13] zmax 尺度检查**失败**（{type(ex).__name__}: {ex}）")
         ok = False
 
+    # 14) 容性支路：逐节点展开 / jax / 采样键 / 先验覆盖 / 渐近极限
+    pcap = dict(base, Q_b=450.0, n_b=0.62)
+    for ly in (1, 2):
+        zc1 = z_cpe(f, pcap["Q1"], pcap["n1"])
+        zcb = z_cpe(f, pcap["Q_b"], pcap["n_b"])
+        if ly == 2:
+            zc2 = z_cpe(f, pcap["Q2"], pcap["n2"])
+            z_manual = (pcap["Rs"] + 1.0 / (1.0 / zc1 + 1.0 /
+                        (pcap["R1"] + 1.0 / (1.0 / zc2 + 1.0 / (pcap["R2"] + zcb)))))
+            z_low = pcap["Rs"] + pcap["R1"] + pcap["R2"]
+        else:
+            z_manual = pcap["Rs"] + 1.0 / (1.0 / zc1 + 1.0 / (pcap["R1"] + zcb))
+            z_low = pcap["Rs"] + pcap["R1"]
+        z_mod = z_nested(f, pcap, branch="capacitive", layers=ly)
+        e = float(np.max(np.abs(z_mod - z_manual)) / np.max(np.abs(z_manual)))
+        ok &= e < 1e-12
+        fw = np.array([1e-12, 1e12])
+        zlim = z_nested(fw, pcap, branch="capacitive", layers=ly)
+        # 纯 CPE 支路：ω→0 直流被阻断 → |Z|→∞ 且虚部为负（容性）；ω→∞ → Rs
+        blocked = (abs(zlim[0]) > 1e6 * z_low) and (zlim[0].imag < 0)
+        einf = abs(zlim[1].real - pcap["Rs"]) / abs(pcap["Rs"])
+        ok &= blocked and (einf < 1e-6)
+        exp = ("Rs", "R1", "Q1", "n1") + (("R2", "Q2", "n2") if ly == 2 else ()) \
+              + ("Q_b", "n_b")
+        ok &= sampled_keys("capacitive", ly) == exp
+        print(f"[14] capacitive L={ly}：逐节点 rel err {e:.2e}、"
+              f"ω→0 |Z|={abs(zlim[0]):.3g}（阻断={blocked}，Im<0={zlim[0].imag < 0}）、"
+              f"ω→∞ → {zlim[1].real:.3f}（err {einf:.1e}）")
+    if jnp is not None:
+        zj = np.asarray(j_z_nested(jnp.asarray(2.0 * np.pi * f), pcap,
+                                    jnp.asarray(w_ref), branch="capacitive", layers=2))
+        e = float(np.max(np.abs(zj - z_nested(f, pcap, branch="capacitive", layers=2)))
+                  / np.max(np.abs(zj)))
+        print(f"[14] jax vs numpy：rel err {e:.2e}")
+        ok &= e < 1e-12
+    for br in VALID_BRANCHES:
+        for ly in (1, 2):
+            ok &= set(sampled_keys(br, ly)) <= set(ALL_PARAM_KEYS)
+
     print("=" * 72)
     print("全部通过" if ok else "有失败项")
     return ok
@@ -696,9 +766,12 @@ def _prior_table(zmax, w_ref, branch: str, layers: int) -> dict:
     if branch == "parallel":
         t["R_ad"] = dist.LogNormal(jnp.log(0.1 * zmax), 2.0)
         t["tau_ad"] = dist.LogNormal(jnp.log(1.0 / w_ref), 2.0)
-    else:
+    elif branch == "series":
         t["R_L"] = dist.LogNormal(jnp.log(0.1 * zmax), 2.0)
         t["tau_L"] = dist.LogNormal(jnp.log(1.0 / w_ref), 2.0)
+    else:
+        t["Q_b"] = dist.LogNormal(jnp.log(zmax), 2.0)
+        t["n_b"] = dist.Uniform(0.5, 1.0)
     return t
 
 

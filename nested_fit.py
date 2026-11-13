@@ -32,6 +32,10 @@
   改变哪族看起来更好，故 `--with-voigt` 的对照只是同口径参考，不是跨族证据。
 · `branch=parallel`（默认）= 文献 Table 1 的 C4（`R3 ∥ L`），
   `branch=series` 是另一种感抗支路接法，两者**不等价**。
+· `branch=capacitive`（2026-11-12 新增，`exploratory`）= 最内层换成纯 CPE，
+  只多 `Q_b`/`n_b` 两个参数。用于 `测试数据/` 的涂层（配 `--layers 2`）与
+  钝化（配 `--layers 1`）：骨架已对到 1e-15，缺的是容性元件类型。
+  **不在 `bm_select.py` 的跨族候选池里**，不得据此改写 §13/§14 判定。
 
 用法
 ----
@@ -41,6 +45,7 @@
     python nested_fit.py data.csv                 # 单条
     python nested_fit.py a.csv b.csv --budget quick
     python nested_fit.py data.csv --sigma free --branch series --layers 1
+    python nested_fit.py 涂层.csv --branch capacitive --layers 2
     python nested_fit.py data.csv --with-voigt --no-plot
     nested_fit.bat data.csv                       # Windows 一键（用项目 venv）
 
@@ -187,6 +192,10 @@ def param_table(o: dict, branch: str, layers: int) -> tuple[dict, dict]:
 
 def derived_quantities(branch: str, p: dict) -> dict:
     """`R∥L` 支路的电感与转折频率（与 §9.4.19/§9.4.27.4 同定义）。"""
+    if branch == "capacitive":
+        # 容性支路没有电感，别硬套感抗公式（会静默给出无意义的 L_ad_H=None）。
+        return dict(branch_kind="capacitive", L_ad_H=None, f_ad_Hz=None,
+                    Q_b=float(p["Q_b"]), n_b=float(p["n_b"]))
     if branch == "parallel":
         R_ad, tau = p["R_ad"], p["tau_ad"]
         return dict(L_ad_H=float(R_ad * tau),
@@ -445,7 +454,8 @@ def main(argv=None) -> int:
         epilog="示例：python nested_fit.py data.csv --budget quick --with-voigt")
     ap.add_argument("inputs", nargs="*", help="谱文件/目录；不给则扫 inbox/")
     ap.add_argument("--out", default=DEFAULT_OUT, help="输出目录")
-    ap.add_argument("--branch", choices=("parallel", "series"), default="parallel")
+    ap.add_argument("--branch", choices=("parallel", "series", "capacitive"),
+                    default="parallel")
     ap.add_argument("--layers", type=int, choices=(1, 2), default=2)
     ap.add_argument("--budget", choices=sorted(BUDGETS), default="standard",
                     help="standard 与 §13/§14 同口径；quick 快但 R̂ 常 >1.05（只作预览）")

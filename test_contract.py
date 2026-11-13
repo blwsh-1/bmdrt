@@ -16,6 +16,8 @@
                       `least_squares.success=False` 的解不许当参考值
     F8 B 类 guard  —— `param_degenerate` / `param_at_bound` 在**两族**上都真的在判
                       （voigt 侧旧实现一个恒 triggered、一个恒 not_evaluable）
+    F11 报告契约   —— 统一可辨识性报告：跨族同 schema、原尺度不 exp、
+                      三态诚实、只记账不裁决（`IDENTIFIABILITY_REPORT_PREREG.md` §5）
 
 用法：
     python test_contract.py             # 全跑，约 60-90 s（含 2 次 quick 拟合）
@@ -1059,6 +1061,101 @@ def case_f10_phase_residual(tmp):
             f"（status 仍 {g2['status']}）/ 纯阻 {gR['phase_resid']['rms_deg']:.0e}")
 
 
+def case_f11_identifiability_report():
+    """F11：统一可辨识性报告 —— 同 schema / 原尺度 / 三态 / 不裁决 / 严格 JSON。
+
+    预注册 `docs/IDENTIFIABILITY_REPORT_PREREG.md` §5。守的是「报告只列事实」：
+    一旦有人把 unavailable 写成通过、把原尺度分位再 exp 一次、或往报告里
+    塞可信度分数，这里就要红。
+    """
+    import bm_identifiability as ID
+
+    voigt = dict(
+        param_corr=dict(
+            names=["R_inf", "W"], corr=[[1.0, -0.94], [-0.94, 1.0]],
+            summary=[dict(name="R_inf", q05=0.006, q50=0.0062, q95=0.0063),
+                     dict(name="W", q05=40.0, q50=55.0, q95=70.0)],
+            fixed=[], strong=[dict(a="R_inf", b="W", rho=-0.94, why="x")],
+            medium=[], n_draw=1000, strong_tol=0.9, medium_tol=0.7,
+            degenerate=[dict(kind="Rinf-Wtot", comp=0, rho=-0.94, text="只报和")]),
+        diag=dict(R_inf=dict(rhat=1.001, bulk=1500.0, tail=1800.0)),
+        component_review=dict(parameter_identifiability=dict(
+            max_at_bound=0.9, level="degenerate",
+            strong_pairs=[dict(a="R_inf", b="W", rho=-0.94)])),
+        degeneracy=[], resid_bins=[dict(n=19, rms_re=0.001)],
+        acf=0.42, rms_re=0.001, rms_im=0.002, elpd_loo=-100.0, dse=2.0,
+        divergences=0,
+    )
+    nested = dict(
+        status="exploratory",
+        params=dict(Rs=dict(median=10.0, ci90=[9.0, 11.0], rhat=1.002, ess=800.0)),
+        diagnostics=dict(rhat_max=1.002, ess_min=800.0, divergences=0, elpd=-90.0,
+                          elpd_valid_for_predictive_comparison=False),
+        metrics=dict(acf=0.55, rms_rel=6.7, bands_pct=[1.0, 2.0, 3.0]),
+    )
+    a = ID.build_report(voigt, family="voigt", model_id="F11/voigt")
+    b = ID.build_report(nested, family="nested", model_id="F11/nested")
+
+    # F11-1 跨族同 schema
+    ID.assert_same_schema(a, b)
+    assert set(a["diagnostics"]) == set(ID.DIAG_KEYS)
+
+    # F11-2 原尺度分位逐值相等（防 exp() 回归）
+    src = voigt["param_corr"]["summary"]
+    got = a["diagnostics"]["posterior"]["params"]
+    for sv, gv in zip(src, got):
+        assert (gv["q05"], gv["q50"], gv["q95"]) == (sv["q05"], sv["q50"], sv["q95"])
+    assert got[1]["rel_span"] == (70.0 - 40.0) / 55.0
+
+    # F11-3 unavailable 必须数值全 null，不许写成「通过」
+    for k in ("correlation", "boundary", "combinations"):
+        d = b["diagnostics"][k]
+        assert d["status"] == "unavailable", k
+        for kk, vv in d.items():
+            if kk in ("status", "source", "comparable", "note"):
+                continue
+            assert vv is None, f"{k}.{kk} 缺数据却给了 {vv!r}"
+        assert "pass" not in json.dumps(d, ensure_ascii=False).lower()
+    assert a["diagnostics"]["boundary"]["at_bound_fraction"] is None
+    assert b["diagnostics"]["sampling"]["ess_bulk_min"] is None
+    assert a["diagnostics"]["prediction"]["ppc"]["status"] == "unavailable"
+
+    # F11-4 不裁决、status 原样、严格 JSON
+    for r, raw in ((a, voigt), (b, nested)):
+        assert not (set(r) & set(ID.FORBIDDEN_KEYS))
+        assert r["status"] == raw.get("status")
+        json.dumps(r, ensure_ascii=False, allow_nan=False)
+    assert b["status"] == "exploratory"
+
+    # F11-5 coverage 自洽 + 非有限值必须变 null
+    for r in (a, b):
+        c = r["coverage"]
+        assert sum(c.values()) == len(ID.DIAG_KEYS)
+        for k in c:
+            assert c[k] == sum(1 for v in r["diagnostics"].values()
+                               if v["status"] == k)
+    v2 = dict(voigt); v2["acf"] = float("nan")
+    assert ID.build_report(v2, family="voigt", model_id="nan")[
+        "diagnostics"]["prediction"]["acf"] is None
+
+    # F11-6 拟合优度各留原名、不可跨族比
+    am = a["diagnostics"]["prediction"]["fit_metrics"]
+    nm = b["diagnostics"]["prediction"]["fit_metrics"]
+    assert "rms_rel" in nm and "rms_rel" not in am
+    assert a["diagnostics"]["prediction"]["comparable"] is False
+    assert b["diagnostics"]["prediction"]["comparable"] is False
+    assert any("rms_rel" in n for n in a["notes"])
+
+    try:
+        ID.build_report({}, family="bogus", model_id="x")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("非法 family 必须 raise")
+
+    return "同 schema 6 类 / 原尺度逐值 / 三态诚实 / 无裁决键 / 严格 JSON"
+
+
 CASES = [
     ("A1 合法用法", case_a1_legal_forms, False),
     ("A2 未知开关", case_a2_unknown_flags, False),
@@ -1086,6 +1183,7 @@ CASES = [
     ("F8 guard 族适配", case_f8_guard_semantics, False),
     ("F9 nested/窗口", case_f9_nested_and_outwindow, False),
     ("F10 相位残差", case_f10_phase_residual, False),
+    ("F11 可辨识性报告", case_f11_identifiability_report, False),
 ]
 
 
