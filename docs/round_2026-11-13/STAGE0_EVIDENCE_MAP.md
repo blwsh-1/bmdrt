@@ -146,7 +146,7 @@ sha256sum evidence/stage0_three_spectra/*.json evidence/coating_voigt_pilot/*.js
 |---|---|---|
 | σ | 自由（标量绝对残差）vs 逐点 2%·\|Z\| | `voigt_prod` vs `voigt_fix2`；`sigma_from_data` 字段 |
 | 预算 | `quick` vs `standard` | AZ31 全部 `quick`；S1 三档 `standard` + 一档 `quick` |
-| `target_accept` | 0.98（pilot）vs 0.9（生产 `bm_real.KW`） | pilot `config.target_accept_override=0.98`；`nested.json` 里同一字段是 `None`（= 不作覆盖，走生产 0.9） |
+| `target_accept` | `nested.json` 实为 **0.98**（`nested_fit.VALIDATION_STANDARD` 硬编码）vs 生产 `bm_real.KW` 的 0.9 | `nested.json` 的 `config.target_accept_override=None` **只表示没有额外覆盖**，不等于"走生产 0.9"；有效值看 `config.budget_kw.target_accept=0.98`。pilot 里 `target_accept_override` 则记成 0.98（那也是硬编码的同一档，不是覆盖） |
 | `ratio` 的分母 | 收敛子集（14/60、40/60）vs 全 60 条 | FINDINGS 表用收敛子集；全 60 条算是 6.47 / 1.13 |
 
 最后一行值得单独说：`ratio` 中位在"收敛子集"口径下是 3.36（自由 σ）/ 1.03（固定 2%），

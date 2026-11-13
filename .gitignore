@@ -154,6 +154,11 @@ evidence/stage0_three_spectra/scripts/*
 evidence/coating_voigt_pilot/*
 !evidence/coating_voigt_pilot/*.json
 !evidence/coating_voigt_pilot/*.jsonl
+!evidence/stage0_records/
+evidence/stage0_records/*
+!evidence/stage0_records/*.json
+!evidence/stage0_records/*.jsonl
+!evidence/stage0_records/*.md
 
 # ---------------------------------------------------------------------------
 # 原始测量数据：可能含未发表数据，默认不上传

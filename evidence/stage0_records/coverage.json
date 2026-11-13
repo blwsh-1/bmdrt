@@ -1,0 +1,42 @@
+{
+  "n_records": 239,
+  "run_status": {
+    "completed": 239
+  },
+  "sampling_status": {
+    "failed": 71,
+    "passed": 168
+  },
+  "interpretation": {
+    "descriptive_only": 236,
+    "reliable": 3
+  },
+  "candidate_identity": {
+    "inferred": 13,
+    "complete": 226
+  },
+  "init_profile_recorded_true": 227,
+  "blocked_by_old_schema": 70,
+  "blocked_note": "这些记录是「跑完了、残差算了、后验没过」；0.1.0 的 converged=False 禁报 rms/acf 会让它们全部无法入库",
+  "unmapped_field_counts": {
+    "status": 6,
+    "warning": 6,
+    "rel_median": 6,
+    "rel_max": 6,
+    "elpd": 12,
+    "elpd_valid_for_predictive_comparison": 6,
+    "sigma_mode": 6,
+    "budget_kw": 6,
+    "target_accept_override": 6,
+    "derived.L_ad_H": 6,
+    "elapsed_s": 7,
+    "median_vs_truth": 1,
+    "param_err": 226,
+    "param_max_err": 226,
+    "ratio": 226,
+    "floor": 226,
+    "verdict": 226,
+    "sec": 226,
+    "rel_med": 6
+  }
+}
