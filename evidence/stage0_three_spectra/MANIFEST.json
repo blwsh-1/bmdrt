@@ -1,0 +1,157 @@
+{
+ "purpose": "阶段 0 证据快照：供 schema 承载能力审计，只读复制，不重算",
+ "repo_commit_at_snapshot": "fa5c5f9c0f3f8be6ebbbb877485e4e28f928923b",
+ "n_files": 18,
+ "total_bytes": 894124,
+ "files": [
+  {
+   "evidence_path": "stage0_three_spectra/coating__nested_parallel_standard.nested.json",
+   "source_path": "out/nested_fit_cap_control/R1-[P2,R3-[P4,R5-P6]]-[150.0, 100926299.76068324, 0.9, 309325.2729362051, 7919355.501653096, 0.95, 100000.0, 10000.0, 0.5].nested.json",
+   "source_basename": "R1-[P2,R3-[P4,R5-P6]]-[150.0, 100926299.76068324, 0.9, 309325.2729362051, 7919355.501653096, 0.95, 100000.0, 10000.0, 0.5].nested.json",
+   "bytes": 5302,
+   "sha256": "60250c710799a272070d7c51dd886f9672f0edaac31f2eebde0ed473d2bce6b0",
+   "sha256_matches_source": true
+  },
+  {
+   "evidence_path": "stage0_three_spectra/coating__nested_capacitive_standard.nested.json",
+   "source_path": "out/nested_fit_cap_standard/R1-[P2,R3-[P4,R5-P6]]-[150.0, 100926299.76068324, 0.9, 309325.2729362051, 7919355.501653096, 0.95, 100000.0, 10000.0, 0.5].nested.json",
+   "source_basename": "R1-[P2,R3-[P4,R5-P6]]-[150.0, 100926299.76068324, 0.9, 309325.2729362051, 7919355.501653096, 0.95, 100000.0, 10000.0, 0.5].nested.json",
+   "bytes": 5172,
+   "sha256": "81b4a6b11a622fe4e2d28243d3de074dab3dada355ffe4b0b82e34ef83f71843",
+   "sha256_matches_source": true
+  },
+  {
+   "evidence_path": "stage0_three_spectra/coating__nested_capacitive_quick.nested.json",
+   "source_path": "out/nested_fit_cap_smoke/R1-[P2,R3-[P4,R5-P6]]-[150.0, 100926299.76068324, 0.9, 309325.2729362051, 7919355.501653096, 0.95, 100000.0, 10000.0, 0.5].nested.json",
+   "source_basename": "R1-[P2,R3-[P4,R5-P6]]-[150.0, 100926299.76068324, 0.9, 309325.2729362051, 7919355.501653096, 0.95, 100000.0, 10000.0, 0.5].nested.json",
+   "bytes": 5350,
+   "sha256": "08595c6636f9f8b32dd0fae48db14039cf910cacce71df63f301dc19b7a5261c",
+   "sha256_matches_source": true
+  },
+  {
+   "evidence_path": "stage0_three_spectra/coating__nested_capacitive_standard_1113.nested.json",
+   "source_path": "out/_user_fit_nested/R1-[P2,R3-[P4,R5-P6]]-[150.0, 100926299.76068324, 0.9, 309325.2729362051, 7919355.501653096, 0.95, 100000.0, 10000.0, 0.5].nested.json",
+   "source_basename": "R1-[P2,R3-[P4,R5-P6]]-[150.0, 100926299.76068324, 0.9, 309325.2729362051, 7919355.501653096, 0.95, 100000.0, 10000.0, 0.5].nested.json",
+   "bytes": 5958,
+   "sha256": "7d6867525e1d9941196f0cc80e8064428c74d09e000dadb78d1451ffdf31928e",
+   "sha256_matches_source": true
+  },
+  {
+   "evidence_path": "stage0_three_spectra/passivation__nested_capacitive_standard_default_init.nested.json",
+   "source_path": "out/nested_fit_cap_pass/[P1,P2-R3]-R4-[1002185.2194945764, 0.782449807, 1873214.9711620852, 0.5002444313837133, 9277752.99835045, 141.24023283906809].nested.json",
+   "source_basename": "[P1,P2-R3]-R4-[1002185.2194945764, 0.782449807, 1873214.9711620852, 0.5002444313837133, 9277752.99835045, 141.24023283906809].nested.json",
+   "bytes": 4736,
+   "sha256": "f68098b87149d967f8c56bbba27ed087d5107ec657191b4940167dbfccfca0de",
+   "sha256_matches_source": true
+  },
+  {
+   "evidence_path": "stage0_three_spectra/passivation__nested_capacitive_standard_1113.nested.json",
+   "source_path": "out/_user_fit_nested/[P1,P2-R3]-R4-[1002185.2194945764, 0.782449807, 1873214.9711620852, 0.5002444313837133, 9277752.99835045, 141.24023283906809].nested.json",
+   "source_basename": "[P1,P2-R3]-R4-[1002185.2194945764, 0.782449807, 1873214.9711620852, 0.5002444313837133, 9277752.99835045, 141.24023283906809].nested.json",
+   "bytes": 5535,
+   "sha256": "475c6b86058393e6ccc1dca770824e9861357b1089abf5a451897910e87bffb0",
+   "sha256_matches_source": true
+  },
+  {
+   "evidence_path": "stage0_three_spectra/passivation__diag_truth_init.json",
+   "source_path": "out/_user_fit_nested/diag_passivation_init.json",
+   "source_basename": "diag_passivation_init.json",
+   "bytes": 10667,
+   "sha256": "7b1dc618af299b267346def2adf1bcaef7007b5697cc06ac84f69d6e834c6781",
+   "sha256_matches_source": true
+  },
+  {
+   "evidence_path": "stage0_three_spectra/six_runs__family_fit_results.json",
+   "source_path": "out/_user_fit_nested/family_fit_results.json",
+   "source_basename": "family_fit_results.json",
+   "bytes": 65871,
+   "sha256": "d31c5996e88ca61a30f61460da1e26cdb7d443f18054bb25e47a48efe58730b6",
+   "sha256_matches_source": true
+  },
+  {
+   "evidence_path": "stage0_three_spectra/az31__m4_real_az31.json",
+   "source_path": "out/m4_real_az31.json",
+   "source_basename": "m4_real_az31.json",
+   "bytes": 8211,
+   "sha256": "cf23e54b010329d49455f43b001103ad677d0f5081d444193b4c236b3e8ec1a8",
+   "sha256_matches_source": true
+  },
+  {
+   "evidence_path": "stage0_three_spectra/az31__m4_real_nested_az31.json",
+   "source_path": "out/m4_real_nested_az31.json",
+   "source_basename": "m4_real_nested_az31.json",
+   "bytes": 6554,
+   "sha256": "994c7a2ed9bbd2b27fe894a6910aa3beedb2d887e15e32f99fc713c88533e991",
+   "sha256_matches_source": true
+  },
+  {
+   "evidence_path": "stage0_three_spectra/scripts/fit_family_compare.py",
+   "source_path": "out/_user_fit_nested/fit_family_compare.py",
+   "source_basename": "fit_family_compare.py",
+   "bytes": 10704,
+   "sha256": "4aa971502e9eb9256f495dddc8e9c17ba15b65c3e03d298cd2b7dc848c64d235",
+   "sha256_matches_source": true
+  },
+  {
+   "evidence_path": "stage0_three_spectra/scripts/diag_passivation_init.py",
+   "source_path": "out/_user_fit_nested/diag_passivation_init.py",
+   "source_basename": "diag_passivation_init.py",
+   "bytes": 3592,
+   "sha256": "6a5bd2689ad5a9f67917e8b01ad329eff5d3eb9eb393107295a7c58c5e7bec81",
+   "sha256_matches_source": true
+  },
+  {
+   "evidence_path": "coating_voigt_pilot/results.jsonl",
+   "source_path": "out/coating_voigt_pilot/results.jsonl",
+   "source_basename": "results.jsonl",
+   "bytes": 701695,
+   "sha256": "a42c4efd5e02d0850233699333d5e5c169c3f209305c246e977ce73745537f1e",
+   "sha256_matches_source": true
+  },
+  {
+   "evidence_path": "coating_voigt_pilot/summary.json",
+   "source_path": "out/coating_voigt_pilot/summary.json",
+   "source_basename": "summary.json",
+   "bytes": 1003,
+   "sha256": "39500ac6903f5a77963cc2c3318e07f13950ccd46465ecde0c24d2abc28cbda1",
+   "sha256_matches_source": true
+  },
+  {
+   "evidence_path": "coating_voigt_pilot/sample_manifest.json",
+   "source_path": "out/coating_voigt_pilot/sample_manifest.json",
+   "source_basename": "sample_manifest.json",
+   "bytes": 47079,
+   "sha256": "5fae23d3b4d8276c042793e8feaa6fa23396c61a03d394cfe4161ecffc379af6",
+   "sha256_matches_source": true
+  },
+  {
+   "evidence_path": "coating_voigt_pilot/mode_diag.json",
+   "source_path": "out/coating_voigt_pilot/mode_diag.json",
+   "source_basename": "mode_diag.json",
+   "bytes": 4037,
+   "sha256": "cb63a674562b43fdf38de9a6012346dd45d602be10d3ba56b999e7df10f6b7ca",
+   "sha256_matches_source": true
+  },
+  {
+   "evidence_path": "coating_voigt_pilot/k3_check.json",
+   "source_path": "out/coating_voigt_pilot/k3_check.json",
+   "source_basename": "k3_check.json",
+   "bytes": 1175,
+   "sha256": "b2ccc75550b51dc2d38bb292b3d6c2b8fab06c28cada08b078389cbfc4b53504",
+   "sha256_matches_source": true
+  },
+  {
+   "evidence_path": "coating_voigt_pilot/config_check.json",
+   "source_path": "out/coating_voigt_pilot/config_check.json",
+   "source_basename": "config_check.json",
+   "bytes": 1483,
+   "sha256": "ecf93d5aadafe69eb00988da1a191d5ebd8355ac0557924b5c39d2e877bdd55c",
+   "sha256_matches_source": true
+  }
+ ],
+ "notes": [
+  "副本与源文件字节一致，逐条断言过；sha256 双方都记，可脱离 out/ 独立校验。",
+  "未包含任何 .png：图像由 CSV/JSON 重绘，不入库（.gitignore 全局忽略 *.png）。",
+  "文件名以角色前缀重命名，原始文件名（含真值参数）见 source_basename。"
+ ]
+}

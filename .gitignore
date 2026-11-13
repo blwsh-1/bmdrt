@@ -141,6 +141,19 @@ evidence/ws_crit/patches/*.pre_p1
 !evidence/kk_review/
 evidence/kk_review/*
 !evidence/kk_review/verify_review.py
+# 候选电路库阶段 0：三谱历史产物快照 + 60 条涂层 pilot（只读复制，冻结后不重跑）
+# 入库理由：schema 承载能力需要外部可审计；out/ 不入库，故在此留字节级副本（sha256 见 MANIFEST.json）
+!evidence/stage0_three_spectra/
+evidence/stage0_three_spectra/*
+!evidence/stage0_three_spectra/*.json
+!evidence/stage0_three_spectra/*.md
+!evidence/stage0_three_spectra/scripts/
+evidence/stage0_three_spectra/scripts/*
+!evidence/stage0_three_spectra/scripts/*.py
+!evidence/coating_voigt_pilot/
+evidence/coating_voigt_pilot/*
+!evidence/coating_voigt_pilot/*.json
+!evidence/coating_voigt_pilot/*.jsonl
 
 # ---------------------------------------------------------------------------
 # 原始测量数据：可能含未发表数据，默认不上传
