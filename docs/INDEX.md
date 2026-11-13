@@ -25,6 +25,8 @@
 | `EXTERNAL_BASELINE_ADAPT_ECM.md` | **外部基线盘点（ADAPT-ECM）**：三档 DRT 与我们的 BM-DRT 同源、源码核过的模型差异、我们独占的判据能力、"别去比工具"的定位判断；逐谱实测见 `round_2026-11-12/ADAPT_BASELINE.md` |
 | `代码审查报告.md` | 第一轮代码审查（2026-11-06）：3 个用测试复现的高危缺陷 + 10 余个次级问题 |
 | `代码审查报告_2026-11-11.md` | 第二轮代码审查（2026-11-11）：3 P1 + 14 P2 + P3，修复记录见 `NESTED_TOPOLOGY_PROJECT.md` 与提交 `6072932` |
+| `DASHBOARD_UI_SPEC.md` | **面板界面外壳规范（v0.1 草案，未冻结，2026-11-12）**：为什么「任务栏」是只读结果状态条而非动作入口、五层信息架构、6 步与 `payload()` 字段映射、与 v1.2 布局及 12 项 node 契约的兼容矩阵、垂直预算、实施改动点与验收；本轮代码零改动 |
+| `APP_ARCHITECTURE_AND_UI_DESIGN.md` | **应用架构与页面体系设计（v0.1 草案，未冻结，2026-11-12）**：依据项目书与代码事实，论证「任务栏照拟合软件、内核不能照」——六层架构中只新增 L3 应用服务层与 L5 宿主外壳、L1/L2 冻结 L4 零改动、静态/应用双模；四工作区按 L1 质控 / L2 并列比较 / L3 证据卡三层职责划分；S2 即项目书所说「做成软件时」解锁 `evidence.multi_model` 的时点；含子进程隔离、完成三判、禁词红线与分期验收 |
 
 ## 子目录
 
@@ -32,7 +34,8 @@
 |---|---|
 | `cases/blank_0.1KBr_pH10/` | **真实 EIS 谱模型选择诊断案例**：四层可辨识性规格、逐频点 LOO 与配对 dse、精确 HN 参考频率贡献、2×3 统一比较、合成谱用例与历史回放 |
 | `round_2026-11-11/` | **2026-11-11 复核轮**：五个只读诊断脚本（K 选择分档、先验尺度敏感性、外部电路复现、残差结构对比、Lin-KK 阶数曲线）+ `AZ31-4Li_100` 残差报告 |
-| `round_2026-11-12/` | **2026-11-12 三轮评估**：① Z-HIT 一阶形式合成标定（完美谱自身 0.95–3.25%）、22 条真实谱全 fail 且由谱型驱动 →「不接」；② `ADAPT-ECM 4.0.1` BM-DRT 外部基线（`adapt_baseline.py` / `ADAPT_BASELINE.md`）：可脱离 GUI 批调、模型族与拒答机制逐行核对、7 条谱对照（含 `ours` 漏检勘误与 5 条 acf 配对）；③ `ADAPT_TUNE_AZ31.md` + `adapt_tune_az31.py` / `our_side_az31.py`：AZ31-4Li_100 预注册 13 组调参扫描，澄清「我们的」= voigt 默认族（`real_*.json`）vs 嵌套研究接口（`*.nested.json`），同口径三方对照；附频率重排与 `AZ31-4Li.txt` 六列 index 格式陷阱 |
+| `round_2026-11-12/` | **2026-11-12 四轮评估**：① Z-HIT 一阶形式合成标定（完美谱自身 0.95–3.25%）、22 条真实谱全 fail 且由谱型驱动 →「不接」；② `ADAPT-ECM 4.0.1` BM-DRT 外部基线（`adapt_baseline.py` / `ADAPT_BASELINE.md`）：可脱离 GUI 批调、模型族与拒答机制逐行核对、7 条谱对照（含 `ours` 漏检勘误与 5 条 acf 配对）；③ `ADAPT_TUNE_AZ31.md` + `adapt_tune_az31.py` / `our_side_az31.py`：AZ31-4Li_100 预注册 13 组调参扫描，澄清「我们的」= voigt 默认族（`real_*.json`）vs 嵌套研究接口（`*.nested.json`），同口径三方对照；④ `NOISE_ACF_TRUTH.md` + `noise_acf_truth.py`：利用 `测试数据/` 的拓扑+参数真值标定 acf，数值断言三类拓扑归属（涂层=nested L=2、钝化=L=1、腐蚀=ZARC），复现 §13.3 零分布，钉死 acf 尺度不变、只响应相关结构，并量化「跑错模型」把 acf 从 0.29 推到 0.89；附频率重排与 `AZ31-4Li.txt` 六列 index 格式陷阱 |
+| `round_2026-11-13/` | **2026-11-13 五轮工作**：① `POWER_AUDIT_*` 检出力审计（配置数↔留出精度、`√n_h` 修正、噪声底 `√2` 修正）；② `STAGE2_SPEC.md` 第二段规格第四稿（24 配置全析因、三组分层、P1–P3 三门，**未冻结未执行**）+ `stage2_design.py` 设计矩阵诊断（条件数 1.000000、strength 残差 5.2e-16）；③ `COATING_VOIGT_PILOT_PREREG.md` / `FINDINGS.md` / `coating_voigt_pilot.py`：涂层 60 条分层 pilot（voigt `ok=0`、nested 60/60 贴底、`R̂` 爆表源于标签置换对称）；④ **候选电路库阶段 0**：`STAGE0A_SCHEMA_PRESSURE.md`（三谱压测）、`STAGE0C_SCHEMA_CONTRACT.md`（29 条契约）、`STAGE0_EVIDENCE_MAP.md`（实存矩阵 + 字段缺口 + 两处成文更正）、`snapshot_stage0_evidence.py`（证据副本与 sha256 清单）；⑤ 图与诊断脚本 `plot_pilot.py` / `mode_diag.py` / `k3_check.py` / `config_check.py` |
 
 ## 注意
 
