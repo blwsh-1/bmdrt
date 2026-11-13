@@ -29,6 +29,13 @@
 不用内置 `hash`），重建后逐条 sha256 与本 manifest 一致；把 168 个 csv 塞进 git 只增加噪声。
 `results.json` 入库的理由：它需要 12.6 min 拟合才能重算，是审计的真正输入。
 
+**已实测（2026-11-13，`--out out/_regen_check`）**：重建 168 条 →
+**168/168 条 csv 的 sha256 与 manifest 里的 `csv_sha256` 及库内文件三方一致**；
+`truth_manifest.json` 解析后**逐键相同**，但字节不同（多 4741 个 CRLF）——
+因为上游脚本用 `Path.write_text`，Windows 上按 `os.linesep` 写；库内副本已归一为 LF。
+⇒ **恢复以内容（sha256 / JSON 逐键）为准，不以字节哈希为准**；上游脚本按原样保留不动
+（改了就不再是产生 `results.json` 的那一版，provenance 会断）。
+
 ## 3. 运行环境
 
 ```
@@ -88,3 +95,6 @@ a4_labels / a4_dab`。
    判据不使用 `p`，故不影响任何结论；引用数字时须写明 `B=2000`。
 3. **168 张 csv 不在库内**：clone 后不重建就直接跑 `power_audit.py` 会因缺文件失败，
    这是设计选择（见 §2），不是脚本缺陷。
+4. **字节级 vs 内容级**：库内的 `results.json` / `truth_manifest.json` 是 LF 版；
+   用上游脚本重跑会在 Windows 上写出 CRLF 版，字节哈希不同、内容相同（已实测，见 §2）。
+   比对请用「JSON 逐键 / csv sha256」，不要用字节哈希。
