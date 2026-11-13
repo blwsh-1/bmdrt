@@ -51,7 +51,7 @@ scipy  1.15.3
 |---|---|---|
 | 数据集真值参数、噪声实现 | `md5("<family>\|<difficulty>\|<pct>\|<seed>")[:8]` | 稳定，跨进程一致 |
 | A1 符号随机化零分布 | `np.random.default_rng(20261113)` | 逐谱顺序固定（按 `results.json` 顺序） |
-| clustered bootstrap | `np.random.default_rng(20261113)` | 同上 |
+| clustered bootstrap | `np.random.default_rng(20261113)` | 同上；`mode="pooled"` 与 `mode="unit_mean"` 共用同一组重采样下标 |
 | `--selftest` 蒙特卡洛 | `np.random.default_rng(20261113)` | — |
 
 ⇒ 同一份输入 + 同一 `--boot`，`audit.json` 应逐键一致（本轮验证：两次运行内容相同）。
@@ -60,8 +60,8 @@ scipy  1.15.3
 
 ```bash
 # 0) 只需要审计（输入已入库）
-python docs/round_2026-11-13/power_audit.py --selftest        # 7 项对拍，退出码 0
-python docs/round_2026-11-13/power_audit.py --boot 2000       # ~4 s，写 out/power_audit/
+python docs/round_2026-11-13/power_audit.py --selftest        # 10 项对拍，退出码 0
+python docs/round_2026-11-13/power_audit.py --boot 2000       # ~4 s，写 out/power_audit/（只读，不拟合）
 
 # 1) 若要重建数据集（可选）
 python docs/round_2026-11-12/truth_dataset.py                 # 168 csv + manifest，确定性
@@ -79,12 +79,16 @@ python docs/round_2026-11-12/truth_recovery.py                # 全量 168 × 9 
 
 | 文件 | 字节 | sha256 |
 |---|---|---|
-| `out/power_audit/audit.json` | 180303 | `2fbf30beed0c73f87e7b174e76e53d8b86f037ff295eba96c3a94a669609bfdb` |
-| `out/power_audit/summary.md` | 13974 | `3d65e3200b34d1be7e8f12d3b0a2b0cea52c8bab57bbe1f608317e3ecd655aad` |
+| `out/power_audit/audit.json` | 182877 | `c173fef054999c7732bd8212d2d0d793088b6ac3fcbb07fb089883e86a921db5` |
+| `out/power_audit/summary.md` | 14778 | `f504b5f1d511d13fc1719c9d8452cb654d3f749f6a3b77d2415cb3b93a09a0df` |
 
 `audit.json` 顶层键：`generated_by / repro{n_spectra,n_pairs,mismatch} / boot /
 a0_units{S,S_units,by_kind,…} / a1_null{summary,per_spectrum} / a2_power{rows,bins,boundary} /
 a4_labels / a4_dab`。
+
+`a0_units.S` 里与统计单位相关的键（第三版新增/改名）：`n_unique_in_units`、
+`cluster_boot1/2`（谱等权 `Σh/Σn`）、`cluster_boot1/2_unitmean`（配置等权 `mean(h/n)`）、
+`cluster_boot1/2_within_unit_dup`（**已作废留档**，unit 内未去重的旧口径）。
 
 ## 7. 已知的不可复现点（诚实登记）
 

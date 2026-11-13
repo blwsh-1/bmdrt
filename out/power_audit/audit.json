@@ -20,6 +20,7 @@
   "S": {
    "n": 32,
    "n_unique": 24,
+   "n_unique_in_units": 24,
    "hit1": 23,
    "hit2": 22,
    "hit1_unique": 15,
@@ -46,18 +47,58 @@
    "units_all_hit2": 2,
    "units_any_hit2": 8,
    "cluster_boot1": {
+    "lo": 0.4166666666666667,
+    "hi": 0.8333333333333334,
+    "med": 0.625,
+    "mean": 0.6244791666666666,
+    "n_units": 8,
+    "boot": 2000,
+    "mode": "pooled"
+   },
+   "cluster_boot2": {
+    "lo": 0.4166666666666667,
+    "hi": 0.7916666666666666,
+    "med": 0.5833333333333334,
+    "mean": 0.5827083333333333,
+    "n_units": 8,
+    "boot": 2000,
+    "mode": "pooled"
+   },
+   "cluster_boot1_unitmean": {
+    "lo": 0.41666666666666663,
+    "hi": 0.8333333333333333,
+    "med": 0.625,
+    "mean": 0.6244791666666666,
+    "n_units": 8,
+    "boot": 2000,
+    "mode": "unit_mean"
+   },
+   "cluster_boot2_unitmean": {
+    "lo": 0.41666666666666663,
+    "hi": 0.7916666666666666,
+    "med": 0.5833333333333333,
+    "mean": 0.5827083333333333,
+    "n_units": 8,
+    "boot": 2000,
+    "mode": "unit_mean"
+   },
+   "cluster_boot1_within_unit_dup": {
     "lo": 0.5625,
     "hi": 0.875,
     "med": 0.71875,
+    "mean": 0.718359375,
     "n_units": 8,
-    "boot": 2000
+    "boot": 2000,
+    "mode": "pooled"
    },
-   "cluster_boot2": {
+   "cluster_boot2_within_unit_dup": {
     "lo": 0.5625,
     "hi": 0.84375,
     "med": 0.6875,
+    "mean": 0.68703125,
     "n_units": 8,
-    "boot": 2000
+    "boot": 2000,
+    "mode": "pooled"
    }
   },
   "S_units": [
@@ -65,6 +106,7 @@
     "family": "nested_L1_capacitive",
     "difficulty": "degenerate",
     "n": 4,
+    "n_unique": 3,
     "hits1": [
      1,
      1,
@@ -73,6 +115,16 @@
     ],
     "hits2": [
      1,
+     1,
+     1,
+     0
+    ],
+    "hits1_unique": [
+     1,
+     1,
+     1
+    ],
+    "hits2_unique": [
      1,
      1,
      0
@@ -83,12 +135,16 @@
     "hit2_all": 0,
     "hit1": 4,
     "hit2": 3,
-    "n_unique": 3
+    "hit1_u": 3,
+    "hit2_u": 2,
+    "rate1_u": 1.0,
+    "rate2_u": 0.6666666666666666
    },
    {
     "family": "nested_L1_capacitive",
     "difficulty": "out_of_window",
     "n": 4,
+    "n_unique": 3,
     "hits1": [
      1,
      1,
@@ -97,6 +153,16 @@
     ],
     "hits2": [
      1,
+     1,
+     0,
+     0
+    ],
+    "hits1_unique": [
+     1,
+     0,
+     0
+    ],
+    "hits2_unique": [
      1,
      0,
      0
@@ -107,12 +173,16 @@
     "hit2_all": 0,
     "hit1": 2,
     "hit2": 2,
-    "n_unique": 3
+    "hit1_u": 1,
+    "hit2_u": 1,
+    "rate1_u": 0.3333333333333333,
+    "rate2_u": 0.3333333333333333
    },
    {
     "family": "nested_L1_capacitive",
     "difficulty": "overlap",
     "n": 4,
+    "n_unique": 3,
     "hits1": [
      1,
      1,
@@ -125,18 +195,32 @@
      1,
      1
     ],
+    "hits1_unique": [
+     1,
+     1,
+     1
+    ],
+    "hits2_unique": [
+     1,
+     1,
+     1
+    ],
     "hit1_any": 1,
     "hit1_all": 1,
     "hit2_any": 1,
     "hit2_all": 1,
     "hit1": 4,
     "hit2": 4,
-    "n_unique": 3
+    "hit1_u": 3,
+    "hit2_u": 3,
+    "rate1_u": 1.0,
+    "rate2_u": 1.0
    },
    {
     "family": "nested_L1_capacitive",
     "difficulty": "separated",
     "n": 4,
+    "n_unique": 3,
     "hits1": [
      1,
      1,
@@ -145,6 +229,16 @@
     ],
     "hits2": [
      1,
+     1,
+     1,
+     1
+    ],
+    "hits1_unique": [
+     1,
+     1,
+     1
+    ],
+    "hits2_unique": [
      1,
      1,
      1
@@ -155,12 +249,16 @@
     "hit2_all": 1,
     "hit1": 4,
     "hit2": 4,
-    "n_unique": 3
+    "hit1_u": 3,
+    "hit2_u": 3,
+    "rate1_u": 1.0,
+    "rate2_u": 1.0
    },
    {
     "family": "nested_L2_capacitive",
     "difficulty": "degenerate",
     "n": 4,
+    "n_unique": 3,
     "hits1": [
      1,
      1,
@@ -173,18 +271,32 @@
      0,
      0
     ],
+    "hits1_unique": [
+     1,
+     0,
+     0
+    ],
+    "hits2_unique": [
+     1,
+     0,
+     0
+    ],
     "hit1_any": 1,
     "hit1_all": 0,
     "hit2_any": 1,
     "hit2_all": 0,
     "hit1": 2,
     "hit2": 2,
-    "n_unique": 3
+    "hit1_u": 1,
+    "hit2_u": 1,
+    "rate1_u": 0.3333333333333333,
+    "rate2_u": 0.3333333333333333
    },
    {
     "family": "nested_L2_capacitive",
     "difficulty": "out_of_window",
     "n": 4,
+    "n_unique": 3,
     "hits1": [
      1,
      1,
@@ -193,6 +305,16 @@
     ],
     "hits2": [
      1,
+     1,
+     0,
+     0
+    ],
+    "hits1_unique": [
+     1,
+     0,
+     0
+    ],
+    "hits2_unique": [
      1,
      0,
      0
@@ -203,12 +325,16 @@
     "hit2_all": 0,
     "hit1": 2,
     "hit2": 2,
-    "n_unique": 3
+    "hit1_u": 1,
+    "hit2_u": 1,
+    "rate1_u": 0.3333333333333333,
+    "rate2_u": 0.3333333333333333
    },
    {
     "family": "nested_L2_capacitive",
     "difficulty": "overlap",
     "n": 4,
+    "n_unique": 3,
     "hits1": [
      1,
      1,
@@ -217,6 +343,16 @@
     ],
     "hits2": [
      1,
+     1,
+     1,
+     0
+    ],
+    "hits1_unique": [
+     1,
+     1,
+     0
+    ],
+    "hits2_unique": [
      1,
      1,
      0
@@ -227,12 +363,16 @@
     "hit2_all": 0,
     "hit1": 3,
     "hit2": 3,
-    "n_unique": 3
+    "hit1_u": 2,
+    "hit2_u": 2,
+    "rate1_u": 0.6666666666666666,
+    "rate2_u": 0.6666666666666666
    },
    {
     "family": "nested_L2_capacitive",
     "difficulty": "separated",
     "n": 4,
+    "n_unique": 3,
     "hits1": [
      1,
      1,
@@ -245,13 +385,26 @@
      0,
      0
     ],
+    "hits1_unique": [
+     1,
+     0,
+     0
+    ],
+    "hits2_unique": [
+     1,
+     0,
+     0
+    ],
     "hit1_any": 1,
     "hit1_all": 0,
     "hit2_any": 1,
     "hit2_all": 0,
     "hit1": 2,
     "hit2": 2,
-    "n_unique": 3
+    "hit1_u": 1,
+    "hit2_u": 1,
+    "rate1_u": 0.3333333333333333,
+    "rate2_u": 0.3333333333333333
    }
   ],
   "by_kind": {

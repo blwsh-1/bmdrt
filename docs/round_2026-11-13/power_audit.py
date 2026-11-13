@@ -55,27 +55,44 @@ def acf_abs(d: np.ndarray) -> float:
     return float(max(TR.acf_max(d.real), TR.acf_max(d.imag)))
 
 
-def cluster_bootstrap(per_unit, boot=2000, seed=20261113):
+def cluster_bootstrap(per_unit, boot=2000, seed=20261113, mode="pooled"):
     """按 unit（真值配置）重采样的 clustered bootstrap。
 
     `per_unit` = [(hits, n), ...]，每个 unit 一项。重采样**整个 unit**（把同一配置下
     的噪声实现一起带走），因此保留配置内相关性 —— 与「按谱独立」的 Wilson 区间不是一回事。
-    返回 pooled 比例的分位区间；n 很小时区间会很宽，这是分布本身宽，不是算错。
+
+    两种估计目标**不能混**，故显式分档：
+
+    - `mode="pooled"`（谱等权）：先各 unit 求和再相除 `Σh/Σn`。
+      问的是「把这一批谱混在一起，命中率是多少」；unit 谱数不等时会被大 unit 拉走。
+    - `mode="unit_mean"`（配置等权）：先算每个 unit 自己的命中率，再对 unit 取平均。
+      问的是「换一个真值配置，期望命中率是多少」—— 泛化问题该看这个。
+
+    返回分位区间；unit 数很小时区间会宽，这是分布本身宽（8 个 cluster），不是算错：
+    重采样 2000 次只提高 Monte Carlo 精度，**不增加独立 unit 数**。
     """
     if not per_unit:
         return None
     h = np.array([float(a) for a, _ in per_unit])
     n = np.array([float(b) for _, b in per_unit])
+    if np.any(n <= 0):
+        return None
     rng = np.random.default_rng(seed)
     idx = rng.integers(0, len(h), size=(boot, len(h)))
-    hb = h[idx].sum(axis=1)
-    nb = n[idx].sum(axis=1)
-    r = np.where(nb > 0, hb / np.maximum(nb, 1e-12), np.nan)
+    if mode == "unit_mean":
+        r = (h[idx] / n[idx]).mean(axis=1)
+    elif mode == "pooled":
+        hb = h[idx].sum(axis=1)
+        nb = n[idx].sum(axis=1)
+        r = hb / np.maximum(nb, 1e-12)
+    else:
+        raise ValueError(f"未知 mode {mode!r}")
     r = r[np.isfinite(r)]
     if r.size == 0:
         return None
     return dict(lo=float(np.quantile(r, 0.025)), hi=float(np.quantile(r, 0.975)),
-                med=float(np.median(r)), n_units=len(h), boot=int(r.size))
+                med=float(np.median(r)), mean=float(np.mean(r)),
+                n_units=len(h), boot=int(r.size), mode=mode)
 
 
 
@@ -178,29 +195,45 @@ def audit_units(spec, results):
     u2 = sum(1 for r in Sd if _pair(r)[0]["acf"] - _pair(r)[1]["acf"] >= 0.20)
 
     # ---- S 集的 unit 层汇总：24 张唯一谱其实只来自 8 个真值配置
+    # 关键：unit 内必须先按 SHA256 去重再统计。n00 档两个 seed 是**同一张谱**
+    # （seed 只换噪声实现，0% 噪声时噪声为零），若把 4 条记录全计入，
+    # 同一张谱会在一份配置里被算两次 —— bootstrap 按 unit 聚类挡不住这个。
     uS = defaultdict(list)
     for r in S:
         uS[(r["family"], r["difficulty"])].append(r)
     unit_rows = []
     for key in sorted(uS):
         rows = uS[key]
+        rows_u = dedupe(rows)
         h1 = [int(_pair(r)[0]["acf"] > 0.50) for r in rows]
         h2 = [int(_pair(r)[0]["acf"] - _pair(r)[1]["acf"] >= 0.20) for r in rows]
+        h1u = [int(_pair(r)[0]["acf"] > 0.50) for r in rows_u]
+        h2u = [int(_pair(r)[0]["acf"] - _pair(r)[1]["acf"] >= 0.20) for r in rows_u]
         unit_rows.append(dict(
-            family=key[0], difficulty=key[1], n=len(rows),
-            hits1=h1, hits2=h2,
+            family=key[0], difficulty=key[1], n=len(rows), n_unique=len(rows_u),
+            hits1=h1, hits2=h2, hits1_unique=h1u, hits2_unique=h2u,
             hit1_any=int(any(h1)), hit1_all=int(all(h1)),
             hit2_any=int(any(h2)), hit2_all=int(all(h2)),
             hit1=int(sum(h1)), hit2=int(sum(h2)),
-            n_unique=len({spec[r["id"]].get("csv_sha256") for r in rows}),
+            hit1_u=int(sum(h1u)), hit2_u=int(sum(h2u)),
+            rate1_u=float(sum(h1u) / len(rows_u)), rate2_u=float(sum(h2u) / len(rows_u)),
         ))
-    boot1 = cluster_bootstrap([(x["hit1"], x["n"]) for x in unit_rows])
-    boot2 = cluster_bootstrap([(x["hit2"], x["n"]) for x in unit_rows])
+    # 两个估计目标分开报：pooled = 谱等权（Σh/Σn）；unit_mean = 配置等权（mean of rates）
+    pu = [(x["hit1_u"], x["n_unique"]) for x in unit_rows]
+    pu2 = [(x["hit2_u"], x["n_unique"]) for x in unit_rows]
+    boot1 = cluster_bootstrap(pu, mode="pooled")
+    boot2 = cluster_bootstrap(pu2, mode="pooled")
+    boot1m = cluster_bootstrap(pu, mode="unit_mean")
+    boot2m = cluster_bootstrap(pu2, mode="unit_mean")
+    # 旧口径（含 unit 内重复谱）留档，便于核对修订前后差异，不再作结论
+    boot1_raw = cluster_bootstrap([(x["hit1"], x["n"]) for x in unit_rows], mode="pooled")
+    boot2_raw = cluster_bootstrap([(x["hit2"], x["n"]) for x in unit_rows], mode="pooled")
+    n_u_uniq = sum(x["n_unique"] for x in unit_rows)
     return dict(
         n_files=len(spec), n_unique_sha=len(shas), n_dup_groups=len(dup),
         dup_kinds=dict(Counter(v[0].split("__")[-2] for v in dup.values())),
         n_units=len(units), unit_sizes=dict(Counter(len(v) for v in units.values())),
-        S=dict(n=len(S), n_unique=len(Sd),
+        S=dict(n=len(S), n_unique=len(Sd), n_unique_in_units=n_u_uniq,
                hit1=tot1, hit2=tot2,
                hit1_unique=u1, hit2_unique=u2,
                rate1=wilson(tot1, len(S)), rate2=wilson(tot2, len(S)),
@@ -210,7 +243,10 @@ def audit_units(spec, results):
                units_any_hit1=sum(x["hit1_any"] for x in unit_rows),
                units_all_hit2=sum(x["hit2_all"] for x in unit_rows),
                units_any_hit2=sum(x["hit2_any"] for x in unit_rows),
-               cluster_boot1=boot1, cluster_boot2=boot2),
+               cluster_boot1=boot1, cluster_boot2=boot2,
+               cluster_boot1_unitmean=boot1m, cluster_boot2_unitmean=boot2m,
+               cluster_boot1_within_unit_dup=boot1_raw,
+               cluster_boot2_within_unit_dup=boot2_raw),
         S_units=unit_rows,
         by_kind=by_kind,
     )
@@ -503,6 +539,8 @@ def build_md(a0, a1s, a2tab, a2rows, boundary, labels, dab):
     w(f"  - ② 按谱 **{S['hit2']}/{S['n']} = {100*S['hit2']/S['n']:.1f}%** "
       f"(95%CI {fmt_ci(S['rate2'])})｜去重 **{S['hit2_unique']}/{S['n_unique']} = "
       f"{100*S['hit2_unique']/S['n_unique']:.1f}%** (95%CI {fmt_ci(S['rate2_unique'])})")
+    w(f"  - 注：按谱口径的分母含 `n00` 的重复谱，只作**与预注册可比**，不作结论；"
+      f"结论用去重口径与下面的 cluster bootstrap。")
     w("\n| 噪声档 | 谱 n | 唯一谱 n | ① 按谱 | ② 按谱 | ① 去重 | ② 去重 |")
     w("|---|---|---|---|---|---|---|")
     for k, v in a0["by_kind"].items():
@@ -513,26 +551,44 @@ def build_md(a0, a1s, a2tab, a2rows, boundary, labels, dab):
     w(f"\n### A0b 按真值配置（unit）汇总 —— **有效独立样本是 {S['n_units']}，不是 {S['n_unique']}**\n")
     w(f"S 集 {S['n']} 张谱 = {S['n_unique']} 张唯一谱 = **{S['n_units']} 个真值配置**"
       f"（每个配置 {S['n'] // S['n_units']} 次噪声实现 = 2 噪声 × 2 seed）。"
-      f"按谱的 Wilson 区间把 {S['n_unique']} 张谱当独立 Bernoulli，"
+      f"**unit 内先按 SHA256 去重后共 {S['n_unique_in_units']} 张**（n00 档两个 seed 是同一张谱）。"
+      f"按谱的 Wilson 区间把谱当独立 Bernoulli，"
       "**没有考虑同一配置内的相关性**，只能当描述性区间。\n")
-    w("| family | difficulty | 谱 n | 唯一谱 | ① 命中 | ① 全中 | ② 命中 | ② 全中 |")
+    w("| family | difficulty | 谱 n | 唯一谱 | ① 命中(全记录) | ① 命中(去重) | ② 命中(去重) | ① 全中 |")
     w("|---|---|---|---|---|---|---|---|")
     for x in a0["S_units"]:
         w(f"| {x['family']} | {x['difficulty']} | {x['n']} | {x['n_unique']} | "
-          f"{''.join(str(h) for h in x['hits1'])} | {'是' if x['hit1_all'] else '否'} | "
-          f"{''.join(str(h) for h in x['hits2'])} | {'是' if x['hit2_all'] else '否'} |")
+          f"{''.join(str(h) for h in x['hits1'])} | "
+          f"{''.join(str(h) for h in x['hits1_unique'])} | "
+          f"{''.join(str(h) for h in x['hits2_unique'])} | "
+          f"{'是' if x['hit1_all'] else '否'} |")
     b1, b2 = S.get("cluster_boot1"), S.get("cluster_boot2")
+    b1m, b2m = S.get("cluster_boot1_unitmean"), S.get("cluster_boot2_unitmean")
+    br1, br2 = S.get("cluster_boot1_within_unit_dup"), S.get("cluster_boot2_within_unit_dup")
     w(f"\n- ① 全部谱都命中的配置：**{S['units_all_hit1']}/{S['n_units']}**；"
       f"至少一张命中的配置：**{S['units_any_hit1']}/{S['n_units']}**")
     w(f"- ② 全部谱都命中的配置：**{S['units_all_hit2']}/{S['n_units']}**；"
       f"至少一张命中的配置：**{S['units_any_hit2']}/{S['n_units']}**")
     if b1 and b2:
-        w(f"- **clustered bootstrap（按 unit 整体重采样，B={b1['boot']}）**："
-          f"① **{100*b1['med']:.1f}%**（95%CI {100*b1['lo']:.1f}–{100*b1['hi']:.1f}%）；"
-          f"② **{100*b2['med']:.1f}%**（95%CI {100*b2['lo']:.1f}–{100*b2['hi']:.1f}%）")
-        w("  - 读数：区间宽是因为**只有 8 个配置**；它回答的是「换一批真值配置会怎样」，"
-          "Wilson 区间回答的是「同一批配置换噪声实现会怎样」，两个问题不能混。"
-          "本例两者数值接近（各配置谱数相同、且命中高度集中在少数配置上），但换设计规模后不会保持。")
+        w(f"\n**clustered bootstrap（按 unit 整体重采样，B={b1['boot']}，unit 内已去重）** —— "
+          "两个估计目标并列，不可混用：\n")
+        w("| 估计目标 | 问的问题 | ① | ② |")
+        w("|---|---|---|---|")
+        w(f"| 谱等权 `Σh/Σn` | 把这批谱混在一起，命中率多少 | "
+          f"**{100*b1['med']:.1f}%**（95%CI {100*b1['lo']:.1f}–{100*b1['hi']:.1f}%） | "
+          f"**{100*b2['med']:.1f}%**（95%CI {100*b2['lo']:.1f}–{100*b2['hi']:.1f}%） |")
+        if b1m and b2m:
+            w(f"| 配置等权 `mean(h/n)` | 换一个真值配置，期望命中率多少（**泛化**） | "
+              f"**{100*b1m['med']:.1f}%**（95%CI {100*b1m['lo']:.1f}–{100*b1m['hi']:.1f}%） | "
+              f"**{100*b2m['med']:.1f}%**（95%CI {100*b2m['lo']:.1f}–{100*b2m['hi']:.1f}%） |")
+        w("")
+        w("  - **区间是探索性的**：只有 8 个 cluster，percentile 区间的尾部分位本身不稳；"
+          "重采样次数只提高 Monte Carlo 精度，**不增加独立配置数**。")
+        w("  - 谱等权与配置等权的点估计只在「各 unit 谱数相等」时接近；"
+          "换成不同谱数的设计后两者会分开，报结论前必须先说清用哪个。")
+        if br1 and br2:
+            w(f"  - 留档（**已作废，不再作结论**）：unit 内不去重时 ① {100*br1['med']:.1f}%、"
+              f"② {100*br2['med']:.1f}% —— 同一张 n00 谱被重复计入分母，是把点估计抬高的原因。")
     w("\n## A1 真族残差零分布（符号随机化替代数据）\n")
     w("| 噪声\\族 | n | 零分布有效 | 观测 acf 中位 | 观测上界 | 零 q95 中位 | 零 q99 中位 | obs>0.50 | obs>零 q95 | p<0.05 |")
     w("|---|---|---|---|---|---|---|---|---|---|")
@@ -720,10 +776,24 @@ def selftest():
           f"四阶矩发散使 RMS 波动大，故只作描述不作断言）")
     bad += 0 if med_h < rms_h else 1
 
-    # 3) clustered bootstrap：全部 unit 命中 ⇒ 区间退化为 1
+    # 3) clustered bootstrap
     cb = cluster_bootstrap([(4, 4)] * 8, boot=200)
     chk("cluster bootstrap 全命中", cb["lo"], 1.0, 1e-12)
     chk("cluster bootstrap 全命中(上界)", cb["hi"], 1.0, 1e-12)
+    # 3b) 两种估计目标必须真的不同：unit A 命中 1/1（全部），unit B 命中 0/3
+    tu = [(1.0, 1.0), (0.0, 3.0)]
+    p_pool = cluster_bootstrap(tu, boot=400)["med"]
+    p_umean = cluster_bootstrap(tu, boot=400, mode="unit_mean")["med"]
+    chk("谱等权与配置等权必须可分（pooled）", p_pool, 0.25, 0.02)
+    chk("谱等权与配置等权必须可分（unit_mean）", p_umean, 0.50, 0.02)
+    # 3c) mode 名写错要报错，不能静默退回 pooled
+    try:
+        cluster_bootstrap(tu, boot=10, mode="mean")
+        ok_mode = False
+    except ValueError:
+        ok_mode = True
+    print(f"[{'ok' if ok_mode else 'FAIL'}] bootstrap mode 非法值必须 raise")
+    bad += 0 if ok_mode else 1
 
     # 4) acf：交替符号序列应接近 1，随机符号应远小于 1
     alt = np.array([1.0, -1.0] * 30)
