@@ -7,8 +7,11 @@
 
 **不重拟合、不改判据、不改本轮判定、不给 grade/verdict/pass 键。**
 
-    python docs/round_2026-11-13/power_audit.py
-    python docs/round_2026-11-13/power_audit.py --boot 500 --quick
+    python docs/round_2026-11-13/power_audit.py                     # 全量，B=2000
+    python docs/round_2026-11-13/power_audit.py --boot 500 --out out/power_audit_try
+    python docs/round_2026-11-13/power_audit.py --selftest          # 只跑内置对拍
+
+依赖清单见 `docs/round_2026-11-13/REPRO_MANIFEST.md`（上游 commit / 文件 sha256 / seed）。
 """
 
 from __future__ import annotations
@@ -50,6 +53,30 @@ def wilson(k: int, n: int, z: float = 1.96):
 
 def acf_abs(d: np.ndarray) -> float:
     return float(max(TR.acf_max(d.real), TR.acf_max(d.imag)))
+
+
+def cluster_bootstrap(per_unit, boot=2000, seed=20261113):
+    """按 unit（真值配置）重采样的 clustered bootstrap。
+
+    `per_unit` = [(hits, n), ...]，每个 unit 一项。重采样**整个 unit**（把同一配置下
+    的噪声实现一起带走），因此保留配置内相关性 —— 与「按谱独立」的 Wilson 区间不是一回事。
+    返回 pooled 比例的分位区间；n 很小时区间会很宽，这是分布本身宽，不是算错。
+    """
+    if not per_unit:
+        return None
+    h = np.array([float(a) for a, _ in per_unit])
+    n = np.array([float(b) for _, b in per_unit])
+    rng = np.random.default_rng(seed)
+    idx = rng.integers(0, len(h), size=(boot, len(h)))
+    hb = h[idx].sum(axis=1)
+    nb = n[idx].sum(axis=1)
+    r = np.where(nb > 0, hb / np.maximum(nb, 1e-12), np.nan)
+    r = r[np.isfinite(r)]
+    if r.size == 0:
+        return None
+    return dict(lo=float(np.quantile(r, 0.025)), hi=float(np.quantile(r, 0.975)),
+                med=float(np.median(r)), n_units=len(h), boot=int(r.size))
+
 
 
 def acf_rel(d: np.ndarray, az: np.ndarray) -> float:
@@ -149,6 +176,26 @@ def audit_units(spec, results):
     tot2 = sum(1 for r in S if _pair(r)[0]["acf"] - _pair(r)[1]["acf"] >= 0.20)
     u1 = sum(1 for r in Sd if _pair(r)[0]["acf"] > 0.50)
     u2 = sum(1 for r in Sd if _pair(r)[0]["acf"] - _pair(r)[1]["acf"] >= 0.20)
+
+    # ---- S 集的 unit 层汇总：24 张唯一谱其实只来自 8 个真值配置
+    uS = defaultdict(list)
+    for r in S:
+        uS[(r["family"], r["difficulty"])].append(r)
+    unit_rows = []
+    for key in sorted(uS):
+        rows = uS[key]
+        h1 = [int(_pair(r)[0]["acf"] > 0.50) for r in rows]
+        h2 = [int(_pair(r)[0]["acf"] - _pair(r)[1]["acf"] >= 0.20) for r in rows]
+        unit_rows.append(dict(
+            family=key[0], difficulty=key[1], n=len(rows),
+            hits1=h1, hits2=h2,
+            hit1_any=int(any(h1)), hit1_all=int(all(h1)),
+            hit2_any=int(any(h2)), hit2_all=int(all(h2)),
+            hit1=int(sum(h1)), hit2=int(sum(h2)),
+            n_unique=len({spec[r["id"]].get("csv_sha256") for r in rows}),
+        ))
+    boot1 = cluster_bootstrap([(x["hit1"], x["n"]) for x in unit_rows])
+    boot2 = cluster_bootstrap([(x["hit2"], x["n"]) for x in unit_rows])
     return dict(
         n_files=len(spec), n_unique_sha=len(shas), n_dup_groups=len(dup),
         dup_kinds=dict(Counter(v[0].split("__")[-2] for v in dup.values())),
@@ -157,7 +204,14 @@ def audit_units(spec, results):
                hit1=tot1, hit2=tot2,
                hit1_unique=u1, hit2_unique=u2,
                rate1=wilson(tot1, len(S)), rate2=wilson(tot2, len(S)),
-               rate1_unique=wilson(u1, len(Sd)), rate2_unique=wilson(u2, len(Sd))),
+               rate1_unique=wilson(u1, len(Sd)), rate2_unique=wilson(u2, len(Sd)),
+               n_units=len(unit_rows),
+               units_all_hit1=sum(x["hit1_all"] for x in unit_rows),
+               units_any_hit1=sum(x["hit1_any"] for x in unit_rows),
+               units_all_hit2=sum(x["hit2_all"] for x in unit_rows),
+               units_any_hit2=sum(x["hit2_any"] for x in unit_rows),
+               cluster_boot1=boot1, cluster_boot2=boot2),
+        S_units=unit_rows,
         by_kind=by_kind,
     )
 
@@ -221,22 +275,31 @@ def audit_null(spec, data, results, boot=2000, seed=20261113):
 # ---------------------------------------------------------------- A2 检出力
 
 def audit_power(results):
+    """`Δrwp` 的归一化分母 = 纯噪声下 Rwp 的期望量级 `√2·pct·100`。
+
+    推导：残差实/虚部独立、各 sd = pct·|Z| ⇒ `E|d|²/|Z|² = 2·pct²` ⇒
+    `Rwp ≈ √2·pct·100`（pct=0.05 → 7.07pp）。**首版用 `pct·100 = 5pp` 作分母，
+    少乘 √2**，故旧口径的比值系统性偏大 41%；两套都保留，便于与本轮已发布的数字对照。
+    """
     S = [r for r in results if r["family"] in CAP and r["noise_kind"] in MAIN_KINDS]
     rows = []
     for r in S:
         ind, cap = _pair(r)
         pct = 0.05 if r["noise_kind"] == "none" else float(r["noise_pct"])
         drwp = ind["rwp_pct"] - cap["rwp_pct"]
+        floor = math.sqrt(2.0) * pct * 100.0
         rows.append(dict(id=r["id"], noise=r["noise_kind"], difficulty=r["difficulty"],
-                         drwp=drwp, drwp_norm=drwp / (pct * 100.0),
+                         drwp=drwp, floor_pp=floor,
+                         drwp_norm=drwp / floor,
+                         drwp_norm_5pp=drwp / (pct * 100.0),
                          acf_ind=ind["acf"], acf_cap=cap["acf"],
                          hit=int(ind["acf"] > 0.50),
                          hit2=int(ind["acf"] - cap["acf"] >= 0.20)))
-    # 按噪声档分层（混合噪声档会让「偏置—检出」关系不可解释）
+    # 按噪声档分层（混合噪声档会让「偏置—检出」关系不可解释）；分箱只作粗览
     tab = []
     for kind in MAIN_KINDS:
         sel = [x for x in rows if x["noise"] == kind]
-        for lo, hi in ((0.0, 0.5), (0.5, 1.0), (1.0, 2.0), (2.0, 1e9)):
+        for lo, hi in ((0.0, 0.15), (0.15, 0.30), (0.30, 0.60), (0.60, 1e9)):
             g = [x for x in sel if lo <= x["drwp_norm"] < hi]
             if not g:
                 continue
@@ -244,15 +307,20 @@ def audit_power(results):
                             hit1=sum(x["hit"] for x in g), hit2=sum(x["hit2"] for x in g),
                             ci1=wilson(sum(x["hit"] for x in g), len(g)),
                             med_acf=float(np.median([x["acf_ind"] for x in g]))))
-    # 检出边界（不用 logistic：n=16 且 0.17–0.36 之间有间隙，logistic 不可识别）
+    # 检出边界（不用 logistic：n=16 且两类之间有间隙，logistic 不可识别）
     boundary = {}
     for kind in MAIN_KINDS:
         sel = [x for x in rows if x["noise"] == kind]
-        miss = [x["drwp_norm"] for x in sel if not x["hit"]]
-        hit = [x["drwp_norm"] for x in sel if x["hit"]]
+        miss = [x for x in sel if not x["hit"]]
+        hit = [x for x in sel if x["hit"]]
         if miss and hit:
-            boundary[kind] = dict(max_miss=max(miss), min_hit=min(hit),
-                                  overlap=bool(max(miss) >= min(hit)))
+            boundary[kind] = dict(
+                max_miss=max(x["drwp_norm"] for x in miss),
+                min_hit=min(x["drwp_norm"] for x in hit),
+                max_miss_5pp=max(x["drwp_norm_5pp"] for x in miss),
+                min_hit_5pp=min(x["drwp_norm_5pp"] for x in hit),
+                overlap=bool(max(x["drwp_norm"] for x in miss)
+                             >= min(x["drwp_norm"] for x in hit)))
     return rows, tab, boundary
 
 
@@ -387,10 +455,19 @@ def audit_dab(spec, data, results):
         chosen = r["best_bic"]
         tc = r["truth_candidate"]
         d_best_second = D_of(order[0], order[1]) if len(order) >= 2 else None
-        rows.append(dict(id=r["id"], noise=r["noise_kind"], n_pairs=len(pairs),
+        # 选对时：top2 一定 ≠ 真族 ⇒ 这个 D 就是「真族 vs 最强对手」；
+        # 选错时 top2 与真族的关系不定 ⇒ 改报「真族 vs 被选候选」。
+        d_truth_runner = None
+        if r["truth_selected"]:
+            others = [k for k in order if k != tc]
+            if others:
+                d_truth_runner = D_of(tc, others[0])
+        rows.append(dict(id=r["id"], noise=r["noise_kind"], n_candidates=len(keys),
+                         n_points=int(f.size),
                          frac_D_lt1=float(np.mean([D < 1 for _, _, D in pairs])),
                          min_D=float(np.min([D for _, _, D in pairs])) if pairs else None,
                          D_best_vs_second=d_best_second,
+                         D_truth_vs_runnerup=d_truth_runner,
                          D_true_vs_chosen=(D_of(tc, chosen)
                                            if chosen != tc and D_of(tc, chosen) is not None
                                            else None),
@@ -407,7 +484,7 @@ def fmt_ci(ci):
     return f"{100*ci[0]:.1f}–{100*ci[1]:.1f}%"
 
 
-def build_md(a0, a1s, a2tab, boundary, labels, dab):
+def build_md(a0, a1s, a2tab, a2rows, boundary, labels, dab):
     L = []
     w = L.append
     w("# 检出力审计（只读，不改本轮判定）\n")
@@ -432,6 +509,30 @@ def build_md(a0, a1s, a2tab, boundary, labels, dab):
         w(f"| {k} | {v['n_raw']} | {v['n_unique']} | {v['hit1_raw']}/{v['n_raw']} | "
           f"{v['hit2_raw']}/{v['n_raw']} | {v['hit1_unique']}/{v['n_unique']} | "
           f"{v['hit2_unique']}/{v['n_unique']} |")
+    # ---- A0b unit 层（真值配置）
+    w(f"\n### A0b 按真值配置（unit）汇总 —— **有效独立样本是 {S['n_units']}，不是 {S['n_unique']}**\n")
+    w(f"S 集 {S['n']} 张谱 = {S['n_unique']} 张唯一谱 = **{S['n_units']} 个真值配置**"
+      f"（每个配置 {S['n'] // S['n_units']} 次噪声实现 = 2 噪声 × 2 seed）。"
+      f"按谱的 Wilson 区间把 {S['n_unique']} 张谱当独立 Bernoulli，"
+      "**没有考虑同一配置内的相关性**，只能当描述性区间。\n")
+    w("| family | difficulty | 谱 n | 唯一谱 | ① 命中 | ① 全中 | ② 命中 | ② 全中 |")
+    w("|---|---|---|---|---|---|---|---|")
+    for x in a0["S_units"]:
+        w(f"| {x['family']} | {x['difficulty']} | {x['n']} | {x['n_unique']} | "
+          f"{''.join(str(h) for h in x['hits1'])} | {'是' if x['hit1_all'] else '否'} | "
+          f"{''.join(str(h) for h in x['hits2'])} | {'是' if x['hit2_all'] else '否'} |")
+    b1, b2 = S.get("cluster_boot1"), S.get("cluster_boot2")
+    w(f"\n- ① 全部谱都命中的配置：**{S['units_all_hit1']}/{S['n_units']}**；"
+      f"至少一张命中的配置：**{S['units_any_hit1']}/{S['n_units']}**")
+    w(f"- ② 全部谱都命中的配置：**{S['units_all_hit2']}/{S['n_units']}**；"
+      f"至少一张命中的配置：**{S['units_any_hit2']}/{S['n_units']}**")
+    if b1 and b2:
+        w(f"- **clustered bootstrap（按 unit 整体重采样，B={b1['boot']}）**："
+          f"① **{100*b1['med']:.1f}%**（95%CI {100*b1['lo']:.1f}–{100*b1['hi']:.1f}%）；"
+          f"② **{100*b2['med']:.1f}%**（95%CI {100*b2['lo']:.1f}–{100*b2['hi']:.1f}%）")
+        w("  - 读数：区间宽是因为**只有 8 个配置**；它回答的是「换一批真值配置会怎样」，"
+          "Wilson 区间回答的是「同一批配置换噪声实现会怎样」，两个问题不能混。"
+          "本例两者数值接近（各配置谱数相同、且命中高度集中在少数配置上），但换设计规模后不会保持。")
     w("\n## A1 真族残差零分布（符号随机化替代数据）\n")
     w("| 噪声\\族 | n | 零分布有效 | 观测 acf 中位 | 观测上界 | 零 q95 中位 | 零 q99 中位 | obs>0.50 | obs>零 q95 | p<0.05 |")
     w("|---|---|---|---|---|---|---|---|---|---|")
@@ -446,21 +547,37 @@ def build_md(a0, a1s, a2tab, boundary, labels, dab):
     w("\n> `none` 档没有噪声，残差是最小二乘投影残差（确定性），符号随机化零分布无意义，"
       "其 `obs>0.50` 不能读成假阳性。仅 `correlated` / `heavy` 两档的零分布可解释。")
     w("\n## A2 检出率—偏置关系（按噪声档分层，exploratory）\n")
-    w("偏置归一化：`Δrwp / 噪声底`，噪声底 = 5%·100 = 5pp（`none` 按参考 5% 算）。\n")
+    w("偏置：`Δrwp = rwp_ind − rwp_true`（pp，同谱配对）。归一化分母 = **纯噪声下 Rwp 的期望量级**"
+      "`√2·pct·100`：残差实/虚部独立、各 sd = `pct·|Z|` ⇒ 期望 `Rwp ≈ √2·pct·100`"
+      "（pct=0.05 → **7.07pp**）。\n")
+    w("> 首版分母写 `pct·100 = 5pp`，**少乘 √2**，比值系统性偏大 41%；下表用修正口径，"
+      "括号内给旧口径数值便于对照。这不改任何判定，只改归一化的定义。\n")
     w("| 噪声 | Δrwp/噪声底 | n | ① 检出 | ① 率 (95%CI) | ② 检出 | 中位 acf_ind |")
     w("|---|---|---|---|---|---|---|")
     for t in a2tab:
         hi = "∞" if t["hi"] is None else f"{t['hi']:g}"
         w(f"| {t['noise']} | [{t['lo']:g}, {hi}) | {t['n']} | {t['hit1']} | "
           f"{100*t['hit1']/t['n']:.0f}% ({fmt_ci(t['ci1'])}) | {t['hit2']} | {t['med_acf']:.3f} |")
+    # heavy 档逐条明细（n 小，不靠分箱，直接摊开）
+    hrows = [x for x in a2rows if x["noise"] == "heavy"]
+    if hrows:
+        w("\n**heavy 档逐条明细**（不靠分箱，直接摊开；`噪声底 = 7.07pp`）：\n")
+        w("| 族 | id | 难度 | Δrwp (pp) | Δrwp/噪声底 | 旧口径(/5pp) | acf_ind | ① |")
+        w("|---|---|---|---|---|---|---|---|")
+        for x in sorted(hrows, key=lambda r: r["drwp_norm"]):
+            fam = "L1" if "L1" in x["id"] else "L2"
+            w(f"| {fam} | `{x['id'].split('__', 1)[1]}` | {x['difficulty']} | {x['drwp']:.2f} | "
+              f"{x['drwp_norm']:.2f} | {x['drwp_norm_5pp']:.2f} | {x['acf_ind']:.3f} | "
+              f"{'✓' if x['hit'] else '✗'} |")
     if boundary:
         w("\n**检出边界（经验，不做外推）**：")
         for k, v in boundary.items():
-            w(f"- `{k}`：未检出样本的 `Δrwp/噪声底` 最大 **{v['max_miss']:.2f}**，"
-              f"检出样本最小 **{v['min_hit']:.2f}**"
-              + ("（**区间重叠**，不能划单一边界）" if v["overlap"] else "（两类不重叠）"))
-        w("  - 读数：这个边界是**观测到的事实**，不是建议阈值；下一轮要用受控扫描"
-          "（系统改变支路幅度）才能把它变成可预注册的检出力曲线。")
+            w(f"- `{k}`：未检出样本的 `Δrwp/噪声底` 最大 **{v['max_miss']:.2f}**"
+              f"（旧口径 {v['max_miss_5pp']:.2f}），检出样本最小 **{v['min_hit']:.2f}**"
+              f"（旧口径 {v['min_hit_5pp']:.2f}）"
+              + ("（**区间重叠**，不能划单一边界）" if v["overlap"] else "（在这批数据里两类不重叠）"))
+        w("  - 读数：这只是**本批样本设计 + 本估计器 + 本 ACF 定义下的观测分界**，"
+              "不能写成「低于此值原理上不可检出」。受控扫描（系统改变支路幅度）才能给检出力曲线。")
     w("\n## A4 设计层标签 × 实测（几何代理）\n")
     lab_cnt = Counter(x["label"] for x in labels)
     w(f"标签分布：{dict(lab_cnt)}\n")
@@ -497,48 +614,137 @@ def build_md(a0, a1s, a2tab, boundary, labels, dab):
     else:
         w("  - 读数：本轮**没有**出现「对照失配远大于支路真实可见度」的谱，"
           "即 ① 的对照没有被 `R_ad` 主导 —— 这一条反事实混淆在本数据上不成立（如实记录，不夸大）。")
-    w("\n## A4b 候选间可区分度 D_ab（σ=5%·|Z|）\n")
+    w("\n## A4b 候选间预测距离 `D_ab`（**诊断量，不是可区分性判据**）\n")
+    w("`D_ab = Σ_i |Z_a,i − Z_b,i|² / (0.05·|Z_obs,i|)²`，`Z_a/Z_b` 用两侧**各自的最优拟合**，"
+      "固定 5% 参考噪声使其跨档可比。三点限制必须先说清：\n")
+    w("1. **未校准**：`D` 是噪声归一化平方距离，不是 `P(可区分)`。它的分布取决于频率点数、"
+      "实虚部噪声协方差、参数不确定性，以及两个模型各自的选择偏差；`D=1` 没有统计含义。")
+    w("2. **本数据集内可比、跨数据集不可比**：所有谱都是同一 60 点频率网格，"
+      "所以本表内部横向可比；换点数或换频段后 `D` 的量级会变。")
+    w("3. **按「是否选对」分组时，两组 `D` 指的不是同一对模型**：选对时 top2 ≠ 真族，"
+      "`D_best_vs_second` 就是「真族 vs 最强对手」；选错时 top2 与真族关系不定。"
+      "⇒ 这一条件内生于结果，**不能按 `D` 分箱算选对率当校准曲线**。\n")
+    sel_d = [x["D_truth_vs_runnerup"] for x in dab if x["D_truth_vs_runnerup"] is not None]
     mis = [x for x in dab if not x["truth_selected"] and x["D_true_vs_chosen"] is not None]
-    ok = [x for x in dab if x["truth_selected"] and x["D_best_vs_second"] is not None]
-    sep = [x for x in dab if x["D_best_vs_second"] is not None]
-    w(f"- 全部谱：候选对中 `D<1`（该参考噪声下不可区分）占比中位 "
-      f"**{100*np.median([x['frac_D_lt1'] for x in dab]):.1f}%**")
-    w(f"- 真族被选中 n={len(ok)}，其 BIC 第一名 vs 第二名 `D` 中位 "
-      f"**{np.median([x['D_best_vs_second'] for x in ok]):.3g}**")
-    w(f"- 误选 n={len(mis)}，真族 vs 被选候选 `D` 中位 "
-      f"**{np.median([x['D_true_vs_chosen'] for x in mis]):.3g}**，"
-      f"其中 `D<1` 占 **{sum(1 for x in mis if x['D_true_vs_chosen'] < 1)}/{len(mis)}**")
-    w("\n**BIC 第一名与第二名的可区分度**（同口径 `D`，看「选对了」是不是真有证据）：\n")
-    w("| 门槛 | 全谱占比 | 其中选对 | 选对率 |")
-    w("|---|---|---|---|")
-    for thr in (1.0, 4.0, 25.0):
-        g = [x for x in sep if x["D_best_vs_second"] > thr]
-        c = sum(1 for x in g if x["truth_selected"])
-        w(f"| `D>{thr:g}` | {len(g)}/{len(sep)} ({100*len(g)/len(sep):.1f}%) | {c}/{len(g) if g else 0} | "
-          f"{(100*c/len(g)) if g else 0:.1f}% |")
-    w("\n> `D` 由两侧**各自的最优拟合**算出：两个候选都能在噪声内解释数据时 `D≈0`。"
-      "所以「BIC 选对」不等于「数据支持这个拓扑」——多数选对发生在 `D≪1`，"
-      "即第一名与第二名在该噪声下不可区分。这是本轮最需要写进下一轮判据的事实。")
+    w(f"- 真族被选中 n={len(sel_d)}，真族 vs 最强对手 `D`："
+      f"中位 **{np.median(sel_d):.3g}**、p25/p75 "
+      f"{np.quantile(sel_d, 0.25):.3g}/{np.quantile(sel_d, 0.75):.3g}、"
+      f"`D>1` 占 **{sum(1 for v in sel_d if v > 1)}/{len(sel_d)}**")
+    if mis:
+        dc = [x["D_true_vs_chosen"] for x in mis]
+        w(f"- 误选 n={len(mis)}，真族 vs 被选候选 `D`：中位 **{np.median(dc):.3g}**、"
+          f"`D<1` 占 **{sum(1 for v in dc if v < 1)}/{len(dc)}**"
+          "（`D<1` 只是说「在这套 5% 参考噪声下两条预测曲线几乎重合」，"
+          "**不等于**这两个拓扑在数学上等价，也不等于数据不足）")
+        w(f"  - 误选目标分布：{dict(Counter(x['chosen'] for x in mis).most_common(4))}")
+    w("- 全部候选对里 `D<1` 的占比中位 "
+      f"**{100*np.median([x['frac_D_lt1'] for x in dab]):.1f}%**"
+      f"（每谱 {int(np.median([x['n_candidates'] for x in dab]))} 个收敛候选、"
+      f"{int(np.median([x['n_points'] for x in dab]))} 个频点）")
+    w("\n**已撤回的表述**：首版把 `D>1` 读成「存在可区分的赢家」并给出 31.5%，"
+      "这个读法没有校准、且分箱条件内生，不能保留。`D` 现在的定位只有两条："
+      "① 说明「两个候选的预测曲线在该参考噪声下差多少」；"
+      "② 把「选错的谱」拆成「两条预测几乎重合」与「两条预测差得很远」两类，供下一轮分层。")
+    w("\n> 下一轮要做的是**受控模拟**：在已知真值下扫 `D`、噪声、点数、参数自由度，"
+      "估 `P(正确选择 | D, n, 噪声, 复杂度)`，再谈有没有可用阈值。本轮不给阈值。")
     w("\n## 诚实边界\n")
     w("1. 零分布用**真族在本谱上的残差**做符号随机化，保留逐点幅度（含异方差与重尾），"
       "只打乱频率顺序结构；标定的是「无序号结构」的零，不是「模型错」的备择。")
     w("2. `obs>零分布 q95` 的比例**不是新判据**，不得读作 ①② 满足；新判据只能写进下一轮预注册。")
-    w("3. 各档 n 很小（heavy 16，窗内 12），比例为粗粒度；Wilson CI 已给，"
-      "32 条无法分辨 75% 与 72%。")
-    w("4. 设计标签是几何代理（交叉频率/可见度/灵敏度/线性退化），不是可辨识性证明；"
+    w(f"3. **有效独立样本是 {S['n_units']} 个真值配置**，不是 {S['n_unique']} 张唯一谱、"
+      f"更不是 {S['n']} 条记录。按谱的 Wilson 区间忽略了配置内相关，只能当描述性；"
+      "跨配置的推断看 clustered bootstrap，而它只有 8 个 cluster，区间必然宽。")
+    w("4. 设计标签是几何代理（交叉频率/可见度/灵敏度/幅度补偿失配），不是可辨识性证明；"
+      "`f0_char` 是「CPE 与串联电阻幅值交叉频率」，**不是整个嵌套网络的实际弛豫频率**。"
       "若标签预测不了失败，说明标签定义要改，不得反过来当结论。")
-    w("5. `D_ab` 用固定 5% 参考噪声，跨档可比，但不是该谱实际噪声；不作门禁。")
+    w("5. `D_ab` 用固定 5% 参考噪声、同一 60 点网格，只在本数据集内可比；"
+      "**未校准、不作门禁、不按它分箱算选对率**（分箱条件内生）。")
     w("6. 估计器敏感性（Gaussian LS vs Student-t 似然）**本轮未做**，需重拟合，另立一轮。")
-    w("7. 首版脚本把 CPE 约定写成 `1/(Qω^n)`，导致 `f0` 全部落在 1e-13 Hz、标签退化；"
-      "已按 `Z = Q/(iω)^n` 订正并重跑。修正记录见本节末尾。")
+    w("7. 检出边界是**本批样本 + 本估计器 + 本 ACF 定义**下的观测分界，"
+      "不能写成「低于此值原理上不可检出」；要功率曲线必须做受控幅度扫描。")
+    w("\n## 修订记录（第二版，审查后）\n")
+    w("| # | 修订 | 来源 |")
+    w("|---|---|---|")
+    w("| 1 | 新增 unit 层汇总 + clustered bootstrap；明确 24 张谱只来自 8 个配置 | 审查 P0-1 |")
+    w("| 2 | `D_ab` 降级为预测几何距离，撤回「31.5% 存在可区分赢家」；"
+      "说明分组条件内生、不按 D 分箱算选对率 | 审查 P0-2 |")
+    w("| 3 | 噪声底由 `pct·100`（5pp）改为 `√2·pct·100`（7.07pp），旧口径并列保留 | 审查 §二.1 |")
+    w("| 4 | 检出边界表述由「原理上看不见」改为「本批观测分界」 | 审查 §二.1 |")
+    w("| 5 | 规格文档 §1/§2/§4/§5/§6 与代码对齐（repro 覆盖 1503 对、分箱口径、"
+      "标签判定顺序、`MES80` 已废） | 审查 P0-3 |")
+    w("| 6 | 零分布经验 size 由 11.4% 更正为 **5/48 = 10.4%**；并补逐族异质性 | 审查 P0-4 |")
+    w("\n> 以上都不改本轮 ①②③④ 判定，也不改任何生产代码/阈值/先验。")
     return "\n".join(L) + "\n"
+
+
+def selftest():
+    """内置对拍：交叉频率 / 噪声底系数 / clustered bootstrap / acf 定义。"""
+    bad = 0
+
+    def chk(name, got, want, tol):
+        nonlocal bad
+        ok = abs(got - want) <= tol * max(abs(want), 1e-30)
+        print(f"[{'ok' if ok else 'FAIL'}] {name}: {got:.12g} vs {want:.12g}")
+        bad += 0 if ok else 1
+
+    # 1) f0_char 解析式 vs 数值求根：|Z_CPE(f0)| 应等于 R_L
+    f = np.logspace(-14, 12, 2600001)
+    for Q, n, R in ((3.9e-5, 0.75, 1e3), (1e-6, 0.90, 10.0), (1e-3, 0.60, 1e3)):
+        f0 = (Q / R) ** (1.0 / n) / (2 * math.pi)
+        chk(f"CPE 交叉频率 Q={Q:g} n={n} R={R:g}", float(np.abs(TR.z_cpe(f0, Q, n))), R, 1e-9)
+        z = np.abs(TR.z_cpe(f, Q, n))
+        in_grid = f[0] < f0 < f[-1]
+        i = int(np.argmin(np.abs(np.log(z) - math.log(R))))
+        rel = abs(math.log(f[i] / f0)) / math.log(f[1] / f[0])
+        print(f"    f0={f0:.4g} Hz 在网格内={in_grid}，数值根 f/f0={f[i]/f0:.9f}"
+              f"（网格步长 {math.log(f[1]/f[0]):.2e} dex ⇒ {rel:.2f} 格）")
+        bad += 0 if (in_grid and rel <= 1.0) else 1
+
+    # 2) 噪声底系数：sd=pct·|Z| 的两路独立噪声 ⇒ Rwp 的 RMS = √2·pct·100
+    rng = np.random.default_rng(20261113)
+    Z = 10 + 1j * np.linspace(-8, 8, 60)
+    pct = 0.05
+
+    def rwp_of(d):
+        return float(np.sqrt(np.mean(np.abs(d) ** 2 / np.abs(Z) ** 2)) * 100)
+
+    g = [rwp_of(rng.normal(size=Z.size) * pct * np.abs(Z)
+                + 1j * rng.normal(size=Z.size) * pct * np.abs(Z)) for _ in range(4000)]
+    chk("高斯噪声 Rwp 的 RMS（应 = √2·5%）", float(np.sqrt(np.mean(np.square(g)))),
+        math.sqrt(2) * pct * 100, 0.02)
+    h = [rwp_of(rng.standard_t(3, Z.size) / math.sqrt(3.0) * pct * np.abs(Z)
+                + 1j * rng.standard_t(3, Z.size) / math.sqrt(3.0) * pct * np.abs(Z))
+         for _ in range(4000)]
+    rms_h, med_h = float(np.sqrt(np.mean(np.square(h)))), float(np.median(h))
+    print(f"    重尾档：RMS={rms_h:.2f} 中位={med_h:.2f}（t(3) 下中位 < RMS 属正常，"
+          f"四阶矩发散使 RMS 波动大，故只作描述不作断言）")
+    bad += 0 if med_h < rms_h else 1
+
+    # 3) clustered bootstrap：全部 unit 命中 ⇒ 区间退化为 1
+    cb = cluster_bootstrap([(4, 4)] * 8, boot=200)
+    chk("cluster bootstrap 全命中", cb["lo"], 1.0, 1e-12)
+    chk("cluster bootstrap 全命中(上界)", cb["hi"], 1.0, 1e-12)
+
+    # 4) acf：交替符号序列应接近 1，随机符号应远小于 1
+    alt = np.array([1.0, -1.0] * 30)
+    rnd = np.random.default_rng(1).normal(size=2000)
+    a1 = acf_abs(alt)
+    a0 = acf_abs(rnd)
+    print(f"[{'ok' if (a1 > 0.9 and a0 < 0.2) else 'FAIL'}] acf 定义: 交替={a1:.3f} 随机={a0:.3f}")
+    bad += 0 if (a1 > 0.9 and a0 < 0.2) else 1
+
+    print(f"\n[selftest] 失败 {bad} 项")
+    return bad
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--boot", type=int, default=2000)
     ap.add_argument("--out", default=str(OUT))
+    ap.add_argument("--selftest", action="store_true", help="只跑内置对拍")
     args = ap.parse_args()
+    if args.selftest:
+        raise SystemExit(1 if selftest() else 0)
     outdir = Path(args.out)
     outdir.mkdir(parents=True, exist_ok=True)
 
@@ -546,19 +752,21 @@ def main():
     rec = json.loads((REC / "results.json").read_text(encoding="utf-8"))
     results = rec["results"]
 
-    # ---- repro 自检：存盘参数必须能重建残差指标
+    # ---- repro 自检：存盘参数必须能重建残差指标（覆盖全部谱 × 全部有参数的候选）
     bad = 0
+    n_pairs = 0
     for r in results:
         f, Z = data[r["id"]]
         for cname, c in r["candidates"].items():
             if not c.get("params"):
                 continue
+            n_pairs += 1
             d = TR.forward(cname, f, c["params"]) - Z
             ac = acf_abs(d)
             rwp = float(np.sqrt(np.mean(np.abs(d) ** 2 / np.abs(Z) ** 2)) * 100)
             if abs(ac - c["acf"]) > 1e-6 or abs(rwp - c["rwp_pct"]) > 1e-6:
                 bad += 1
-    print(f"[repro] 不一致 {bad} 条")
+    print(f"[repro] 覆盖 {len(results)} 谱 / {n_pairs} 个 (谱, 候选) 对，不一致 {bad} 条")
     if bad:
         raise SystemExit("残差无法从存盘参数精确重建，停止（不得用重建残差做零分布）")
 
@@ -570,7 +778,8 @@ def main():
 
     payload = jsonable(dict(
         generated_by="docs/round_2026-11-13/power_audit.py",
-        repro_mismatch=bad, boot=args.boot,
+        repro=dict(n_spectra=len(results), n_pairs=n_pairs, mismatch=bad),
+        boot=args.boot,
         a0_units=a0, a1_null=dict(summary=a1s, per_spectrum=per),
         a2_power=dict(rows=a2rows, bins=a2tab, boundary=boundary),
         a4_labels=labels, a4_dab=dab,
@@ -580,7 +789,7 @@ def main():
         json.dump(payload, fh, ensure_ascii=False, indent=1, allow_nan=False)
         fh.write("\n")
     with open(outdir / "summary.md", "w", encoding="utf-8", newline="\n") as fh:
-        fh.write(build_md(a0, a1s, a2tab, boundary, labels, dab))
+        fh.write(build_md(a0, a1s, a2tab, a2rows, boundary, labels, dab))
     print(f"[ok] -> {outdir/'summary.md'}")
 
 
