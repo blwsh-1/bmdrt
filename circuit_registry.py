@@ -129,7 +129,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
-REGISTRY_VERSION = "0.4.0"        # 0.4：执行身份 run_id + 重复判定三态（候选身份不变）
+REGISTRY_VERSION = "0.5.0"        # 0.5：数据内容哈希 + 确认重复要求 recorded 执行身份 + 执行态整块复算
 PRECHECK_VERSION = "0.1.0"
 
 PRECHECK_STATES = ("excluded", "not_excluded", "unknown")
@@ -186,13 +186,19 @@ RUN_ID_BASIS = ("candidate_id", "data", "seed", "seed_evidence",
 #: seed 的证据等级（按前缀判定，`:` 后可写具体位置）：产物记录 / 生成脚本代码路径 /
 #: 档名默认值 / 没有。`artifact` 以外的都推不出"同一次执行的同一随机流"。
 SEED_SOURCE_KINDS = ("artifact", "producer_code", "tier", "absent")
+#: 数据身份的等级。**文件名不是身份**：两个实验都可能叫 `spectrum.csv`，
+#: 频率窗也一样。`content_sha256` 是唯一能说"跑的是同一份数据"的凭据；
+#: `ref_only` 只能当阅读标签，不能据此宣称唯一，也不够格升到 `recorded`。
+DATA_ID_KINDS = ("content_sha256", "ref_only")
 #: `run_id` 不可发时的原因。**不许发一个看起来合法的 id**。
 RUN_ID_MISSING = ("seed_not_recorded", "budget_not_recorded", "data_not_recorded")
 #: 重复判定的三态。**`independent` 只是它的派生值**，不能反过来用摘要相同去推。
 #: - `distinct`：没有证据表明是重复（含"摘要撞车但来源不同"）；
 #: - `possible_duplicate`：摘要相同、但来源证据不足 ⇒ **不从独立样本数里扣除**；
-#: - `confirmed_duplicate`：来源证据足够（同产物，或同候选同 seed 同预算且 seed
-#:   由产物记录）⇒ 计数时必须合并。
+#: - `confirmed_duplicate`：来源证据足够——同产物，或同 `run_id` 且**两侧执行身份
+#:   都是 `recorded`**（seed 由产物记录 + 预算 `recorded` + 代码版本已知 + 数据有内容
+#:   哈希）⇒ 计数时必须合并。`derived` 的执行身份**不足以**确认重复：同 seed 同预算
+#:   同摘要仍可能出自不同版本的拟合代码。
 DUPLICATE_STATES = ("distinct", "possible_duplicate", "confirmed_duplicate")
 DUPLICATE_KINDS = ("same_artifact", "rerun_same_conditions")
 EVIDENCE_STATES = ("identified", "weak_preference", "non_identifiable",
@@ -1037,8 +1043,10 @@ def execution_identity(*, candidate_id: str, data=None, seed: int | None = None,
     所以 `data`（谱标识 + 拟合频率窗口）必须进身份。
 
     三档状态与 `IDENTITY_STATES` 同名同义，门槛写在代码里：
-    - `recorded`：seed 由产物记录 + 预算 `recorded` + 代码版本已知，三者齐；
-    - `derived`：至少一项靠代码路径/档名推出（本仓库当前绝大多数是这一档）；
+    - `recorded`：seed 由产物记录 + 预算 `recorded` + 代码版本已知 + 数据有内容哈希，
+      四者齐；
+    - `derived`：至少一项靠代码路径/档名推出，或数据只有文件名（本仓库当前绝大多数
+      是这一档）；
     - `unconfirmed`：数据/seed/预算缺 ⇒ **不发 `run_id`**（`None` + 原因），
       而不是拿默认值拼一个看起来合法的 id。
     """
@@ -1064,16 +1072,7 @@ def execution_identity(*, candidate_id: str, data=None, seed: int | None = None,
     bud = _check_budget_params(budget_params, candidate_id=candidate_id)
     soft = _check_software(software, candidate_id=candidate_id)
 
-    if dat is None:
-        status, reason = "unconfirmed", "data_not_recorded"
-    elif seed is None:
-        status, reason = "unconfirmed", "seed_not_recorded"
-    elif bud is None or bud.get("source") == "unavailable":
-        status, reason = "unconfirmed", "budget_not_recorded"
-    elif kind == "artifact" and bud["source"] == "recorded" and soft["code_version"]:
-        status, reason = "recorded", None
-    else:
-        status, reason = "derived", None
+    status, reason = _expected_status(dat, seed, kind, bud, soft)
 
     run_id = None
     if status != "unconfirmed":
@@ -1085,6 +1084,9 @@ def execution_identity(*, candidate_id: str, data=None, seed: int | None = None,
         "run_id_scope": RUN_ID_SCOPE,
         "run_id_basis": list(RUN_ID_BASIS),
         "data": dat,
+        # 数据身份是"内容"还是"文件名"必须单独留痕：`run_id` 哈希了它，但哈希之后
+        # 看不出来，而"能不能确认重复"（`duplicate_verdict`）恰好取决于这一点。
+        "data_id_kind": None if dat is None else dat["id_kind"],
         "seed": None if seed is None else int(seed),
         "seed_source": str(seed_source),
         # 预算的证据等级单独留一份：`run_id` 里哈希了它，但哈希之后看不出来，
@@ -1100,19 +1102,43 @@ def _check_data(v, *, candidate_id: str) -> dict | None:
     """这次执行**跑的是哪条谱、在哪个频率窗口**。缺了就不发执行身份。
 
     只认标识，不认数组：把 Z 本身塞进哈希会让 id 随浮点末位漂移。
+
+    `sha256` 是数据**内容**的哈希，`ref` 只是给人看的标签。两者的区别不是洁癖：
+
+    | 情形 | 身份 | 后果 |
+    |---|---|---|
+    | 有 `sha256` | `content_sha256` | 两条记录能证明"跑的是同一份数据" |
+    | 只有 `ref` | `ref_only` | 只能说"文件名一样"；**不够格升 `recorded`** |
+
+    历史产物引用的是 `R1-[P2,R3-[P4,R5-P6]]-[150.0, ...].csv` 这种文件名即真值的
+    谱，文件名本身信息量很高但仍然不是内容——同一个名字换一批生成参数就会变内容。
+    所以 `sha256` 一栏在 schema 里是**显式可选但会降级**，而不是可以静默省掉。
     """
     if v is None:
         return None
     if isinstance(v, str):
         if not v.strip():
             raise ValueError(f"候选 {candidate_id}：execution.data 不能是空串")
-        return {"ref": v.strip(), "f_min": None, "f_max": None}
+        return {"ref": v.strip(), "sha256": None, "f_min": None, "f_max": None,
+                "id_kind": "ref_only"}
     if not isinstance(v, Mapping):
-        raise ValueError("execution.data 必须是谱标识字符串或 {ref, f_min?, f_max?}")
+        raise ValueError(
+            "execution.data 必须是谱标识字符串或 {ref, sha256?, f_min?, f_max?}")
     ref = v.get("ref")
     if not isinstance(ref, str) or not ref.strip():
         raise ValueError(f"候选 {candidate_id}：execution.data.ref 必须是非空字符串")
-    out = {"ref": ref.strip(), "f_min": None, "f_max": None}
+    sha = v.get("sha256")
+    if sha is not None:
+        if not isinstance(sha, str):
+            raise ValueError(
+                f"候选 {candidate_id}：execution.data.sha256 必须是 64 位十六进制字符串")
+        sha = sha.strip().lower()
+        if len(sha) != 64 or any(c not in "0123456789abcdef" for c in sha):
+            raise ValueError(
+                f"候选 {candidate_id}：execution.data.sha256={sha!r} 不是 64 位十六进制。"
+                "别把文件名当哈希填进来——那会让两条不同数据拿到同一个身份")
+    out = {"ref": ref.strip(), "sha256": sha, "f_min": None, "f_max": None,
+           "id_kind": "content_sha256" if sha else "ref_only"}
     for k in ("f_min", "f_max"):
         if v.get(k) is None:
             continue
@@ -1123,11 +1149,35 @@ def _check_data(v, *, candidate_id: str) -> dict | None:
     return out
 
 
+def _expected_status(dat, seed, kind: str, bud, soft) -> tuple:
+    """给定证据要素，**应当**得到什么状态与原因。执行身份与校验共用这一处规则。
+
+    三档门槛（顺序即优先级，缺哪一项就报哪一项）：
+    `data` → `seed` → `budget` → 才是 `recorded` 的四个条件。
+    """
+    if dat is None:
+        return "unconfirmed", "data_not_recorded"
+    if seed is None:
+        return "unconfirmed", "seed_not_recorded"
+    if bud is None or bud.get("source") == "unavailable":
+        return "unconfirmed", "budget_not_recorded"
+    if (kind == "artifact" and bud.get("source") == "recorded"
+            and soft.get("code_version") and dat.get("id_kind") == "content_sha256"):
+        return "recorded", None
+    return "derived", None
+
+
 def _run_id_from(candidate_id: str, dat: Mapping, seed: int, seed_kind: str,
                  bud: Mapping, soft: Mapping, status: str) -> str:
+    # 数据只哈希**内容**（有 sha256 时），不哈希 `ref`：`ref` 可能是完整路径，
+    # 同一个实验换台机器就会换号。没有内容哈希时才退到 `ref`，并由 `id_kind`
+    # 记录这次降级——哈希之后看不出来的东西必须在 `data_id_kind` 里留痕。
+    did = dat.get("sha256") or dat.get("ref")
     payload = {
         "candidate_id": candidate_id,
-        "data": {k: _jsonable(v) for k, v in dat.items()},
+        "data": {"id_kind": dat.get("id_kind"), "id": did,
+                 "f_min": _jsonable(dat.get("f_min")),
+                 "f_max": _jsonable(dat.get("f_max"))},
         "seed": int(seed),
         "seed_evidence": seed_kind,
         # source 一起哈希：数值相同但证据不同（产物记录 vs 档名推导）**不能**
@@ -1167,70 +1217,107 @@ def _check_software(v, *, candidate_id: str) -> dict:
 
 
 def _check_execution(v, *, candidate_id: str, budget_params: Mapping | None):
-    """校验执行身份块，并**重算** `run_id` 与观测的 `budget_params` 对拍。
+    """校验执行身份块，并**整块重算**（状态、原因、`run_id`）与观测对拍。
 
-    三道硬约束，都是历史错误的直接对策：
+    四条硬约束，都是历史错误的直接对策：
     1. `run_id` 前缀必须与 `run_id_status` 一致（`R-`/`D-`/`None`），
        否则"推出来的执行条件"会被当成产物记录读；
-    2. 重算：用观测里的 `budget_params` 重新哈希，必须等于给定的 `run_id`。
+    2. **状态也要重算**，不能只信 `run_id_status` 里的字符串。0.4.0 只重算
+       `run_id`、对 `unconfirmed` 分支只查了"原因在枚举里"，于是
+       "seed、数据、预算都齐却自称缺 seed" 能通过——这正是审计 D6 那条；
+    3. 重算：用观测里的 `budget_params` 重新哈希，必须等于给定的 `run_id`。
        这样预算数值事后被改动、或 run_id 从别处抄来，都会被当场抓住；
-    3. 未发 `run_id` 时必须写原因（`RUN_ID_MISSING`），不许留空。
+    4. 未发 `run_id` 时必须写原因，且原因要**指向真正缺的那一项**
+       （`data` → `seed` → `budget` 的优先序）。
     """
     if v is None:
         return {"run_id": None, "run_id_status": "unconfirmed",
                 "run_id_scope": RUN_ID_SCOPE, "run_id_basis": list(RUN_ID_BASIS),
-                "data": None, "seed": None, "seed_source": "absent",
+                "data": None, "data_id_kind": None,
+                "seed": None, "seed_source": "absent",
+                "budget_source": None,
                 "software": {"producer": None, "code_version": None,
                              "registry_version": REGISTRY_VERSION},
                 "unavailable_reason": "not_computed", "notes": []}
     if not isinstance(v, Mapping):
         raise ValueError("observation.execution 必须是 execution_identity() 的返回值")
     for k in ("run_id_status", "seed_source", "run_id_basis", "seed",
-              "software", "data"):
+              "software", "data", "data_id_kind"):
         if k not in v:
             raise ValueError(f"execution 缺字段 {k!r}；请用 execution_identity() 构造")
     status = v["run_id_status"]
     if status not in IDENTITY_STATES:
         raise ValueError(f"execution.run_id_status={status!r} 不在 {IDENTITY_STATES}")
+    if list(v.get("run_id_basis") or []) != list(RUN_ID_BASIS):
+        raise ValueError(
+            f"候选 {candidate_id}：run_id_basis={v.get('run_id_basis')!r} 与 "
+            f"{list(RUN_ID_BASIS)} 不一致——换了哈希口径却没换 id")
+
     rid = v.get("run_id")
+    reason = v.get("unavailable_reason")
+    seed = v.get("seed")
+    if seed is not None and (isinstance(seed, bool) or not isinstance(seed, int)):
+        raise ValueError(f"候选 {candidate_id}：execution.seed 必须是整数，收到 {seed!r}")
+    dat = _check_data(v.get("data"), candidate_id=candidate_id)
+    if v.get("data_id_kind") != (None if dat is None else dat["id_kind"]):
+        raise ValueError(
+            f"候选 {candidate_id}：data_id_kind={v.get('data_id_kind')!r} 与 "
+            f"实际数据 {None if dat is None else dat['id_kind']!r} 不符")
+    kind = _seed_kind(v.get("seed_source"))
+    soft = _check_software(v.get("software"), candidate_id=candidate_id)
+    bud = None if budget_params is None else _check_budget_params(
+        budget_params, candidate_id=candidate_id)
+    if bud is None and status != "unconfirmed":
+        raise ValueError(
+            f"候选 {candidate_id}：给了 run_id 却没给 budget_params，"
+            "无法复核这个号是怎么算出来的")
+
+    # --- 状态与原因整块复算 ---
+    exp_status, exp_reason = _expected_status(dat, seed, kind, bud, soft)
+    if exp_status != status:
+        raise ValueError(
+            f"候选 {candidate_id}：run_id_status={status!r} 与要素不符（应为 "
+            f"{exp_status!r}）。有数据/seed/预算却标 unconfirmed，或反之，"
+            "都会让'能不能扣掉一条重复'判错")
+    if exp_reason != reason:
+        raise ValueError(
+            f"候选 {candidate_id}：unavailable_reason={reason!r} 与真正缺的要素不符"
+            f"（应为 {exp_reason!r}）")
+
     want = {"recorded": "R-", "derived": "D-"}.get(status)
     if want is None:
         if rid is not None:
             raise ValueError(
                 f"候选 {candidate_id}：run_id_status=unconfirmed 时不许有 run_id（收到 {rid!r}）")
-        if v.get("unavailable_reason") not in RUN_ID_MISSING:
-            raise ValueError(
-                f"候选 {candidate_id}：未发 run_id 必须写原因，取 {RUN_ID_MISSING}")
     else:
         if not isinstance(rid, str) or not rid.startswith(want) or len(rid) != len(want) + 10:
             raise ValueError(
                 f"候选 {candidate_id}：run_id={rid!r} 与状态 {status!r} 不符（应为 {want}+10 位）")
-        if v.get("unavailable_reason") is not None:
-            raise ValueError(f"候选 {candidate_id}：已发 run_id 却被标成不可用")
-        if budget_params is None:
-            raise ValueError(
-                f"候选 {candidate_id}：给了 run_id 却没给 budget_params，"
-                "无法复核这个号是怎么算出来的")
-        seed = v.get("seed")
-        if isinstance(seed, bool) or not isinstance(seed, int):
-            raise ValueError(f"候选 {candidate_id}：execution.seed 必须是整数，收到 {seed!r}")
-        soft = _check_software(v.get("software"), candidate_id=candidate_id)
-        bud = _check_budget_params(budget_params, candidate_id=candidate_id)
         if v.get("budget_source") not in (None, bud["source"]):
             raise ValueError(
                 f"候选 {candidate_id}：execution.budget_source={v.get('budget_source')!r} "
                 f"与观测预算来源 {bud['source']!r} 不一致")
-        expect = _run_id_from(candidate_id, _check_data(v.get("data"), candidate_id=candidate_id),
-                              seed, _seed_kind(v.get("seed_source")), bud, soft, status)
+        expect = _run_id_from(candidate_id, dat, seed, kind, bud, soft, status)
         if rid != expect:
             raise ValueError(
                 f"候选 {candidate_id}：run_id={rid!r} 与观测预算重算结果 {expect!r} 不符。"
                 "执行身份与观测不是同一组条件——这正是「同档名不同数值」要挡住的情形")
-    if list(v.get("run_id_basis") or []) != list(RUN_ID_BASIS):
-        raise ValueError(
-            f"候选 {candidate_id}：run_id_basis={v.get('run_id_basis')!r} 与 "
-            f"{list(RUN_ID_BASIS)} 不一致——换了哈希口径却没换 id")
     return dict(v)
+
+
+def _conditions_recorded(e: Mapping) -> bool:
+    """这条执行身份是否**整体**达到 `recorded`。判重时只认这一种。
+
+    逐项而不是只看 `run_id_status`：状态是别人写进来的字符串，逐项判定才能
+    在字段被改、状态没跟着改时发现。四项与 `_expected_status` 的 `recorded`
+    门槛一一对应，改一处必须改另一处（`registry_digest` 覆盖这条口径）。
+    """
+    soft = e.get("software") or {}
+    return (e.get("run_id_status") == "recorded"
+            and str(e.get("seed_source", "")).split(":", 1)[0] == "artifact"
+            and e.get("budget_source") == "recorded"
+            and bool(soft.get("code_version"))
+            and e.get("data_id_kind") == "content_sha256")
 
 
 def duplicate_verdict(a: Mapping, b: Mapping, *, summary_equal: bool) -> dict:
@@ -1246,8 +1333,8 @@ def duplicate_verdict(a: Mapping, b: Mapping, *, summary_equal: bool) -> dict:
     |---|---|---|
     | 候选定义不同 | `distinct` | 算 |
     | 同一产物（path+sha 相同） | `confirmed_duplicate` / `same_artifact` | 不算 |
-    | 同 `run_id` + 摘要相同 + seed 与预算均为产物记录 | `confirmed_duplicate` / `rerun_same_conditions` | 不算 |
-    | 同 `run_id` + 摘要相同 + 证据不足 | `possible_duplicate` | **算**（只标记） |
+    | 同 `run_id` + 摘要相同 + 两侧执行身份均 `recorded` | `confirmed_duplicate` / `rerun_same_conditions` | 不算 |
+    | 同 `run_id` + 摘要相同 + 执行身份未达 `recorded` | `possible_duplicate` | **算**（只标记） |
     | 同 `run_id` + 摘要不同 | `distinct` + `contradiction` | 算（这是可复现性问题） |
     | `run_id` 不同/缺失 + 摘要相同 | `possible_duplicate` | **算**（只标记） |
 
@@ -1272,17 +1359,23 @@ def duplicate_verdict(a: Mapping, b: Mapping, *, summary_equal: bool) -> dict:
     loc = ("path", "sha256", "row", "section")
     same_art = (sa.get("path") is not None
                 and all(sa.get(k) == sb.get(k) for k in loc))
-    # "同条件被产物记录"= seed 来自产物 **且** 预算数值来自产物。缺一项就只能到 possible。
-    observed = all(e.get("seed_source", "").split(":", 1)[0] == "artifact"
-                   and e.get("budget_source") == "recorded"
-                   for e in (ea, eb))
+    # "同条件被产物记录"必须按 `recorded` 的定义整体判，而不是挑两项自查：
+    # seed 来自产物 + 预算 `recorded` + **代码版本已知** + **数据有内容哈希**。
+    # 0.4.0 只查了前两项，于是本批 239 条全是 `D-` 的情况下仍把两对判成
+    # confirmed——同 seed 同预算同摘要仍可能出自不同版本的拟合代码（审计 D1）。
+    observed = all(_conditions_recorded(e) for e in (ea, eb))
 
     ev = {
         "candidate_id_equal": same_cand,
         "run_id": [ra, rb],
         "run_id_equal": same_run,
+        "run_id_status": [ea.get("run_id_status"), eb.get("run_id_status")],
         "seed": [ea.get("seed"), eb.get("seed")],
         "seed_source": [ea.get("seed_source"), eb.get("seed_source")],
+        "budget_source": [ea.get("budget_source"), eb.get("budget_source")],
+        "code_version": [(ea.get("software") or {}).get("code_version"),
+                         (eb.get("software") or {}).get("code_version")],
+        "data_id_kind": [ea.get("data_id_kind"), eb.get("data_id_kind")],
         "conditions_observed": bool(observed),
         "artifact_equal": bool(same_art),
         "summary_equal": bool(summary_equal),
@@ -1303,11 +1396,11 @@ def duplicate_verdict(a: Mapping, b: Mapping, *, summary_equal: bool) -> dict:
                             "不能靠合并记录把它消掉")
         if observed:
             return _verdict("confirmed_duplicate", "rerun_same_conditions", ev,
-                            "同候选、同 seed、同预算数值，且 seed 与预算都由产物记录；"
-                            "指标逐位相同 ⇒ 同条件的重复执行，无新信息")
+                            "同候选、同 seed、同预算数值、同代码版本、同数据内容，"
+                            "四项都由产物记录；指标逐位相同 ⇒ 同条件的重复执行，无新信息")
         return _verdict("possible_duplicate", None, ev,
-                        "执行条件指纹相同且指标逐位相同，但 seed/预算不是产物记录"
-                        "（由代码或档名推出）⇒ 不足以扣除")
+                        "执行条件指纹相同且指标逐位相同，但执行身份未达 recorded"
+                        "（seed/预算/代码版本/数据内容至少一项不是产物记录）⇒ 不足以扣除")
     if summary_equal:
         return _verdict("possible_duplicate", None, ev,
                         "指标摘要相同，但执行身份不同或不可判；来源不同即可能巧合")
@@ -1670,6 +1763,9 @@ def registry_digest() -> str:
             "run_id_basis": list(RUN_ID_BASIS),
             "run_id_missing": list(RUN_ID_MISSING),
             "seed_source_kinds": list(SEED_SOURCE_KINDS),
+            # 0.5.0：数据身份等级 + 判重门槛（recorded 才确认）也进指纹。
+            "data_id_kinds": list(DATA_ID_KINDS),
+            "confirm_duplicate_requires_recorded": True,
             "duplicate_states": list(DUPLICATE_STATES),
             "duplicate_kinds": list(DUPLICATE_KINDS),
         },
