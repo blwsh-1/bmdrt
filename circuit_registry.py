@@ -92,6 +92,28 @@ nested 名下。所以 0.3.0 规定：
 其中 `budget_params`（实际数值）与 `budget_profile`（档名）必须分开：
 同一档名下 `target_accept` 可以是 0.98 也可以是 0.9。
 
+两层身份：模型 vs 执行（0.4.0）
+--------------------------------
+`candidate_id` 哈希的 `budget` 是**档名**，所以"两次都叫 `standard`、`target_accept`
+一个 0.98 一个 0.90"能拿到同一个 `candidate_id`。把它们塞进 `candidate_id` 又会犯
+反向的错：同一个模型换算力再跑一次，会被读成两个不同电路。因此：
+
+| 层 | 号 | 含义 |
+|---|---|---|
+| 模型 | `candidate_id`（`C-`/`U-`） | 结构 + 元件 + 配置 + 初始化 + 似然 + 预算**档名** |
+| 执行 | `run_id`（`R-`/`D-`/无） | 候选 + **数据** + seed + **实际预算数值** + 软件 |
+
+`run_id` 是**条件指纹**，不是墙钟实例号：同条件重复执行共享同一个号
+（这正是它能当去重键的原因），实例由产物路径区分。缺数据/seed/预算就不发号。
+
+独立观测为什么也单列（0.4.0）
+------------------------------
+摘要相同**不能**证明两条记录来自同一次运行。0.3.0 的映射脚本用
+`candidate_id + 残差 + 参数` 的哈希相同就直接标 `independent=false`，
+而函数里既没读 seed 也没读产物路径。`duplicate_verdict()` 改成按来源判三态：
+`distinct` / `possible_duplicate`（标记但**不扣**）/ `confirmed_duplicate`；
+"同条件但结果不同"记为 `distinct` + `contradiction`，是**可复现性问题**，不靠合并记录消掉。
+
 边界
 ----
 - 拓扑只登记 `voigt` / `nested` 两个；Warburg 与吸附登记为**未接线元件**
@@ -107,7 +129,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
-REGISTRY_VERSION = "0.3.0"        # 0.3：身份等级 + param_estimate/ratio/noise_floor/predictive/budget_params
+REGISTRY_VERSION = "0.4.0"        # 0.4：执行身份 run_id + 重复判定三态（候选身份不变）
 PRECHECK_VERSION = "0.1.0"
 
 PRECHECK_STATES = ("excluded", "not_excluded", "unknown")
@@ -143,6 +165,36 @@ NOISE_FLOOR_SOURCES = ("truth_forward", "same_data_estimate", "not_available")
 BUDGET_PARAM_KEYS = ("n_warmup", "n_samples", "num_chains",
                      "target_accept", "max_tree_depth")
 BUDGET_PARAM_SOURCES = ("recorded", "derived_from_tier", "unavailable")
+#: 执行身份（0.4.0）。**`candidate_id` 与 `run_id` 是两层，不是一回事**：
+#:
+#: - `candidate_id` 指"哪个电路模型 + 哪套初始化/似然/预算**档名**"——
+#:   同档名两次跑（`standard` 但 `target_accept` 0.98 vs 0.90）**必须**共享它，
+#:   否则"同一个候选换算力再跑一次"会被读成两个不同模型；
+#: - `run_id` 指"在什么**执行条件**下跑的"——候选 + seed + 实际预算数值 + 软件。
+#:   两者混用会犯两个方向相反的错（见 `docs/round_2026-11-13/STAGE0_RECORDS_MAP.md` §5）。
+#:
+#: `run_id` 是**条件指纹**，不是墙钟实例号：同条件重复执行共享同一个 `run_id`，
+#: 实例由 `source.path/sha256` 区分。这正是它能当去重键的原因。
+RUN_ID_SCOPE = "execution_conditions"
+#: 进 `run_id` 哈希的字段。改这里必须改 `REGISTRY_VERSION`。
+#: - `data` 不能省：同一候选、同 seed、同预算下跑 60 条不同谱，若数据不进身份，
+#:   这 60 条会共享一个 `run_id`，去重时被读成"同条件不同结果"（假的可复现性告警）。
+#: - `seed_evidence` 单独一项而不是并进 `seed`：数值相同、一个是产物记录一个是
+#:   代码默认值，可信度不同，不能拿到同一个号。
+RUN_ID_BASIS = ("candidate_id", "data", "seed", "seed_evidence",
+                "budget_params", "software")
+#: seed 的证据等级（按前缀判定，`:` 后可写具体位置）：产物记录 / 生成脚本代码路径 /
+#: 档名默认值 / 没有。`artifact` 以外的都推不出"同一次执行的同一随机流"。
+SEED_SOURCE_KINDS = ("artifact", "producer_code", "tier", "absent")
+#: `run_id` 不可发时的原因。**不许发一个看起来合法的 id**。
+RUN_ID_MISSING = ("seed_not_recorded", "budget_not_recorded", "data_not_recorded")
+#: 重复判定的三态。**`independent` 只是它的派生值**，不能反过来用摘要相同去推。
+#: - `distinct`：没有证据表明是重复（含"摘要撞车但来源不同"）；
+#: - `possible_duplicate`：摘要相同、但来源证据不足 ⇒ **不从独立样本数里扣除**；
+#: - `confirmed_duplicate`：来源证据足够（同产物，或同候选同 seed 同预算且 seed
+#:   由产物记录）⇒ 计数时必须合并。
+DUPLICATE_STATES = ("distinct", "possible_duplicate", "confirmed_duplicate")
+DUPLICATE_KINDS = ("same_artifact", "rerun_same_conditions")
 EVIDENCE_STATES = ("identified", "weak_preference", "non_identifiable",
                    "model_inadequate", "insufficient_evidence")
 PRECHECK_LEVELS = ("L0", "L1", "L2")
@@ -618,6 +670,7 @@ def observation_block(*, candidate_id: str, run_status: str,
                       noise_floor: Mapping | None = None,
                       predictive: Mapping | None = None,
                       budget_params: Mapping | None = None,
+                      execution: Mapping | None = None,
                       truth_known: bool = False,
                       interpretation: str | None = None,
                       unavailable: Mapping | None = None,
@@ -679,8 +732,14 @@ def observation_block(*, candidate_id: str, run_status: str,
     `elpd_loo` 不是 `p(Z_j|Z_{-j})`，这个事实必须跟着数字走。
 
     `budget_params`：实际数值 + `source`。`"recorded"` 要求五个核心参数齐全；
-    `"derived_from_tier"` 表示产物只记档名、数值由代码推出（可复现性弱一档）；
-    `"unavailable"` 要写 `reason`。
+    `"derived_from_tier"` 表示产物只记档名、数值由代码推出（可复现性弱一档），
+    这种情形必须带 `tier`（档名），否则数值无从复核；`"unavailable"` 要写 `reason`。
+
+    `execution`：`execution_identity()` 的返回值——**执行条件**身份（候选 + seed +
+    实际预算 + 软件），与 `candidate_id`（模型定义）是两层。给了 `run_id` 就必须
+    同时给 `budget_params`，函数会**重算**并比对；不给则记
+    `{"run_id": None, "run_id_status": "unconfirmed", "unavailable_reason": "not_computed"}`，
+    不伪造身份。
     """
     if not isinstance(candidate_id, str) or not candidate_id:
         raise ValueError("observation.candidate_id 必须是非空字符串")
@@ -764,6 +823,7 @@ def observation_block(*, candidate_id: str, run_status: str,
     rat = _check_ratio(ratio, floor, candidate_id=candidate_id)
     pred = _check_predictive(predictive, candidate_id=candidate_id)
     bud = _check_budget_params(budget_params, candidate_id=candidate_id)
+    exe = _check_execution(execution, candidate_id=candidate_id, budget_params=budget_params)
 
     return {
         "candidate_id": candidate_id,
@@ -786,6 +846,7 @@ def observation_block(*, candidate_id: str, run_status: str,
         "noise_floor": floor,
         "predictive": pred,
         "budget_params": bud,
+        "execution": exe,
         "notes": list(notes),
     }
 
@@ -945,7 +1006,328 @@ def _check_budget_params(v, *, candidate_id: str):
             raise ValueError(
                 f"候选 {candidate_id}：source=recorded 时预算参数必须齐全，缺 {missing}。"
                 "只记档名请用 derived_from_tier")
+    if src == "derived_from_tier":
+        # 档名是数值的**推导依据**，不写就等于数值无从复核。只保留字符串，不做换算。
+        tier = v.get("tier")
+        if tier is not None:
+            if not isinstance(tier, str) or not tier.strip():
+                raise ValueError(
+                    f"候选 {candidate_id}：budget_params.tier 必须是非空字符串（档名）")
+            out["tier"] = tier.strip()
     return out
+
+
+def execution_identity(*, candidate_id: str, data=None, seed: int | None = None,
+                       seed_source: str = "absent",
+                       budget_params: Mapping | None = None,
+                       software: Mapping | None = None,
+                       notes: tuple = ()) -> dict:
+    """**执行身份**：候选 + 数据 + seed + 实际预算数值 + 软件。
+
+    为什么不能只扩 `candidate_id`（0.3.0 的缺口）
+    --------------------------------------------
+    `candidate_id` 哈希的是 `budget_profile`（档名 `"standard"`），不是
+    `target_accept=0.98` 这类实际数值。同一次历史对照里，
+    `VALIDATION_STANDARD` 的 `standard` 是 0.98，`BUDGETS["standard"]` 是 0.90——
+    两个 `standard` 能拿到同一个 `candidate_id`。把它们塞进 `candidate_id` 又会
+    犯反向的错：同一个模型换算力再跑一次，会被读成两个不同电路。
+
+    所以：**`candidate_id` 不动**（模型定义层），执行条件单独一层。
+    反过来，执行层也不能只看模型：同一候选在同一预算下跑不同谱，是 N 次不同执行，
+    所以 `data`（谱标识 + 拟合频率窗口）必须进身份。
+
+    三档状态与 `IDENTITY_STATES` 同名同义，门槛写在代码里：
+    - `recorded`：seed 由产物记录 + 预算 `recorded` + 代码版本已知，三者齐；
+    - `derived`：至少一项靠代码路径/档名推出（本仓库当前绝大多数是这一档）；
+    - `unconfirmed`：数据/seed/预算缺 ⇒ **不发 `run_id`**（`None` + 原因），
+      而不是拿默认值拼一个看起来合法的 id。
+    """
+    if not isinstance(candidate_id, str) or not candidate_id:
+        raise ValueError("execution.candidate_id 必须是非空字符串")
+    if candidate_id.startswith("U-"):
+        raise ValueError(
+            f"候选 {candidate_id} 的身份未确认（U- 前缀），它的执行身份不能高于候选身份。"
+            "先把 init_profile 查清（recorded/derived），再来发 run_id。")
+
+    if seed is not None:
+        if isinstance(seed, bool) or not isinstance(seed, int):
+            raise ValueError(f"execution.seed 必须是整数，收到 {seed!r}")
+    kind = _seed_kind(seed_source)
+    if seed is None and kind != "absent":
+        raise ValueError(
+            f"seed=None 时 seed_source 必须是 'absent'，收到 {seed_source!r}："
+            "没有 seed 就没有随机流信息，不能声称它来自某处")
+    if seed is not None and kind == "absent":
+        raise ValueError(f"给了 seed={seed} 却把来源标成 absent，二者矛盾")
+
+    dat = _check_data(data, candidate_id=candidate_id)
+    bud = _check_budget_params(budget_params, candidate_id=candidate_id)
+    soft = _check_software(software, candidate_id=candidate_id)
+
+    if dat is None:
+        status, reason = "unconfirmed", "data_not_recorded"
+    elif seed is None:
+        status, reason = "unconfirmed", "seed_not_recorded"
+    elif bud is None or bud.get("source") == "unavailable":
+        status, reason = "unconfirmed", "budget_not_recorded"
+    elif kind == "artifact" and bud["source"] == "recorded" and soft["code_version"]:
+        status, reason = "recorded", None
+    else:
+        status, reason = "derived", None
+
+    run_id = None
+    if status != "unconfirmed":
+        run_id = _run_id_from(candidate_id, dat, int(seed), kind, bud, soft, status)
+
+    return {
+        "run_id": run_id,
+        "run_id_status": status,
+        "run_id_scope": RUN_ID_SCOPE,
+        "run_id_basis": list(RUN_ID_BASIS),
+        "data": dat,
+        "seed": None if seed is None else int(seed),
+        "seed_source": str(seed_source),
+        # 预算的证据等级单独留一份：`run_id` 里哈希了它，但哈希之后看不出来，
+        # 而"能不能扣掉一条重复"恰好取决于这一点（`duplicate_verdict` 要用）。
+        "budget_source": None if bud is None else bud["source"],
+        "software": soft,
+        "unavailable_reason": reason,
+        "notes": list(notes),
+    }
+
+
+def _check_data(v, *, candidate_id: str) -> dict | None:
+    """这次执行**跑的是哪条谱、在哪个频率窗口**。缺了就不发执行身份。
+
+    只认标识，不认数组：把 Z 本身塞进哈希会让 id 随浮点末位漂移。
+    """
+    if v is None:
+        return None
+    if isinstance(v, str):
+        if not v.strip():
+            raise ValueError(f"候选 {candidate_id}：execution.data 不能是空串")
+        return {"ref": v.strip(), "f_min": None, "f_max": None}
+    if not isinstance(v, Mapping):
+        raise ValueError("execution.data 必须是谱标识字符串或 {ref, f_min?, f_max?}")
+    ref = v.get("ref")
+    if not isinstance(ref, str) or not ref.strip():
+        raise ValueError(f"候选 {candidate_id}：execution.data.ref 必须是非空字符串")
+    out = {"ref": ref.strip(), "f_min": None, "f_max": None}
+    for k in ("f_min", "f_max"):
+        if v.get(k) is None:
+            continue
+        val = v[k]
+        if isinstance(val, bool) or not isinstance(val, (int, float)):
+            raise ValueError(f"候选 {candidate_id}：execution.data[{k!r}] 不是数值")
+        out[k] = float(val)
+    return out
+
+
+def _run_id_from(candidate_id: str, dat: Mapping, seed: int, seed_kind: str,
+                 bud: Mapping, soft: Mapping, status: str) -> str:
+    payload = {
+        "candidate_id": candidate_id,
+        "data": {k: _jsonable(v) for k, v in dat.items()},
+        "seed": int(seed),
+        "seed_evidence": seed_kind,
+        # source 一起哈希：数值相同但证据不同（产物记录 vs 档名推导）**不能**
+        # 拿到同一个号，否则推出来的条件和观测到的条件会被混成同一个身份。
+        "budget_params": {k: _jsonable(v) for k, v in bud.items()},
+        "software": {k: _jsonable(v) for k, v in soft.items()},
+    }
+    blob = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    return ("R-" if status == "recorded" else "D-") + hashlib.sha256(blob).hexdigest()[:10]
+
+
+def _seed_kind(seed_source: str) -> str:
+    if not isinstance(seed_source, str) or not seed_source.strip():
+        raise ValueError("seed_source 必须是非空字符串（如 'artifact:config.seed'）")
+    kind = seed_source.split(":", 1)[0].strip()
+    if kind not in SEED_SOURCE_KINDS:
+        raise ValueError(
+            f"seed_source={seed_source!r} 的类别 {kind!r} 不在 {SEED_SOURCE_KINDS}；"
+            "必须能看出 seed 是产物写的、代码推的、还是档名默认的")
+    return kind
+
+
+def _check_software(v, *, candidate_id: str) -> dict:
+    """代码/软件版本。**未知就写 None，不要拿注册表版本冒充拟合器版本**——
+    后者是映射工具的版本，和被拟合那次运行的代码不是一回事。"""
+    if v is None:
+        return {"producer": None, "code_version": None,
+                "registry_version": REGISTRY_VERSION}
+    if not isinstance(v, Mapping):
+        raise ValueError("execution.software 必须是 {producer, code_version, ...} 的映射")
+    code = v.get("code_version")
+    if code is not None and (not isinstance(code, str) or not code.strip()):
+        raise ValueError(f"候选 {candidate_id}：software.code_version 必须是非空字符串或 None")
+    return {"producer": None if v.get("producer") is None else str(v["producer"]),
+            "code_version": None if code is None else code.strip(),
+            "registry_version": REGISTRY_VERSION}
+
+
+def _check_execution(v, *, candidate_id: str, budget_params: Mapping | None):
+    """校验执行身份块，并**重算** `run_id` 与观测的 `budget_params` 对拍。
+
+    三道硬约束，都是历史错误的直接对策：
+    1. `run_id` 前缀必须与 `run_id_status` 一致（`R-`/`D-`/`None`），
+       否则"推出来的执行条件"会被当成产物记录读；
+    2. 重算：用观测里的 `budget_params` 重新哈希，必须等于给定的 `run_id`。
+       这样预算数值事后被改动、或 run_id 从别处抄来，都会被当场抓住；
+    3. 未发 `run_id` 时必须写原因（`RUN_ID_MISSING`），不许留空。
+    """
+    if v is None:
+        return {"run_id": None, "run_id_status": "unconfirmed",
+                "run_id_scope": RUN_ID_SCOPE, "run_id_basis": list(RUN_ID_BASIS),
+                "data": None, "seed": None, "seed_source": "absent",
+                "software": {"producer": None, "code_version": None,
+                             "registry_version": REGISTRY_VERSION},
+                "unavailable_reason": "not_computed", "notes": []}
+    if not isinstance(v, Mapping):
+        raise ValueError("observation.execution 必须是 execution_identity() 的返回值")
+    for k in ("run_id_status", "seed_source", "run_id_basis", "seed",
+              "software", "data"):
+        if k not in v:
+            raise ValueError(f"execution 缺字段 {k!r}；请用 execution_identity() 构造")
+    status = v["run_id_status"]
+    if status not in IDENTITY_STATES:
+        raise ValueError(f"execution.run_id_status={status!r} 不在 {IDENTITY_STATES}")
+    rid = v.get("run_id")
+    want = {"recorded": "R-", "derived": "D-"}.get(status)
+    if want is None:
+        if rid is not None:
+            raise ValueError(
+                f"候选 {candidate_id}：run_id_status=unconfirmed 时不许有 run_id（收到 {rid!r}）")
+        if v.get("unavailable_reason") not in RUN_ID_MISSING:
+            raise ValueError(
+                f"候选 {candidate_id}：未发 run_id 必须写原因，取 {RUN_ID_MISSING}")
+    else:
+        if not isinstance(rid, str) or not rid.startswith(want) or len(rid) != len(want) + 10:
+            raise ValueError(
+                f"候选 {candidate_id}：run_id={rid!r} 与状态 {status!r} 不符（应为 {want}+10 位）")
+        if v.get("unavailable_reason") is not None:
+            raise ValueError(f"候选 {candidate_id}：已发 run_id 却被标成不可用")
+        if budget_params is None:
+            raise ValueError(
+                f"候选 {candidate_id}：给了 run_id 却没给 budget_params，"
+                "无法复核这个号是怎么算出来的")
+        seed = v.get("seed")
+        if isinstance(seed, bool) or not isinstance(seed, int):
+            raise ValueError(f"候选 {candidate_id}：execution.seed 必须是整数，收到 {seed!r}")
+        soft = _check_software(v.get("software"), candidate_id=candidate_id)
+        bud = _check_budget_params(budget_params, candidate_id=candidate_id)
+        if v.get("budget_source") not in (None, bud["source"]):
+            raise ValueError(
+                f"候选 {candidate_id}：execution.budget_source={v.get('budget_source')!r} "
+                f"与观测预算来源 {bud['source']!r} 不一致")
+        expect = _run_id_from(candidate_id, _check_data(v.get("data"), candidate_id=candidate_id),
+                              seed, _seed_kind(v.get("seed_source")), bud, soft, status)
+        if rid != expect:
+            raise ValueError(
+                f"候选 {candidate_id}：run_id={rid!r} 与观测预算重算结果 {expect!r} 不符。"
+                "执行身份与观测不是同一组条件——这正是「同档名不同数值」要挡住的情形")
+    if list(v.get("run_id_basis") or []) != list(RUN_ID_BASIS):
+        raise ValueError(
+            f"候选 {candidate_id}：run_id_basis={v.get('run_id_basis')!r} 与 "
+            f"{list(RUN_ID_BASIS)} 不一致——换了哈希口径却没换 id")
+    return dict(v)
+
+
+def duplicate_verdict(a: Mapping, b: Mapping, *, summary_equal: bool) -> dict:
+    """两条记录是否算**两次独立观测**。只看来源，不看指标摘要。
+
+    0.3.0 的错：用"摘要哈希相同"直接推出 `independent=false`。摘要相同只能
+    证明这几个字段相同，不能证明它们来自同一次（甚至同一个）运行——同种子重跑
+    会逐位相同，不同种子也可能在四舍五入后相同。
+
+    因此本函数的输入是**来源证据**，`summary_equal` 只是其中一个输入事实：
+
+    | 情形 | 判定 | 独立计数 |
+    |---|---|---|
+    | 候选定义不同 | `distinct` | 算 |
+    | 同一产物（path+sha 相同） | `confirmed_duplicate` / `same_artifact` | 不算 |
+    | 同 `run_id` + 摘要相同 + seed 与预算均为产物记录 | `confirmed_duplicate` / `rerun_same_conditions` | 不算 |
+    | 同 `run_id` + 摘要相同 + 证据不足 | `possible_duplicate` | **算**（只标记） |
+    | 同 `run_id` + 摘要不同 | `distinct` + `contradiction` | 算（这是可复现性问题） |
+    | `run_id` 不同/缺失 + 摘要相同 | `possible_duplicate` | **算**（只标记） |
+
+    最后一行是关键：来源不同的两份摘要相同的记录，可能是两个不同实验的巧合，
+    也可能是同一次运行的两次导出而产物没记来源。扣掉是**猜**，不扣也是猜——
+    所以不扣，但标记出来，并在 coverage 里给"严格口径"的对照数。
+
+    入参是**身份视图**，不是整条记录：`{candidate_id, execution, source}`。
+    """
+    for tag, rec in (("a", a), ("b", b)):
+        for k in ("candidate_id", "execution", "source"):
+            if k not in rec:
+                raise ValueError(f"duplicate_verdict 的 {tag} 缺字段 {k!r}")
+    ea, eb = a["execution"], b["execution"]
+    sa, sb = a["source"], b["source"]
+
+    ra, rb = ea.get("run_id"), eb.get("run_id")
+    same_cand = a["candidate_id"] == b["candidate_id"]
+    same_run = ra is not None and ra == rb
+    # 产物定位要比 row/section：pilot 的 `nested` 与 `sensitivity` 两段来自**同一行**，
+    # 只比 (path, sha256, row) 会把两份不同模型的记录当成"同一产物"。
+    loc = ("path", "sha256", "row", "section")
+    same_art = (sa.get("path") is not None
+                and all(sa.get(k) == sb.get(k) for k in loc))
+    # "同条件被产物记录"= seed 来自产物 **且** 预算数值来自产物。缺一项就只能到 possible。
+    observed = all(e.get("seed_source", "").split(":", 1)[0] == "artifact"
+                   and e.get("budget_source") == "recorded"
+                   for e in (ea, eb))
+
+    ev = {
+        "candidate_id_equal": same_cand,
+        "run_id": [ra, rb],
+        "run_id_equal": same_run,
+        "seed": [ea.get("seed"), eb.get("seed")],
+        "seed_source": [ea.get("seed_source"), eb.get("seed_source")],
+        "conditions_observed": bool(observed),
+        "artifact_equal": bool(same_art),
+        "summary_equal": bool(summary_equal),
+        "paths": [sa.get("path"), sb.get("path")],
+    }
+
+    if not same_cand:
+        return _verdict("distinct", None, ev,
+                        "候选定义不同：摘要即使相同也不是同一实验")
+    if same_art:
+        return _verdict("confirmed_duplicate", "same_artifact", ev,
+                        "同一产物被登记了两次（path+sha256+row+section 全同）")
+    if same_run:
+        if not summary_equal:
+            ev["contradiction"] = True
+            return _verdict("distinct", None, ev,
+                            "执行条件相同但结果不同：这不是重复，是可复现性问题，"
+                            "不能靠合并记录把它消掉")
+        if observed:
+            return _verdict("confirmed_duplicate", "rerun_same_conditions", ev,
+                            "同候选、同 seed、同预算数值，且 seed 与预算都由产物记录；"
+                            "指标逐位相同 ⇒ 同条件的重复执行，无新信息")
+        return _verdict("possible_duplicate", None, ev,
+                        "执行条件指纹相同且指标逐位相同，但 seed/预算不是产物记录"
+                        "（由代码或档名推出）⇒ 不足以扣除")
+    if summary_equal:
+        return _verdict("possible_duplicate", None, ev,
+                        "指标摘要相同，但执行身份不同或不可判；来源不同即可能巧合")
+    return _verdict("distinct", None, ev, "来源与摘要均不同")
+
+
+def _verdict(status: str, kind: str | None, ev: dict, reason: str) -> dict:
+    if status not in DUPLICATE_STATES:
+        raise ValueError(
+            f"duplicate_status={status!r} 不在 DUPLICATE_STATES={DUPLICATE_STATES}；"
+            "三态必须区分「没证据是重复」「可能是重复」「确认重复」")
+    if kind is not None and kind not in DUPLICATE_KINDS:
+        raise ValueError(f"duplicate_kind={kind!r} 不在 {DUPLICATE_KINDS}")
+    if status == "confirmed_duplicate" and kind is None:
+        raise ValueError("confirmed_duplicate 必须给 duplicate_kind（凭什么确认的）")
+    return {"duplicate_status": status,
+            "duplicate_kind": kind,
+            "independent": status != "confirmed_duplicate",
+            "reason": reason,
+            "evidence": ev}
 
 
 def sampling_status_from(*, run_status: str, rhat_max: float | None,
@@ -1282,6 +1664,14 @@ def registry_digest() -> str:
             "noise_floor_sources": list(NOISE_FLOOR_SOURCES),
             "budget_param_keys": list(BUDGET_PARAM_KEYS),
             "budget_param_sources": list(BUDGET_PARAM_SOURCES),
+            # 0.4.0：执行身份与重复判定的口径也进指纹。"什么算同一次执行"、
+            # "什么算两次独立观测"改了而指纹不变，旧记录会被新规则静默重判。
+            "run_id_scope": RUN_ID_SCOPE,
+            "run_id_basis": list(RUN_ID_BASIS),
+            "run_id_missing": list(RUN_ID_MISSING),
+            "seed_source_kinds": list(SEED_SOURCE_KINDS),
+            "duplicate_states": list(DUPLICATE_STATES),
+            "duplicate_kinds": list(DUPLICATE_KINDS),
         },
         "registry_version": REGISTRY_VERSION,
         "precheck_version": PRECHECK_VERSION,

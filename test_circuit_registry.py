@@ -740,9 +740,171 @@ def case_predictive_validity_must_be_explicit():
     return "可用性必须显式；False 必须带原因"
 
 
+_BP = dict(source="recorded", n_warmup=2000, n_samples=1000, num_chains=2,
+           target_accept=0.98, max_tree_depth=10)
+
+
+def _exec(**kw):
+    """执行身份 fixture。默认：同一条谱、seed 由产物记录、预算 recorded、代码版本未知。"""
+    kw.setdefault("candidate_id", _nested().candidate_id)
+    kw.setdefault("data", {"ref": "coating/R1-[P2,R3-[P4,R5-P6]]", "f_min": 0.1,
+                          "f_max": 1e5})
+    kw.setdefault("seed", 0)
+    kw.setdefault("seed_source", "artifact:config.seed")
+    kw.setdefault("budget_params", dict(_BP))
+    kw.setdefault("software", {"producer": "nested_fit.py"})
+    return R.execution_identity(**kw)
+
+
+def case_run_id_separates_budget_values():
+    """P1：同档名、不同预算数值 ⇒ candidate_id 相同、run_id 不同。"""
+    c = _voigt(budget_profile="standard")
+    a = _exec(candidate_id=c.candidate_id, budget_params=dict(_BP))
+    bp2 = dict(_BP, target_accept=0.90)          # BUDGETS["standard"] 的真实值
+    b = _exec(candidate_id=c.candidate_id, budget_params=bp2)
+    assert a["run_id"] != b["run_id"], (a["run_id"], b["run_id"])
+    assert c.candidate_id == _voigt(budget_profile="standard").candidate_id
+    o1 = R.observation_block(candidate_id=c.candidate_id, run_status="completed",
+                             sampling_status="passed", rms_rel=7.0, acf=0.2,
+                             budget_params=dict(_BP), execution=a)
+    o2 = R.observation_block(candidate_id=c.candidate_id, run_status="completed",
+                             sampling_status="passed", rms_rel=7.0, acf=0.2,
+                             budget_params=bp2, execution=b)
+    assert o1["candidate_id"] == o2["candidate_id"]
+    assert o1["execution"]["run_id"] != o2["execution"]["run_id"]
+    return "同 candidate_id / 不同 run_id：预算数值进执行身份，不进模型身份"
+
+
+def case_run_id_refuses_default_seed():
+    e = _exec(seed=None, seed_source="absent")
+    assert e["run_id"] is None and e["run_id_status"] == "unconfirmed"
+    assert e["unavailable_reason"] == "seed_not_recorded"
+    b = R.observation_block(candidate_id=_nested().candidate_id, run_status="completed",
+                            sampling_status="passed", rms_rel=7.0, acf=0.2,
+                            budget_params=dict(_BP), execution=e)
+    assert b["execution"]["run_id"] is None
+    msg = _expect_raise(R.execution_identity, candidate_id=_nested().candidate_id,
+                        seed=None, seed_source="producer_code:x", budget_params=dict(_BP))
+    assert "absent" in msg, msg
+    return "无 seed 不发 run_id（带原因）；seed=None 却标来源矛盾被拒"
+
+
+def case_run_id_status_ladder():
+    e = _exec()
+    assert e["run_id_status"] == "derived" and e["run_id"].startswith("D-"), e
+    e2 = _exec(software={"producer": "nested_fit.py", "code_version": "a1b2c3d"})
+    assert e2["run_id_status"] == "recorded" and e2["run_id"].startswith("R-"), e2
+    e3 = _exec(seed_source="producer_code:bm_real._resolve_seed")
+    assert e3["run_id_status"] == "derived" and e3["run_id"] != e["run_id"], e3
+    e4 = _exec(budget_params=dict(source="derived_from_tier", tier="quick",
+                                  n_warmup=800, n_samples=400, num_chains=2,
+                                  target_accept=0.9, max_tree_depth=10))
+    assert e4["run_id_status"] == "derived", e4
+    assert e4["run_id"] != e["run_id"]
+    e5 = _exec(budget_params={"source": "unavailable", "reason": "not_computed"})
+    assert e5["run_id"] is None and e5["unavailable_reason"] == "budget_not_recorded"
+    return "recorded 需 seed+预算+代码版本三者齐；seed 来源不同 ⇒ id 不同；预算缺 ⇒ 不发"
+
+
+def case_run_id_rejects_unknown_candidate():
+    msg = _expect_raise(R.execution_identity, candidate_id="U-abc123",
+                        seed=0, seed_source="artifact:x", budget_params=dict(_BP))
+    assert "U-" in msg, msg
+    return "候选身份未确认（U-）时不许发执行身份"
+
+
+def case_observation_recomputes_run_id():
+    c = _nested()
+    e = _exec(candidate_id=c.candidate_id)
+    msg = _expect_raise(R.observation_block, candidate_id=c.candidate_id,
+                        run_status="completed", sampling_status="passed",
+                        rms_rel=7.0, acf=0.2,
+                        budget_params=dict(_BP, n_warmup=800), execution=e)
+    assert "不符" in msg, msg
+    msg = _expect_raise(R.observation_block, candidate_id=c.candidate_id,
+                        run_status="completed", sampling_status="passed",
+                        rms_rel=7.0, acf=0.2, execution=e)
+    assert "budget_params" in msg, msg
+    bad = dict(e, run_id="R-0000000000")
+    msg = _expect_raise(R.observation_block, candidate_id=c.candidate_id,
+                        run_status="completed", sampling_status="passed",
+                        rms_rel=7.0, acf=0.2, budget_params=dict(_BP), execution=bad)
+    assert "状态" in msg or "不符" in msg, msg
+    return "run_id 与观测预算重算不符被拒；有 id 无预算被拒；前缀与状态不符被拒"
+
+
+def case_duplicate_needs_provenance():
+    """P0：摘要相同**不**等于重复；证据不足只标 possible，不从分母里扣。"""
+    c = _nested()
+    a = {"candidate_id": c.candidate_id, "source": {"path": "x/a.json", "sha256": "s1"},
+         "execution": _exec(candidate_id=c.candidate_id)}
+    b = {"candidate_id": c.candidate_id, "source": {"path": "x/b.json", "sha256": "s2"},
+         "execution": _exec(candidate_id=c.candidate_id,
+                            seed_source="producer_code:bm_real._resolve_seed")}
+    v = R.duplicate_verdict(a, b, summary_equal=True)
+    assert v["duplicate_status"] == "possible_duplicate", v
+    assert v["independent"] is True, v
+    assert v["evidence"]["summary_equal"] is True
+    assert v["evidence"]["conditions_observed"] is False
+    return "seed 靠代码推出 ⇒ 只标 possible_duplicate，仍计入独立样本"
+
+
+def case_duplicate_confirmed_with_recorded_seed():
+    c = _nested()
+    a = {"candidate_id": c.candidate_id, "source": {"path": "x/a.json", "sha256": "s1"},
+         "execution": _exec(candidate_id=c.candidate_id)}
+    b = {"candidate_id": c.candidate_id, "source": {"path": "x/b.json", "sha256": "s2"},
+         "execution": _exec(candidate_id=c.candidate_id)}
+    v = R.duplicate_verdict(a, b, summary_equal=True)
+    assert v["duplicate_status"] == "confirmed_duplicate", v
+    assert v["duplicate_kind"] == "rerun_same_conditions", v
+    assert v["independent"] is False, v
+    # 同产物被登记两次
+    v2 = R.duplicate_verdict(a, dict(b, source=dict(a["source"])), summary_equal=True)
+    assert v2["duplicate_kind"] == "same_artifact", v2
+    # 同 seed 同条件但结果不同 ⇒ 不是重复，是可复现性问题
+    v3 = R.duplicate_verdict(a, b, summary_equal=False)
+    assert v3["duplicate_status"] == "distinct", v3
+    assert v3["evidence"].get("contradiction") is True, v3
+    # 不同候选即使摘要相同也不构成重复
+    other = {"candidate_id": _nested(branch="parallel").candidate_id,
+             "source": {"path": "x/c.json", "sha256": "s3"},
+             "execution": _exec(candidate_id=_nested(branch="parallel").candidate_id)}
+    v4 = R.duplicate_verdict(a, other, summary_equal=True)
+    assert v4["duplicate_status"] == "distinct", v4
+    return "产物记录的 seed+预算才确认重复；同条件异结果标 contradiction；跨候选不合并"
+
+
+def case_duplicate_status_is_enum():
+    msg = _expect_raise(R._verdict, "duplicate", None, {}, "x")
+    assert "DUPLICATE_STATES" in msg, msg
+    msg = _expect_raise(R._verdict, "confirmed_duplicate", None, {}, "x")
+    assert "kind" in msg, msg
+    return "非法重复态/无 kind 的确认重复被拒"
+
+
+def case_run_id_includes_data():
+    """同一候选同 seed 同预算下跑 60 条谱 ⇒ 60 个 run_id，不能共享一个。"""
+    c = _nested()
+    a = _exec(candidate_id=c.candidate_id, data="s0.csv")
+    b = _exec(candidate_id=c.candidate_id, data="s1.csv")
+    assert a["run_id"] != b["run_id"], (a["run_id"], b["run_id"])
+    rec_a = {"candidate_id": c.candidate_id, "source": {"path": "x/a", "sha256": "1"},
+             "execution": a}
+    rec_b = {"candidate_id": c.candidate_id, "source": {"path": "x/b", "sha256": "2"},
+             "execution": b}
+    v = R.duplicate_verdict(rec_a, rec_b, summary_equal=False)
+    assert v["duplicate_status"] == "distinct", v
+    assert "contradiction" not in v["evidence"], v
+    # 频率窗口变了也是另一次执行
+    c1 = _exec(candidate_id=c.candidate_id, data={"ref": "s0.csv", "f_min": 0.1, "f_max": 1e5})
+    c2 = _exec(candidate_id=c.candidate_id, data={"ref": "s0.csv", "f_min": 1.0, "f_max": 1e5})
+    assert c1["run_id"] != c2["run_id"]
+    return "数据/频率窗口进执行身份；不同谱不会被误判成'同条件不同结果'"
+
+
 CASES = [
-    ("A1 定义完整性", case_definitions),
-    ("A2 未接线须给原因", case_unwired_needs_reason),
+    ("A1 定义完整性", case_definitions),    ("A2 未接线须给原因", case_unwired_needs_reason),
     ("A3 正演引用白名单", case_ref_whitelist),
     ("A4 指纹覆盖结构校验版本", case_digest_covers_consistency),
     ("B1 候选可构造", case_candidate_ok),
@@ -798,6 +960,15 @@ CASES = [
     ("K5 噪声底来源不可伪造", case_noise_floor_cannot_fake_source),
     ("K6 真值列只许合成谱", case_param_estimate_truth_gate),
     ("K7 ELPD 可用性显式", case_predictive_validity_must_be_explicit),
+    ("L1 run_id 分开预算数值", case_run_id_separates_budget_values),
+    ("L2 无 seed 不发 run_id", case_run_id_refuses_default_seed),
+    ("L3 执行身份三档", case_run_id_status_ladder),
+    ("L4 U- 候选不发 id", case_run_id_rejects_unknown_candidate),
+    ("L5 观测重算 run_id", case_observation_recomputes_run_id),
+    ("L6 重复须有来源证据", case_duplicate_needs_provenance),
+    ("L7 确认重复的两种情形", case_duplicate_confirmed_with_recorded_seed),
+    ("L8 重复态是枚举", case_duplicate_status_is_enum),
+    ("L9 执行身份含数据", case_run_id_includes_data),
 ]
 
 
