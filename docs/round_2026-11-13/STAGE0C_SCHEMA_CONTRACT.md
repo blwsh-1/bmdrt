@@ -120,7 +120,7 @@
 未接线不是"没测"，是"没有接点"。AZ31 那次失败正是接点问题（`R∥L` 必须在第二并联节点内，
 挂到 voigt 最外层串联只能把 noise=0 残差从 44.0% 降到 40.7%），所以这一档必须显式区分。
 
-`registry_digest = 8e652d15390c290a`（本版，`0.5.0`）。manifest 会记录它，注册表被改可被发现；
+`registry_digest = 9e7051c9b4cd720b`（本版，`0.5.0`）。manifest 会记录它，注册表被改可被发现；
 `consistency_id`、观测 schema 常量（含身份枚举、缺失语义、预算参数名）、
 **执行身份的哈希口径（`RUN_ID_BASIS`/`RUN_ID_SCOPE`/`RUN_ID_MISSING`）与重复判定三态**、
 **数据身份等级（`DATA_ID_KINDS`）与"确认重复必须 `recorded`"这条口径**
@@ -264,6 +264,11 @@
 | P1 | `--check` 没校验 MANIFEST 的注册表指纹与 `source_sha256` | **成立**：v3 只比重算的两份数据文件；注册表改了但序列化没变时会"通过" | `verify_frozen()` 四层校验 + `--frozen <dir>`；`test_stage0_freeze.py` 用篡改副本测 | `D4a`/`D4b`/`D5a`–`D5e` |
 | — | `_check_execution` 的 `unconfirmed` 分支过宽 | **成立**：0.4.0 只查"原因在枚举里"，"要素齐全却自称缺 seed"能过 | `_expected_status()` 复算状态与原因，优先序 `data`→`seed`→`budget` | `D6` |
 
+顺带补一处同类隐患：`execution=None` 的默认块原本写 `unavailable_reason="not_computed"`，
+而 `unconfirmed` 只允许 `RUN_ID_MISSING` 里的原因——**默认块自己就违反了这条不变量**。
+现在 `RUN_ID_MISSING` 增哨兵 `not_provided`（"调用方根本没给执行块"），默认块用它，
+`D6` 里加断言：未给执行块时 `run_id is None` ∧ 原因 ∈ `RUN_ID_MISSING`。
+
 ### 9.2 计数口径因此改变（必须两数同报）
 
 | 口径 | 值 | 含义 |
@@ -279,7 +284,7 @@ v3 报的"237 独立"其实是严格口径，却写成了主口径。**现在两
 
 20 条硬约束**一条未放宽**，只新增 21–23；`candidate_id` 六个字段、两处结构一致性、
 三态枚举全部原样。被收紧的只有"什么算确认重复"——这是**收紧**，不是让步。
-`registry_digest` 因此变化（`0f59a5686c2d0c5b` → `8e652d15390c290a`），冻结清单同步更新。
+`registry_digest` 因此变化（`0f59a5686c2d0c5b` → `9e7051c9b4cd720b`），冻结清单同步更新。
 
 ### 9.4 仍未做的
 

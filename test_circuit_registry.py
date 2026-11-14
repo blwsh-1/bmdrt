@@ -1001,7 +1001,13 @@ def case_d6_execution_status_must_match_elements():
                         run_status="completed", sampling_status="passed",
                         rms_rel=7.0, acf=0.2, budget_params=dict(_BP), execution=wrong)
     assert "unavailable_reason" in msg, msg
-    return "状态/原因按要素整块复算：齐全却称缺失、缺 A 却报 B，都被拒"
+    # 完全不给执行块时的默认哨兵，本身也必须满足"未发号 ⇒ 原因在枚举里"
+    blank = R.observation_block(candidate_id=c.candidate_id, run_status="failed")
+    ex = blank["execution"]
+    assert ex["run_id"] is None and ex["run_id_status"] == "unconfirmed", ex
+    assert ex["unavailable_reason"] in R.RUN_ID_MISSING, ex
+    assert ex["unavailable_reason"] == "not_provided", ex
+    return "状态/原因按要素整块复算：齐全却称缺失、缺 A 却报 B，都被拒；默认哨兵合法"
 
 
 def case_d7_ref_only_cannot_be_recorded():

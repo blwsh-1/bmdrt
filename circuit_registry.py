@@ -191,7 +191,10 @@ SEED_SOURCE_KINDS = ("artifact", "producer_code", "tier", "absent")
 #: `ref_only` 只能当阅读标签，不能据此宣称唯一，也不够格升到 `recorded`。
 DATA_ID_KINDS = ("content_sha256", "ref_only")
 #: `run_id` 不可发时的原因。**不许发一个看起来合法的 id**。
-RUN_ID_MISSING = ("seed_not_recorded", "budget_not_recorded", "data_not_recorded")
+#: `not_provided` 是"调用方根本没给执行块"的哨兵——它必须在枚举里，否则
+#: `unconfirmed ⇒ 原因 ∈ RUN_ID_MISSING` 这条不变量在默认块上就已经不成立。
+RUN_ID_MISSING = ("not_provided", "data_not_recorded", "seed_not_recorded",
+                  "budget_not_recorded")
 #: 重复判定的三态。**`independent` 只是它的派生值**，不能反过来用摘要相同去推。
 #: - `distinct`：没有证据表明是重复（含"摘要撞车但来源不同"）；
 #: - `possible_duplicate`：摘要相同、但来源证据不足 ⇒ **不从独立样本数里扣除**；
@@ -1238,7 +1241,7 @@ def _check_execution(v, *, candidate_id: str, budget_params: Mapping | None):
                 "budget_source": None,
                 "software": {"producer": None, "code_version": None,
                              "registry_version": REGISTRY_VERSION},
-                "unavailable_reason": "not_computed", "notes": []}
+                "unavailable_reason": "not_provided", "notes": []}
     if not isinstance(v, Mapping):
         raise ValueError("observation.execution 必须是 execution_identity() 的返回值")
     for k in ("run_id_status", "seed_source", "run_id_basis", "seed",

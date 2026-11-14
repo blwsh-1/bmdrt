@@ -2,7 +2,7 @@
   "note": "本目录的冻结副本清单。`records.jsonl` 由 map_stage0_records.py 从 evidence/ 的原始产物映射而来，不跑拟合。",
   "generated_by": "docs/round_2026-11-13/map_stage0_records.py",
   "registry_version": "0.5.0",
-  "registry_digest": "8e652d15390c290a",
+  "registry_digest": "9e7051c9b4cd720b",
   "n_records": 239,
   "n_independent": 239,
   "n_independent_strict": 237,
