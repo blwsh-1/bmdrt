@@ -11,12 +11,13 @@
 | 问题 | 答案 | 依据 |
 |---|---|---|
 | `sampler_entry` 能挂上吗 | **能**。`numpyro.infer.MCMC.run` 类属性包装，每次采样恰好触发 1 次；`fit_top` 的调用链不变 | §3.1 |
-| 三个时点采到的是不是同一个集合 | **是**。Profile B 的三个时点项目文件集合**逐位相同**（15/15/15），独立进程 3/3 一致 | §3.2 |
-| 覆盖判定能不能到 `complete` | **能，但必须先解决"runner 自己算未声明"**。排除探针自身后 3/3 `complete`；不排除则 3/3 `undeclared_loaded` | §3.3 |
+| 三个时点采到的是不是同一个集合 | **是**。Profile B 的三个时点项目文件集合**逐位相同**（17/17/17 = 14 project + 3 harness），独立进程 3/3 一致 | §3.2 |
+| 覆盖判定能不能到 `complete` | **能**。声明 3 个 harness 项后 3/3 `complete`；不声明则 3/3 `undeclared_loaded`。差别只在声明，不在采集（`CAPTURE_CONTRACT.md` §2.3） | §3.3 |
 | 三时点设计在本路径上有信息增量吗 | **没有**。B 的项目模块导入是纯静态的，第三点与第一点同集；三点仍应采（契约要求），但别指望它能抓到"拟合中途的延迟导入"——它抓不到 | §3.2、§3.5 |
-| 存在会让记录**静默**出错的坑吗 | **四个**：runner 自身未声明、路径写成绝对 Windows 路径、一次工作流多次采样、钩子状态不清零 | §4 |
+| 存在会让记录**静默**出错的坑吗 | **四个**：runner 自身未声明、路径写成绝对 Windows 路径、一次工作流多次采样、钩子状态不清零。**四个都已在 `CAPTURE_CONTRACT.md` 里定规则 + 反例（31/31）** | §4 |
 
-一句话：**机制可用，但"能采到"离"采对"还有四个必须钉死的接口细节**。这四个都不需要改身份算法，属于 runner 的采集契约。
+一句话：**机制可用，但"能采到"离"采对"还差四条采集规则**。这四条不需要改身份算法，
+现在有了参考实现（`capture_contract.py`）与 31 格反例，见 `CAPTURE_CONTRACT.md`。
 
 ---
 
@@ -84,16 +85,20 @@ num_warmup=8  num_samples=8  num_chains=1  _target_accept_prob=0.9  _max_tree_de
 
 | 运行 | `before_fit` | `sampler_entry` | `after_fit` | 三时点差集 |
 |---|---|---|---|---|
-| fresh #1 | 15 | 15 | 15 | 全空 |
-| fresh #2 | 15 | 15 | 15 | 全空 |
-| fresh #3 | 15 | 15 | 15 | 全空 |
+| fresh #1 | 17 | 17 | 17 | 全空 |
+| fresh #2 | 17 | 17 | 17 | 全空 |
+| fresh #3 | 17 | 17 | 17 | 全空 |
 
-`drift`：三时点各自 `n_distinct_sets = 1`（3 次运行只出现一种集合）。文件清单：
+`drift`：三时点各自 `n_distinct = 1`（3 次运行只出现一种集合）。17 = **14 个 project + 3 个 harness**：
 
 ```
-bm_ad bm_core bm_corr bm_diff bm_experiments bm_grade bm_kk bm_real
-bm_select bm_top bm_top_gen bm_ws drt nested_fit        (+ 探针自身)
+project(14): bm_ad bm_core bm_corr bm_diff bm_experiments bm_grade bm_kk bm_real
+             bm_select bm_top bm_top_gen bm_ws drt nested_fit
+harness(3) : capture_contract.py  exec_identity.py  docs/round_2026-11-14/snapshot_probe.py
 ```
+
+（早期一版探针只记 15 = 14 project + 探针自己；接上 `capture_contract` 后探针多 import
+了 `capture_contract` 与 `exec_identity`，并把三者都按 harness 声明——项目侧 14 个一位没变。）
 
 **这不是"三点都采到了"的漂亮结果，而是一个负结果**：Profile B 的项目模块全部在 `import` 阶段加载完（`bm_real` 顶层就 import 了 `bm_core/bm_experiments/bm_grade/drt`，`nested_fit` 顶层 import 了 `bm_select`），`_make_model` / `MCMC.run` / `_loglik_chained` 内部只 import 第三方（`numpyro` / `arviz`）。所以第三点与第一点同集，**"延迟导入发生在拟合中途"在 B 上没有可观测的实例**。
 
@@ -102,14 +107,18 @@ bm_select bm_top bm_top_gen bm_ws drt nested_fit        (+ 探针自身)
 - 对**判定**：三点仍然必须采（契约要求，且 A/C 未必如此），但不能用"三点齐"证明"采集深入"；
 - 对**证据**：本轮只能写"B 路径上三时点同集"，**不能**写"三时点机制能捕捉中途延迟导入"——后者需要 A 或 C 上出现真实差集才算证据。
 
-### 3.3 覆盖判定：先 `undeclared_loaded`，排除探针后 `complete`
+### 3.3 覆盖判定：`undeclared_loaded` → 声明 harness 后 `complete`
 
-| 口径 | 3 次运行 | 未声明集 |
-|---|---|---|
-| 原始（含探针自身） | `undeclared_loaded` ×3 | `docs/round_2026-11-14/snapshot_probe.py` |
-| 排除探针自身 | `complete` ×3 | 空 |
+| 口径 | 3 次运行 | 未声明集 | 计数（project/harness/ext/undecl） |
+|---|---|---|---|
+| 声明集 = manifest 原样 | `undeclared_loaded` ×3 | `capture_contract.py`、`snapshot_probe.py`、`exec_identity.py` | 14 / 0 / 0 / 3 |
+| 声明集 = manifest + 3 个 harness 项 | **`complete`** ×3 | 空 | 14 / 3 / 0 / 0 |
 
-`n_union = 14`（18 个声明 `.py` 中加载了 14 个）。**"未声明"的唯一来源是探针自己**——它不是被拟合的代码，却是 `sys.modules` 里真实存在的项目模块。这不是探针的失误，而是**任何 runner 都会遇到的结构性问题**：见 §4.1。
+`n_union = 17`，`declared_not_loaded` = 4 个 `.py` + `config.json`（§3.4）。
+**"未声明"的唯一来源是采集侧的三个文件**——它们不是被拟合的代码，却是 `sys.modules` 里
+真实存在的项目模块。这不是探针的失误，而是**任何 runner 都会遇到的结构性问题**（§4.1），
+修法写在 `CAPTURE_CONTRACT.md` §2：显式声明成 harness，而不是在采集时按文件名过滤。
+三次运行的 `numeric_source_tree_sha256` **逐位相同**（`d99bcdd0…`）——harness 不进 `run_id`。
 
 ### 3.4 声明了但没加载的 4 个文件
 
@@ -123,9 +132,9 @@ bm_select bm_top bm_top_gen bm_ws drt nested_fit        (+ 探针自身)
 
 另：`config.json`（role=`config`）**永远**出现在 `declared_not_loaded` 里（它不是模块，不会出现在 `sys.modules`）。实现层无害，但会让这个列表恒非空、把真信号淹掉。
 
-### 3.5 总模块数：1255 → 1262 → 2134
+### 3.5 总模块数：1258 → 1265 → 2137
 
-三个时点的 `len(sys.modules)`：`before_fit` 1255、`sampler_entry` 1262、`after_fit` 2134。**采样期间新增 872 个模块，项目代码 0 个。**
+三个时点的 `len(sys.modules)`：`before_fit` 1258、`sampler_entry` 1265、`after_fit` 2137。**采样期间新增 872 个模块，项目代码 0 个。**
 
 这解释了为什么"只含项目代码"这条口径是必要的：不做过滤，三时点差集会给出 872 个 `jax._src.*` / `arviz` 模块，覆盖判定永远 `undeclared_loaded`，而且不可复现（jax 惰性导入顺序受缓存影响）。§3 表里那句"只含项目代码"不是优化，是**判定能不能成立的前提**。
 
@@ -135,9 +144,9 @@ bm_select bm_top bm_top_gen bm_ws drt nested_fit        (+ 探针自身)
 
 | 项 | 值 |
 |---|---|
-| 三时点项目文件数 | 15 / 15 / 15，`point_delta` 全空 |
-| `len(sys.modules)` | 1255 → 1262 → 2137（采样期间新增 875，项目代码 0） |
-| 覆盖（排除探针） | `complete`，`n_union=14`，`declared_not_loaded` 仍是那 4 个 |
+| 三时点项目文件数 | 17 / 17 / 17（14 project + 3 harness），`point_delta` 全空 |
+| `len(sys.modules)` | 1257 → 1264 → 2139（采样期间新增 875，项目代码 0） |
+| 覆盖（声明 3 个 harness） | `complete`，`n_union=17`，`declared_not_loaded` 仍是那 4 个 + `config.json` |
 | 采样质量 | `R̂_max=1.0023`、`divergences=0` |
 | 耗时 | 到拟合返回 11.7 s，后处理 0.4 s |
 
@@ -151,17 +160,25 @@ bm_select bm_top bm_top_gen bm_ws drt nested_fit        (+ 探针自身)
 
 这四个都没有报错、都产出"看着合理"的记录。按危害排序。
 
+> **本节是问题记录，不是现状。** 四条已在 `CAPTURE_CONTRACT.md` 里逐条定规则
+> （C-1/C-2/C-3），并有参考实现 `capture_contract.py` 与 31 格反例
+> （`test_capture_contract.py` 31/31）。§4.1 的三条出路选了"引入 harness 归属"；
+> §4.2 的规范化、§4.3 的多槽位、§4.4 的清零都已实现。下面保留的是**当时的判断依据**，
+> 便于日后复核"为什么这么改"。
+
 ### 4.1 runner 自身文件必然未声明 → 所有真实运行永久 `derived`
 
 真实 runner 的入口脚本会出现在 `sys.modules` 里（`__main__`），它的 realpath 在仓库根内、以 `.py` 结尾，因此**必然**进入 `runtime_loaded_modules`。若它不在 `declared_source_set` 里，每次运行都是 `undeclared_loaded` → `derived` → `R-` 一条都不会有。
 
-三条出路，**都需要裁决**，本轮不选：
+三条出路（**已在 `CAPTURE_CONTRACT.md` §2 裁决为第 3 条 + 第 1 条的组合**：显式声明
+harness 项、`compute_role` 非 numeric、不许过滤）：
 
 1. runner 把自己写进声明集（`role=entry`、`compute_role` 待定）——最直白，但声明集是"参与计算的代码"，runner 只采集不算数，`compute_role=numeric` 会让"只改采集逻辑"也换号；
 2. 采集时排除 `__main__` 及其文件——必须写清排除规则，否则是**为测试变绿而降低覆盖**；
 3. 契约增加"harness 类模块"概念——代价最大，但能一劳永逸。
 
-**注意**：本轮探针用"排除自身"得到 `complete`，**这只是为了让测量本身可读**，不是对 4.1 的裁决。
+**注意**：本报告第一版用"排除自身"得到 `complete`，那只是为了让测量本身可读，不是对 4.1 的裁决；
+现在的探针**不排除**任何东西，改为把采集侧三个文件显式声明成 harness（§3.3）。
 
 ### 4.2 路径写成绝对 Windows 路径 → 被接受，但永不匹配
 
@@ -185,7 +202,7 @@ E._path_set([{"path": "D:/eis训练数据/bmdrt/bm_top.py"}], "runtime")
 
 ### 4.3 一次工作流里有多次采样 → 单槽位会张冠李戴
 
-`--two-fits`（同进程连跑 `parallel` 与 `series` 两次采样）实测：`n_calls = 2`，两次都被记录（`idx 0/1`，各 15 个文件）。但**如果钩子只存一个槽位**（`HOOK["snapshot"] = ...` 覆盖式），最终留下的是**第二次**快照，而两条记录都会把它当成自己的 `sampler_entry`——静默错配，值看着完全正常。
+`--two-fits`（同进程连跑 `parallel` 与 `series` 两次采样）实测：`n_calls = 2`，两次都被记录且**各自归属**（`probe#0` 主会话、`probe/ref#0` 子会话）。但**如果钩子只存一个槽位**（`HOOK["snapshot"] = ...` 覆盖式），最终留下的是**第二次**快照，而两条记录都会把它当成自己的 `sampler_entry`——静默错配，值看着完全正常。
 
 这条不是假想：`nested_fit.run(with_voigt=True)` 会在 `voigt_reference` 里再跑一次 `bm_core.fit`（同样是 `MCMC.run`）；Profile C 的 `bm_select` 一次比较就是 `fit_voigt` + `fit_nested` 两次采样。
 
@@ -207,7 +224,7 @@ run1: 2135 → 2135 → 2135
 run2: 2135 → 2135 → 2135
 ```
 
-项目模块集合仍是 15（三次全同），所以**判定不受影响**；受影响的是记录里 `runtime_loaded_modules` 的语义：它变成"到此刻为止进程里出现过的全部项目模块"，而不是"这次运行用到的"。
+项目模块集合仍是 17（三次全同），所以**判定不受影响**；受影响的是记录里 `runtime_loaded_modules` 的语义：它变成"到此刻为止进程里出现过的全部项目模块"，而不是"这次运行用到的"。
 
 后果：批量复用进程时，后段运行的 `undeclared_modules` / `declared_not_loaded` 与首段不同。若某天出现一个只在第二次才懒加载的模块，**同一代码路径的第 1 次和第 5 次会得到不同的覆盖判定**。而 `numeric_source_tree_sha256` 只由声明集算出（`_chk_code` 用 `items` 整块算，不与运行时集求交），所以**换号不会发生**——只有降级会，且是顺序相关的。
 
@@ -246,5 +263,8 @@ run2: 2135 → 2135 → 2135
 | `out/snapshot_probe/two_fits.json` | 同进程两次采样（§4.3） |
 | `out/snapshot_probe/fresh_quick.json` | 完整 quick 档 ×1（§3.6） |
 | `out/snapshot_probe/smoke.json` | 首版冒烟（含 §4.4 的错配，留证） |
+| `out/snapshot_probe/smoke2/3/4.json` | 接入 `capture_contract` 过程中的中间版本（2016 个假 external → 修好，留证） |
 
-`out/` 不入库；重跑脚本即可复现（除 `smoke.json`，它是修复前的产物）。
+`out/` 不入库；重跑脚本即可复现（除 `smoke*.json`，它们是修复前的产物）。
+
+采集规则的语义、反例矩阵与真实运行证据见 **`CAPTURE_CONTRACT.md`**（同一目录）。

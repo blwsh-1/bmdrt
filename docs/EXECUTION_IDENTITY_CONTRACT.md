@@ -134,7 +134,7 @@ execution
 | `numeric_source_tree_sha256` | str | 对 `compute_role == numeric` 的子集求摘要 | ✓ | 64 位；子集为空表 ⇒ 报错（不许"什么都不算"） | `derived` / `declared_set_missing` | ✓ |
 | `workflow_source_tree_sha256` | str | 对 `workflow_scope != false` 的子集求摘要 | ✓ | 64 位；同上；（D-5 追加层，进 `workflow_id` 不进 `run_id`） | `derived` / `declared_set_missing` | ✗（进 `workflow_id`，§6.3） |
 | `declared_not_loaded` | list[str] | 声明集 − 运行时集 | ✓（可为空表） | 子集关系必须成立 | —（只记录） | ✗ |
-| `runtime_loaded_modules` | list[{path, role}] | 三个时点的 `sys.modules` 快照并集（§3.1.2） | ✓ | 只含项目代码；realpath 记录 | `derived` / `runtime_snapshot_missing` | ✗ |
+| `runtime_loaded_modules` | list[{path, role}] | 三个时点的 `sys.modules` 快照并集（§3.1.2） | ✓ | 只含项目**源码**（`.py`）；`path` 是 `realpath → 是否在仓库根内 → POSIX 相对路径` 的**规范化结果**（§3.1.5 C-2），不是 `__file__` 原样；第三方不算"外部"，仓库外的**同名**项目副本走 `external_modules` | `derived` / `runtime_snapshot_missing` | ✗ |
 | `runtime_snapshot_taken` | bool | runner | ✓ 且必须 `true` | 静态扫描得出的集合**不算** | `derived` / `runtime_snapshot_missing` | ✗ |
 | `runtime_snapshot_points` | list[str] | runner | ✓ | 至少含 `"before_fit"` 与 `"after_fit"` | 同上 | ✗ |
 | `source_coverage` | enum | 由声明集、运行时集、模块根求交 | ✓ | `complete`/`undeclared_loaded`/`external_path`/`snapshot_missing` | 非 `complete` ⇒ `derived`（原因同值） | ✗ |
@@ -282,6 +282,23 @@ execution
 **默认值的保守方向只有一个**：不写 `compute_role` 就是 `numeric`，不写 `workflow_scope`
 就是 `true`。宁可多换号，不能让一次真实的代码改动悄悄沿用旧号——后者会把两次不同代码的
 执行判成重复（F6 那类反向错误）。**多换号是可见的噪音，少换号是不可见的错判。**
+
+#### 3.1.5 采集契约（C-1/C-2/C-3）—— 只定采集，不动身份
+
+实测（`round_2026-11-14/SNAPSHOT_PROBE.md`）暴露出四处**不报错**的采集错误；本节只给结论，
+语义、反例与真实运行证据在 **`round_2026-11-14/CAPTURE_CONTRACT.md`**，
+参考实现 `capture_contract.py`，反例 `test_capture_contract.py`（**31/31**）。
+
+| 编号 | 规则 | 为什么必须这样 |
+|---|---|---|
+| **C-1** | runner/采集脚本以**显式 harness 项**进声明集（`runtime_scope="harness"`），`compute_role` **必须非 numeric**；采集层**不许按文件名过滤** | 不声明 ⇒ 每次运行永久 `derived`；声明成 numeric ⇒ 改编排代码静默换 `run_id`。三层摘要各归各位：`declared` 变、`numeric` 不变、`workflow` 变（I1 在真实 19 文件声明集上复算） |
+| **C-2** | 两侧都走 `realpath → 是否在仓库根内 → POSIX 相对路径`；解析不到 / 在根外分别落 `invalid` / `external`·`symlink_escape`；仓库外的**同名**文件才算 `external_modules` | `D:/…/bm_top.py` 与 `bm_top.py` 用"非绝对、无反斜杠"都合法却永不相等 ⇒ **全量**未声明。反过来把"不在仓库内"一律当外部，会得到 2016 个假 external ⇒ `external_path` 失效 |
+| **C-3** | 每次 `MCMC.run` 一条事件（`event_id`/`seq`/`owner`/`status`/`snapshot`/`effective`）；会话显式开、异常标 `error`、未关闭是 `running`、进程内复用必须 `reset()` | 单槽位会被后一次采样覆盖（`with_voigt`、Profile C 两族对拍都会触发）；状态不清零会让第二次读到第一次（实测踩到） |
+
+**这三条不改任何哈希输入**：`runtime_scope`/`runtime_class` 不参与三层摘要，
+`runtime_loaded_modules` 本来就不进 `run_id`（§6）。所以 `identity_contract_version`
+仍是 `1.4`，两个号逐位不变（I5 守着）。**但状态会变**：同一份代码不声明 harness 是
+`derived`，声明了是 `recorded`——差别在声明，不在规则。
 
 ### 3.2 `env` —— 环境身份（v1.1 修 F10）
 
@@ -1121,11 +1138,20 @@ W1；`bm_select` 选择/重跑变 → W2（入口）；`kk_mode` 门禁变 → T
 ② 补丁包能否**重建**工作树（要 dirty 状态下的真实产物，T24 只用夹具）；
 ③ `sampler_entry` 到底挂不挂得上（Y6 只保证"少了不许冒充三个"，没保证可采）。
 
-`v1.4` 之后按"先验采集、后写 runner"的顺序推进，第 ① 项（B 路径）已有实测
-（`round_2026-11-14/SNAPSHOT_PROBE.md`），但它**只解除"能不能采"**，不解除
-"采到的东西怎么算"：`sampler_entry` 可挂（③ 的一半）、三时点在同一路径上同集，
-而 harness 自身文件、路径格式（POSIX 相对 vs Windows 绝对）、一次工作流多次采样的
-归属这三处仍会让记录**静默**落进 `derived` 或错配。②③ 两项仍未动。
+`v1.4` 之后按"先验采集、后写 runner"的顺序推进，现在的状态是：
+
+| 序 | 工作 | 状态 |
+|---|---|---|
+| ① | 三时点快照实测 | ✅ B 路径（`round_2026-11-14/SNAPSHOT_PROBE.md`）：可采、三时点同集、声明 harness 后 `complete` |
+| 1 | harness 归属（C-1） | ✅ 规则 + 参考实现 + 7 反例（`CAPTURE_CONTRACT.md` §2） |
+| 2 | 路径规范化（C-2） | ✅ 规则 + 参考实现 + 10 反例（§3） |
+| 3 | 采样事件归属（C-3） | ✅ 规则 + 参考实现 + 8 反例（§4） |
+| ② | 补丁包重建 | ⛔ **未动**（这是下一步） |
+| ③ | 参数捕获作为身份来源 | ⛔ 只证了"五项可读"，未区分显式/默认/委托 |
+| ④ | 最小 runner | ⛔ 待授权 |
+
+采集口径这一轮的意义是**把"能不能采"和"采到了怎么算"分开**：前三条不改任何哈希输入
+（I5：两个号逐位不变），但决定了记录是 `recorded` 还是永久 `derived`。②③④ 仍未动。
 其余字段与规则都已有反例护着（§18）。
 
 `v1.3` 修掉的两处 P0 说明一件事：**"测试全绿"不等于"实现忠实"**。T19a 与 T23c
@@ -1211,8 +1237,8 @@ W1；`bm_select` 选择/重跑变 → W2（入口）；`kk_mode` 门禁变 → T
 
 | 项 | 为什么还不行 | 需要什么 |
 |---|---|---|
-| `runtime_loaded_modules` / `source_coverage` 的判定 | **集合复算本身已冻结**（T23a–d），但复算的输入是夹具：真 `sys.modules` 还没读过，闭包与运行时的差集没实测 | **B 路径已实测**（`round_2026-11-14/SNAPSHOT_PROBE.md`）：三时点同集、排除 harness 后 `complete`、`declared_not_loaded` 4 个；A/C 未测，且 §4.1–4.3 三项接口细节未定 ⇒ **仍不冻结** |
-| `sampler_entry` 到底能不能挂上 | Y6 只证明"少一个时点不许冒充三个"，没证明这个时点**可采** | **B 路径实测可挂**（`MCMC.run` 类属性包装，`n_calls` 与真实采样次数一致）；但"一次工作流多次采样如何归属"未定（`SNAPSHOT_PROBE.md` §4.3），所以原因码口径仍未冻结 |
+| `runtime_loaded_modules` / `source_coverage` 的判定 | **集合复算本身已冻结**（T23a–d），但复算的输入是夹具：真 `sys.modules` 还没读过，闭包与运行时的差集没实测 | **B 路径已实测**（`round_2026-11-14/SNAPSHOT_PROBE.md`）：三时点同集 17/17/17、声明 harness 后 `complete`、`numeric` 摘要不变。采集口径已定（§3.1.5 + `CAPTURE_CONTRACT.md`，31 反例）。**仍缺**：一次由 runner 落盘、走完 `evaluate()` 的真实记录；A/C 未测 |
+| `sampler_entry` 到底能不能挂上 | Y6 只证明"少一个时点不许冒充三个"，没证明这个时点**可采** | **B 路径实测可挂**（`MCMC.run` 类属性包装，每次采样一条事件）；归属已由 C-3 定（E1–E8：不覆盖/不猜归属/未关不算完整/复用必须 reset），`two_fits` 实测两次采样分别认领。**仍缺**：真实工作流（`with_voigt` / Profile C）里落盘一次 |
 | 补丁包**重建**工作树 | T24 只测"缺包 ⇒ 降级"，没测过"解包后复算摘要一致" | dirty 状态下的一次真实运行 |
 | 降级双条件（`plot_only`/`decision` 等） | 本轮**零降级**（M2）；`pending_demotions` 全部 `applied:false` | 关功能运行 / 改常量重跑 |
 | `capture_interface` / `unknown_keys` 的真实值 | 夹具里是手写的；真实调用点的 `**kwargs` 还没被枚举 | runner 捕获 |
