@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""exec_identity.py —— 执行身份契约 `v1.3` 的**纯函数**实现（不跑拟合、不写产物）。
+"""exec_identity.py —— 执行身份契约 `v1.4` 的**纯函数**实现（不跑拟合、不写产物）。
 
 本模块只做三件事，全部无副作用：
 
@@ -42,7 +42,10 @@ import numpy as np
 #: 进 `run_id` 哈希的契约世代标签（D-4）。语义一变就换号，载荷不变也换。
 #: `1.3`（P0-1/P0-2 + 两个 P1）：σ 的来源子字段退出哈希、覆盖关系改为集合复算、
 #: 配置类型进判定、`floor` 显式三分。载荷语义变了 ⇒ 必须换号——哪怕一条记录都还没有。
-IDENTITY_CONTRACT_VERSION = "1.3"
+#: `1.4`（P0-1 收尾）：`sigma_floor` 也退出哈希（它与 `sigma.floor` 是同一个量，
+#: 原来由两条通道分别进哈希）；持久化记录的 `mode`↔`kind` 自洽检查从构造函数移进
+#: `sigma_run_id_value()`。键集少了 `sigma_floor` ⇒ 载荷变 ⇒ 换号。
+IDENTITY_CONTRACT_VERSION = "1.4"
 
 #: `RUN_ID_CONFIG_KEYS` 的闭集版本。加键/改 `effect` 必须 +1。
 RUN_ID_CONFIG_KEYS_VERSION = 1
@@ -93,10 +96,12 @@ RUN_ID_CONFIG_KEYS: dict[str, tuple[str, str]] = {
     "zeta": ("enum[free]|float", "model_definition"),
     # --- 执行条件（改完这次运行不再可复现） ---
     "sigma": ("composite", "execution_condition"),        # 噪声条件**唯一**载体
-    "sigma_floor": ("float", "execution_condition"),
-    # ↓ 三个是 `sigma` 复合块的来源子字段：`effect` 归类是"执行条件"，
+    # ↓ 四个都是 `sigma` 复合块的副本/来源：`effect` 归类是"执行条件"，
     #   但**不进哈希**（`config_keys_in_run_id` 会跳过，见 SIGMA_MEMBER_KEYS）。
     #   "属于哪一类条件"与"由谁承载"是两个问题，别混。
+    #   `sigma_floor` ≡ `sigma.floor`（`bm_top._check_sigma` 的同一个参数），
+    #   让它也进哈希就是同一个噪声地板有两个身份入口。
+    "sigma_floor": ("float", "execution_condition"),
     "sigma_mode": ("enum[free,scalar,perpoint]", "execution_condition"),
     "sigma_pct": ("float", "execution_condition"),
     "sigma_abs": ("float|null", "execution_condition"),
@@ -138,15 +143,22 @@ RUN_ID_CONFIG_KEYS: dict[str, tuple[str, str]] = {
 #: 父工作流开对照时它只决定"多跑一次"，子运行里它就是模型定义。
 _EFFECT_BY_ROLE = {("voigt_K", "child"): "model_definition"}
 
-#: `sigma` 复合块的**来源子字段**。`sigma_mode`/`sigma_pct`/`sigma_abs` 是
-#: `make_sigma(Z, mode, pct, abs)` 的三个入参（`nested_fit.py:321`）；复合块里的
-#: `mode`/`pct`/`abs` 是它们的副本。
+#: `sigma` 复合块的**冗余副本 / 来源子字段**，一律不进哈希。
 #:
-#: 噪声条件由复合块**一次**承担（`array_sha256` + `floor`）。这三个键只作记录：
+#: · `sigma_mode`/`sigma_pct`/`sigma_abs` 是 `make_sigma(Z, mode, pct, abs)` 的三个
+#:   入参（`nested_fit.py:321`），复合块里的 `mode`/`pct`/`abs` 是它们的副本；
+#: · `sigma_floor` 是 `bm_top._check_sigma` 的噪声地板参数，**就是** `sigma.floor`
+#:   （契约 §3.3.5 原话）。它漏在这里是 P0-1 的第二个入口：块里的 `floor` 已经
+#:   进去哈希了，顶层再进一次，同一个地板就有了两个身份。
+#:
+#: 噪声条件由复合块**一次**承担（`array_sha256` + `floor`）。四个键只作记录：
 #: 若再让它们各自进哈希，两次运行的实际 σ 数组逐位相同、仅"来源口径"不同就会换号，
 #: 与 D-8「实际进入似然的数组才是噪声条件」直接冲突（T19a）。
 #: 这是 P0-1：**复合键与独立键不能重复主张同一个条件**。
-SIGMA_MEMBER_KEYS = ("sigma_mode", "sigma_pct", "sigma_abs")
+#:
+#: 退出哈希**不等于**不校验：副本与本体必须一致（`_chk_config_sigma`），
+#: 不一致的记录降级——不能让一条自相矛盾的噪声条件静默拿到号。
+SIGMA_MEMBER_KEYS = ("sigma_mode", "sigma_pct", "sigma_abs", "sigma_floor")
 
 #: `source_coverage` 的闭集（§3.1.2 四种结果）。
 COVERAGE_STATES = ("complete", "undeclared_loaded", "external_path", "snapshot_missing")
@@ -331,15 +343,17 @@ def config_effect(key: str, *, role: str = "parent") -> str | None:
 def config_keys_in_run_id(effective: Mapping, *, role: str = "parent") -> list[str]:
     """`config.effective` 里**进 `run_id`** 的键（按码位排序）。
 
-    两道门：`effect ∈ RUN_ID_EFFECTS`，**且**不是 `sigma` 复合块的来源子字段。
-    后一道是 P0-1 的修正：`sigma_mode`/`sigma_pct`/`sigma_abs` 的语义已被复合键
-    承载（`array_sha256` + `floor`），再让它们各自进哈希就等于允许"来源写法"
-    冒充"噪声条件"：`abs=None` 物化成 `0.01·max|Z|` 与显式 `abs=0.03` 写出同一个
-    数组、`sigma_abs` 与块里 `abs` 却不同，这时换号就是 D-8 禁止的（T19a）。
+    两道门：`effect ∈ RUN_ID_EFFECTS`，**且**不是 `sigma` 复合块的冗余副本
+    （`SIGMA_MEMBER_KEYS`，四个）。后一道是 P0-1 的修正：`sigma_mode`/`sigma_pct`/
+    `sigma_abs`/`sigma_floor` 的语义已被复合键承载（`array_sha256` + `floor`），
+    再让它们各自进哈希就等于允许"来源写法"冒充"噪声条件"：`abs=None` 物化成
+    `0.01·max|Z|` 与显式 `abs=0.03` 写出同一个数组、`sigma_abs` 与块里 `abs` 却不同，
+    这时换号就是 D-8 禁止的（T19a）。`sigma_floor` 同理——它就是块里的 `floor`，
+    同一个地板不能有第二个身份入口（T19d）。
 
     它们仍留在 `RUN_ID_CONFIG_KEYS` 里（`effect=execution_condition` 不变）：
     这张表管的是"这个键属于哪一类条件"，进不进哈希是"由谁承载"的第二个问题。
-    记录里保留它们，供人读"这个数组是怎么来的"。
+    记录里保留它们，供人读"这个数组 / 这个地板是怎么来的"。
     """
     return sorted(k for k in effective
                   if k not in SIGMA_MEMBER_KEYS
@@ -400,6 +414,11 @@ def sigma_array_sha256(arr: Any) -> str:
 #: 它们是"这个数组是怎么来的"，而似然只认数组本身（D-8 / T19）。
 SIGMA_RUN_ID_FIELDS = ("array_sha256", "floor")
 
+#: `make_sigma` 的模式与"实际进似然的形态"是**一一对应**的（`nested_fit.py:113`）：
+#: `free` ⇒ 无固定数组；`scalar` ⇒ `(2,)` 广播；`perpoint` ⇒ `(2, n)`。
+#: 所以 `kind` 与 `mode` 不能各写各的——形状由模式决定，配错就是造一个不存在的记录。
+KIND_BY_MODE = {"free": "none", "scalar": "scalar_pair", "perpoint": "perpoint"}
+
 
 def sigma_run_id_value(block: Mapping) -> dict:
     """把 `sigma` 复合块投影成进哈希的那两个子字段。
@@ -407,6 +426,16 @@ def sigma_run_id_value(block: Mapping) -> dict:
     `floor` 显式区分**缺失 / `None` / `0.0`**：`0.0` 是"无下界"这个真实取值，
     `None` 是"没记录"，缺字段是"没写"。原来的 `block.get("floor") or 0.0`
     把后两种**静默当成 `0.0`**——那等于替记录编一个值，而且编得看不出来。
+
+    **`mode`↔`kind` 的自洽在这里校，不只在 `sigma_block()` 里校**：构造函数只能
+    约束"我们自己造出来的块"；处理历史 / 外部记录时走的是这条路径，谁也没拦着
+    有人手写一个 `{kind: "scalar_pair", mode: "free"}` 的块——它描述的是一个
+    物理上不存在的形态（`free` 意味着没有固定数组），却带着 `array_sha256` 拿号。
+    所以身份入口必须自己校一遍（T19e）。
+
+    `sigma` 与 `sigma_floor` 在 `bm_top._check_sigma` 里是**互斥**的：固定 σ 时
+    floor 无意义、会直接报错。因此 `kind≠none` 且 `floor≠0` 是一条不可能发生的
+    记录，只可能来自写错的 runner——同样在这里拒掉，别让它带号。
     """
     if not isinstance(block, Mapping):
         raise ValueError("sigma 必须是复合块（见 sigma_block），收到 "
@@ -422,6 +451,16 @@ def sigma_run_id_value(block: Mapping) -> dict:
     kind = block.get("kind")
     if kind not in SIGMA_KINDS:
         raise ValueError(f"sigma.kind 必须是 {SIGMA_KINDS} 之一，收到 {kind!r}")
+    mode = block.get("mode")
+    if mode is None:
+        raise ValueError("sigma.mode 缺失：来源口径必须记（契约 §3.3.5 标为必填），"
+                         "缺了就无法校验它和 kind 是否自洽")
+    if mode not in KIND_BY_MODE:
+        raise ValueError(f"sigma.mode 必须是 {tuple(KIND_BY_MODE)} 之一，收到 {mode!r}")
+    if KIND_BY_MODE[mode] != kind:
+        raise ValueError(
+            f"sigma.kind={kind!r} 与 mode={mode!r} 不自洽："
+            f"mode={mode!r} 只能配 {KIND_BY_MODE[mode]!r}（形状由模式决定）")
     arr = block.get("array_sha256")
     if arr is not None:
         arr = canon_sha256(arr, what="sigma.array_sha256")
@@ -429,16 +468,14 @@ def sigma_run_id_value(block: Mapping) -> dict:
         raise ValueError("sigma.kind≠none 却没有 array_sha256：实际噪声数组才是身份")
     if kind == "none" and arr is not None:
         raise ValueError("sigma.kind='none' 却带 array_sha256：自由 σ 没有固定数组")
+    if kind != "none" and floor != 0.0:
+        raise ValueError(
+            f"sigma.kind={kind!r} 却带 floor={floor!r}：`_check_sigma` 里固定 σ 与 "
+            "`sigma_floor` 互斥，这条记录不可能来自一次真实运行")
     return {"array_sha256": arr, "floor": floor}
 
 
-#: `make_sigma` 的模式与"实际进似然的形态"是**一一对应**的（`nested_fit.py:113`）：
-#: `free` ⇒ 无固定数组；`scalar` ⇒ `(2,)` 广播；`perpoint` ⇒ `(2, n)`。
-#: 所以 `kind` 与 `mode` 不能各写各的——形状由模式决定，配错就是造一个不存在的记录。
-KIND_BY_MODE = {"free": "none", "scalar": "scalar_pair", "perpoint": "perpoint"}
-
-
-def sigma_block(*, kind: str, mode: str | None = None, sigma: Any = None,
+def sigma_block(*, kind: str, mode: str, sigma: Any = None,
                 pct: float | None = None, abs_: float | None = None,
                 floor: float = 0.0, from_data: bool = False) -> dict:
     """构造 `config.effective["sigma"]` 的复合值（§3.3.5）。
@@ -447,19 +484,27 @@ def sigma_block(*, kind: str, mode: str | None = None, sigma: Any = None,
     （`make_sigma`）。两者必须自洽（`KIND_BY_MODE`），但 `pct`/`abs` 与块里的
     投影值**不必相等**：`abs=None` 会被物化成 `0.01·max|Z|`，块里记的是物化后的数，
     而 `sigma_abs` 记的是入参 `None`。**只有 `mode` 两边必须一致**——它决定数组形状。
+
+    `mode` **没有默认值**：§3.3.5 把它标为必填，而它又是 `kind` 的唯一校验依据。
+    给个默认值等于允许"没记来源"的块进入流通，到 `sigma_run_id_value()` 才炸——
+    那时候已经分不清是"没记"还是"记错了"。
     """
     if kind not in SIGMA_KINDS:
         raise ValueError(f"sigma.kind 必须是 {SIGMA_KINDS} 之一，收到 {kind!r}")
-    if mode is not None:
-        if mode not in KIND_BY_MODE:
-            raise ValueError(f"sigma.mode 必须是 {tuple(KIND_BY_MODE)} 或 None，"
-                             f"收到 {mode!r}")
-        if KIND_BY_MODE[mode] != kind:
-            raise ValueError(
-                f"sigma.kind={kind!r} 与 mode={mode!r} 不自洽："
-                f"mode={mode!r} 只能配 {KIND_BY_MODE[mode]!r}（形状由模式决定）")
+    if mode is None:
+        raise ValueError("sigma.mode 不能是 None：它决定数组形状，必须显式记录")
+    if mode not in KIND_BY_MODE:
+        raise ValueError(f"sigma.mode 必须是 {tuple(KIND_BY_MODE)} 之一，"
+                         f"收到 {mode!r}")
+    if KIND_BY_MODE[mode] != kind:
+        raise ValueError(
+            f"sigma.kind={kind!r} 与 mode={mode!r} 不自洽："
+            f"mode={mode!r} 只能配 {KIND_BY_MODE[mode]!r}（形状由模式决定）")
     if floor is None:
         raise ValueError("sigma.floor 不能是 None：无下界写 0.0，None 表示没记录")
+    if kind != "none" and floor != 0.0:
+        raise ValueError(f"kind={kind!r} 与 floor={floor!r} 互斥：固定 σ 时噪声地板"
+                         "无意义（bm_top._check_sigma 会直接报错）")
     if kind == "none":
         if sigma is not None:
             raise ValueError("kind='none' 表示噪声由后验采样，sigma 必须是 None")
@@ -790,16 +835,17 @@ def _type_ok(tag: str, value: Any) -> bool:
 
 
 def _chk_config_sigma(eff: Mapping) -> list[str]:
-    """`sigma` 复合块的有效性，以及它与来源子字段的一致性。
+    """`sigma` 复合块的有效性，以及它与**四个冗余副本**的一致性。
 
     **为什么必须要求 `sigma` 在场**：P0-1 之后噪声条件只由复合块承载
-    （`array_sha256` + `floor`）。它要是不在，`sigma_mode`/`sigma_pct`/`sigma_abs`
-    又都不进哈希，噪声条件就**完全从身份里消失了**——所以缺块必须降级。
+    （`array_sha256` + `floor`）。它要是不在，`sigma_mode`/`sigma_pct`/`sigma_abs`/
+    `sigma_floor` 又都不进哈希，噪声条件就**完全从身份里消失了**——所以缺块必须降级。
 
-    **为什么只校 `mode`，不校 `pct`/`abs`**：后两者是**入参**，块里记的是**物化后**
-    的值（`scalar` + `abs=None` ⇒ `0.01·max|Z|`）。入参 `None` 与物化值不相等是正常的，
-    硬校会把一次正常运行判成矛盾。`mode` 不同：它决定数组形状与走哪个分支，
-    两处写法必须一致。
+    **为什么校 `sigma_floor`，不校 `pct`/`abs`**：`pct`/`abs` 是**入参**，块里记的是
+    **物化后**的值（`scalar` + `abs=None` ⇒ `0.01·max|Z|`），入参 `None` 与物化值不
+    相等是正常的，硬校会把一次正常运行判成矛盾。`sigma_floor` 与块里的 `floor` 却是
+    **同一个数**（`bm_top._check_sigma` 的参数就是它），两处不一致只可能是记录坏了。
+    不一致时**降级**，不静默选一个：选哪个都是替记录编条件。
     """
     if "sigma" not in eff:
         return ["config_incomplete:sigma"]
@@ -807,14 +853,33 @@ def _chk_config_sigma(eff: Mapping) -> list[str]:
     if not isinstance(block, Mapping):
         return ["sigma_block_invalid:not_mapping"]
     try:
-        sigma_run_id_value(block)
+        proj = sigma_run_id_value(block)
     except (ValueError, TypeError) as exc:
         return [f"sigma_block_invalid:{exc}"]
+
+    out: list[str] = []
     mode = block.get("mode")
     got = _cell_value(eff.get("sigma_mode"))
     if mode is not None and got is not None and got != mode:
-        return [f"sigma_mode_mismatch:{got}≠{mode}"]
-    return []
+        out.append(f"sigma_mode_mismatch:{got}≠{mode}")
+
+    if "sigma_floor" not in eff:
+        # **生效值总是存在**，只是来源不同：`bm_top.fit_top` 与 `bm_real` 的入口有这个
+        # 参数；`nested_fit.run` 没有（`nested_fit.py:319` 的签名里没有它），它调
+        # `fit_top` 时也不传，于是走 `fit_top` 的默认 `0.0`。两种情形在记录里的区别只是
+        # `origin`（`cli` vs `default`），**不是"这一项可以不存在"**。
+        # 所以缺它就是 capture 漏了。不许拿全局默认值补齐——补出来的 0.0 会让
+        # "没记录"看起来像"记了 0"，而这正是身份契约最不能有的那种静默。
+        out.append("config_incomplete:sigma_floor")
+    else:
+        try:
+            fl = _norm_float(_cell_value(eff.get("sigma_floor")), key="sigma_floor")
+        except (ValueError, TypeError) as exc:
+            out.append(f"config_value_invalid:sigma_floor({exc})")
+        else:
+            if fl != proj["floor"]:
+                out.append(f"sigma_floor_mismatch:{fl!r}≠{proj['floor']!r}")
+    return out
 
 
 def _chk_config(cfg: Mapping, rec: Mapping, *, role: str) -> list[str]:

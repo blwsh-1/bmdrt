@@ -1,6 +1,6 @@
 {
   "manifest_version": "1",
-  "identity_contract_version": "1.3",
+  "identity_contract_version": "1.4",
   "generated_by": "docs/round_2026-11-13/build_source_manifest.py",
   "note": "声明集只列**文件与角色**，不存内容哈希；降级须 why_not_numeric + evidence。",
   "defaults": {

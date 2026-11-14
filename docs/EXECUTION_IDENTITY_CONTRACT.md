@@ -1,19 +1,30 @@
-# 执行身份契约 v1.3（部分冻结；`exec_identity.py` 已实现，runner 未授权）
+# 执行身份契约 v1.4（部分冻结；`exec_identity.py` 已实现，runner 未授权）
 
-状态：**`v1.3`，2026-11-14。声明集已落盘、反例矩阵已跑通 65/65；runner 仍未实现。**
+状态：**`v1.4`，2026-11-14。声明集已落盘、反例矩阵已跑通 68/68；runner 仍未实现。**
 registry `0.7.0`（`b2675c8255bea716`）、`records.jsonl`、快照、`R-` 计数（0 条）、
-独立数（239 / 严格 237）**全部未动**——三轮只动四个文件（`exec_identity.py`、
+独立数（239 / 严格 237）**全部未动**——四轮只动四个文件（`exec_identity.py`、
 `source_manifest.json`、`round_2026-11-13/build_source_manifest.py`、
 `test_exec_identity.py`），没有一行生产拟合代码被改。
 
-`v1.3` 是**实现审查的修复轮**，不是新功能：审查指出实现没有忠实兑现设计的两处
-（P0-1 σ 的独立键与复合键同时主张同一个条件；P0-2 覆盖关系只看自称字段、没有从集合
-重算），以及两处 P1（配置类型没校验、`sigma.floor` 用真值判断掩盖非法输入）。
-四条都改了，新增 11 条反例（T19c/T23a–d/S8/Y5/Y6/C1–C3/X5）。
-**`identity_contract_version` 从 `1.2` 升到 `1.3`**——载荷语义变了（D-4：语义一变就换号，
-哪怕一条记录都还没有）。
+`v1.4` 只做一件事：**把 `v1.3` 的 P0-1 收尾**。审查确认 `v1.3` 的方向对，但 P0-1 还有
+两个缺口，都在**记录校验层**而不是哈希投影本身：
 
-两处**"测试通过 ≠ 实现正确"**的实例，记在这里当方法提醒：
+- **缺口 A**：`sigma_floor` 仍然独立进哈希。契约写着"`floor` 就是 `sigma_floor`"，
+  实现却让同一个噪声地板有两条身份通道，且**不校验两者相等**——一条
+  `sigma.floor=0.01 / sigma_floor=0.02` 的记录既自相矛盾、又能拿 `R1-`。
+- **缺口 B**：`KIND_BY_MODE` 只在 `sigma_block()` 里检查。真正处理落盘记录的
+  `sigma_run_id_value()` 不查 `mode`↔`kind`，于是手写的
+  `{kind: "scalar_pair", mode: "free"}` 能拿到有效身份——那是一个物理上不存在的形态。
+
+两处都改了，新增 3 条反例（T19d/T19e/T19f），`X5` 从"三个副本"扩到四个。
+**`identity_contract_version` `1.3` → `1.4`**：`sigma_floor` 退出哈希键集，载荷变了
+（D-4：语义一变就换号，哪怕一条记录都还没有）。
+
+**P0-2（集合复算）本轮未动**——审查已确认它通过静态审查，且明确要求这轮只补 P0-1。
+边界照旧保留：它证明的是"给定的集合会被正确复算"，**不**证明 runner 采到的
+`runtime_loaded_modules` 就是完整真实集合（§18.2）。
+
+三处**"测试通过 ≠ 实现正确"**的实例，记在这里当方法提醒：
 
 - T19a 原来只改块里一个嵌套字段，于是"独立键把号拉开"这个 bug 测不出来。
   现在按 `nested_fit.run` 的真实结构写记录（块 + `sigma_mode`/`sigma_pct`/`sigma_abs`
@@ -23,6 +34,10 @@ registry `0.7.0`（`b2675c8255bea716`）、`records.jsonl`、快照、`R-` 计�
   互相自洽，谁都没跟集合对过。现在 T23c 的三条原因
   （`undeclared_claim_mismatch` / `undeclared_loaded:sneaky.py` / `source_coverage_mismatch`）
   **全部**来自集合复算，旧代码一条也产生不出来。
+- `v1.3` 的 T19a 也通过了，但 `sigma_floor` 仍有两个入口：**一格通过只证明它测的那条
+  路径是对的**。把 `_chk_config_sigma()` 退回 `v1.3` 版本，T19d 立刻变成
+  `recorded` + `R1-5f9727fb58…`；把 `sigma_run_id_value()` 退回 `v1.3` 版本，
+  T19e 立刻变成 `recorded` + `R1-d40d48a3…`。三处都已实测（命令见 §17）。
 
 **本轮没有做的事**：没有为了让测试变绿而降低任何真实模块的 `compute_role`（M2 钉住
 "降级零条"）；没有把"同号"说成"结果相同"（T7/T8/W4 三格专测这条边界）；
@@ -506,17 +521,45 @@ unclassified  = { k ∈ effective : effect(k) 未登记 }          （非空 ⇒
 | `mode` | enum(`free`/`scalar`/`perpoint`) | ✓ | ✗ | `make_sigma` 的**来源**口径（`nested_fit.py:121`）；与 `kind` 必须自洽（`KIND_BY_MODE`） |
 | `pct` / `abs` | float? | 对应 mode | ✗ | **入参**值；`abs=None` 会被物化成 `0.01·max\|Z\|`，所以它允许与物化值不同 |
 | `array_sha256` | str? | `kind≠none` 时 ✓ | **✓** | 对**实际**传入的数组求摘要；`kind=none` 时必须为 `null` |
-| `floor` | float | ✓ | **✓** | `sigma_floor`，与 `sigma` 互斥。**缺失 / `None` / 负数一律报错**：`0.0` 是"无下界"这个真实取值、`None` 是"没记录"、缺字段是"没写"，三者不许混（P1-2） |
+| `floor` | float | ✓ | **✓** | 就是 `bm_top._check_sigma` 的 `sigma_floor`，与固定 σ **互斥**。**缺失 / `None` / 负数一律报错**：`0.0` 是"无下界"这个真实取值、`None` 是"没记录"、缺字段是"没写"，三者不许混（P1-2）。`kind≠none` 时必须是 `0.0`——固定 σ 配 floor 在源码里直接报错，这种记录不可能来自一次真实运行 |
 | `from_data` | bool | ✓ | ✗ | 决定 `elpd` 有没有留一解释（`fit_top` 的 `elpd_valid_*`） |
 | `elpd_valid` | bool | ✓ | ✗ | 派生自 `from_data`，进产物供读者判断 |
 
-**噪声条件只能有一个主张者（P0-1）**：`sigma_mode`/`sigma_pct`/`sigma_abs` 在
-`RUN_ID_CONFIG_KEYS` 里仍登记为 `execution_condition`（它们确实属于执行条件），但
-**不参与哈希**——`SIGMA_MEMBER_KEYS` 列出它们，`config_keys_in_run_id()` 跳过。
-它们是上面 `mode`/`pct`/`abs` 的副本；若各自再进哈希，两次运行"实际 σ 数组逐位相同、
-只是来源写法不同"就会换号，D-8 当场失效（T19a 守这一格，X5 守结构侧）。
+**噪声条件只能有一个主张者（P0-1）**：`sigma_mode`/`sigma_pct`/`sigma_abs`/**`sigma_floor`**
+在 `RUN_ID_CONFIG_KEYS` 里仍登记为 `execution_condition`（它们确实属于执行条件），但
+**不参与哈希**——`SIGMA_MEMBER_KEYS` 列出它们四个，`config_keys_in_run_id()` 跳过。
+它们是上面 `mode`/`pct`/`abs`/`floor` 的副本；若各自再进哈希，两次运行"实际 σ 数组逐位
+相同、只是来源写法不同"就会换号，D-8 当场失效（T19a 守这一格，X5 守结构侧）。
 **"属于哪一类条件"和"由谁承载"是两个问题，别混。** 这一条的直接后果：`sigma` 块
 **必须**在场，缺了就是 `config_incomplete:sigma`——否则噪声条件会从身份里整体消失。
+
+`sigma_floor` 是 `v1.3` 漏掉的那个入口，值得单说：契约本行写着"`floor` 就是
+`sigma_floor`"，而 `v1.3` 一边让块的 `floor` 进哈希、一边让顶层 `sigma_floor` 也进哈希。
+同一个噪声地板有了两个身份入口，而且**没有任何校验要求两者相等**——一条
+`sigma.floor=0.01 / sigma_floor=0.02` 的记录既自相矛盾、又能拿到 `R1-`。
+`v1.4` 的处理是两半：
+
+1. **退出哈希**：它只是副本，承载者是块里的 `floor`；
+2. **强制一致**：`_chk_config_sigma()` 要求 `sigma_floor == sigma.floor`，不一致 ⇒
+   `sigma_floor_mismatch` ⇒ `derived`；顶层整个缺失 ⇒ `config_incomplete:sigma_floor`
+   ⇒ 同样 `derived`（**不拿全局默认值补 0.0**——补出来的 0 会让"没记录"看起来像"记了 0"）。
+   不一致时不许静默选一个：选哪个都是替记录编条件（T19d）。
+
+   这两种处置都是**降级**，不是"发第二个号"：副本写错不该制造一个平行身份，只该让这条
+   记录失去 `R1-` 资格（T19d/T19f 合起来钉这个区别——"不能造成重复换号"的正确读法是
+   "不许出现第二个有效号"）。
+
+   注意"这个 Profile 有没有该参数"与"记录里该不该有这一项"是两件事：
+   `nested_fit.run`（`nested_fit.py:319`）的签名里**没有** `sigma_floor`，它调 `fit_top`
+   时也不传，于是走 `fit_top` 的默认 `0.0`。记录里仍要写这一项，只是 `origin="default"`。
+   **生效值总是存在**——所以缺项只能解释成 capture 漏了，不能解释成"这个入口没有它"。
+
+**`mode`↔`kind` 的自洽必须在身份入口校，不只在构造函数里校（P0-1 缺口 B）**。
+`sigma_block()` 造块时当然检查，但 `sigma_run_id_value()` 处理的是**已经落盘的记录**
+——历史和外部记录不会经过构造函数。所以这条检查搬进了 `sigma_run_id_value()`，
+并对 `mode` 缺失也报错（§3.3.5 表里它是必填）。手写一个
+`{kind: "scalar_pair", mode: "free"}` 的块不会报错，只会拿到 `R1-`：`free` 意味着
+噪声由后验采样、没有固定数组，它却带着 `array_sha256`——这是物理上不存在的形态（T19e）。
 
 **进哈希的是投影，不是整个块**：`sigma_run_id_value()` 只取
 `{array_sha256, floor}` 两个子字段，其余六个**留记录、不进哈希**。
@@ -545,12 +588,13 @@ sha256( b"v1\n" + f"{a.shape[0]}x{a.shape[1]}\n" + np.ascontiguousarray(a, "<f8"
 ⇒ 似然完全一样 ⇒ 是同一组条件。而 `from_data` 只改 `elpd` 的**解释**，不改后验
 ⇒ 归 `workflow`（`decision` 层），不进 `run_id`。
 
-**T19 的措辞订正过两次，现在是这个形状（`v1.3`）**：
+**T19 的措辞订正过三次，现在是这个形状（`v1.4`）**：
 
 | 原写法 | 为什么做不到 | 现写法 |
 |---|---|---|
 | `perpoint,pct=2` → `scalar,abs=` 使数组逐位相同 | `scalar` 是 `(2,)`、`perpoint` 是 `(2,n)`，形状不同就不可能"同一个数组" | 拆成"同数组不同**来源**"与"同 `mode` 数组变" |
 | T19a 只改块里的一个嵌套字段 | 真实捕获里 `sigma_mode`/`sigma_pct`/`sigma_abs` 是**三个独立入参**同时落盘；只改块内字段测不出 P0-1 | T19a 现在**块与独立键同时改**，模拟 `nested_fit.run` 的真实记录 |
+| "副本清单"只有三个（`mode`/`pct`/`abs`） | `sigma_floor` 漏在清单外，于是它与 `floor` 重复主张同一个条件 | 副本清单是四个；`sigma_floor` 退出哈希且必须等于 `floor`（T19d/T19f） |
 
 `mode` 与 `kind` **一一对应**（`KIND_BY_MODE`），所以"同数组、不同 `mode`"在物理上
 不存在——不是没测，是**不可能**。真正可实现的"同数组、不同来源"是：
@@ -709,6 +753,18 @@ v1 只做一件事：把 `recorded` 的**必填集**写清楚。
 | 两个时点 + `code.runtime_snapshot_limitation`（写明缺哪个、为什么、降级处置） | `derived`，原因码 `snapshot_point_declared_missing:<p>` | 声明限制**不能**免降级，否则等于把 §3.1.2 偷偷放宽；区别只在读者能看出"结构上挂不上"而非"忘了采"（P1-3） |
 | 记录结构性非法（`sigma` 块坏、`floor` 缺失、进哈希的键类型错） | `unconfirmed`，**无号** | 载荷规范化不出来，"降一档发个号"做不到；三档里只有 `unconfirmed` 允许没有号（Y5/C1） |
 
+**`v1.4` 补的一条（P0-1 的另一半）**：副本与本体的**一致性**也是 `recorded` 的门槛。
+
+| 情形 | 结果 | 理由 |
+|---|---|---|
+| `sigma_floor` 与 `sigma.floor` 不等 | `derived`（`sigma_floor_mismatch`） | 同一个量两个值，说明记录自相矛盾；不许静默选一个（T19d） |
+| 顶层 `sigma_floor` 缺失 | `derived`（`config_incomplete:sigma_floor`） | **生效值总是存在**（`fit_top`/`bm_real` 有这个参数；`nested_fit.run` 没有，它不传 ⇒ 走 `fit_top` 默认 `0.0`），差别只在 `origin`（`cli` vs `default`）。既然总该有，缺它就是 capture 漏了；**不拿全局默认值补 0.0**，因为补出来的 0 会让"没记录"看起来像"记了 0" |
+| `sigma` 块的 `mode`/`kind` 不自洽、或 `mode` 缺失 | `unconfirmed`，**无号** | 身份入口（不是构造函数）必须校——落盘记录不走构造函数（T19e） |
+
+注意区分两件事：`sigma_floor` **退出哈希**（它不是条件，只是副本），但它**仍然被校验**
+（副本必须等于本体）。"不进 `run_id`"和"不检查"完全不是一回事——`v1.3` 的洞就是把
+前者当成了后者。
+
 **为什么两组缺失后果不同**：`data`/`rng`/`budget` 缺了，我们连"跑的是什么"都不知道，
 这时发任何 id 都是编造（现有规则，`RUN_ID_MISSING` 三个真实原因 + `not_provided` 哨兵）；
 `code`/`env`/`config` 缺了，条件仍大致可描，发 `D-` 但必须标出缺哪一项。
@@ -779,12 +835,12 @@ workflow_id = "W1-" + sha256(
 `run_id` 相同 ⇒ 拟合条件相同；**不**表示初值/采样实例相同（`rng.actual.*` 不进哈希，T8）；
 **不**表示产物相同（`instance.*` 不进哈希，T7）；**不**表示工作流相同（那是 `workflow_id`）。
 
-### 6.2 反例矩阵（T/W/S/Y/M/X/C 七组，65 格）
+### 6.2 反例矩阵（T/W/S/Y/M/X/C 七组，68 格）
 
 这组用例比再加十几个字段有用：它直接检验 `run_id` 的语义是否成立。左列是改动，
 右两列是**必须**出现的差异。任一格不符，键表或委托规则就是错的。
 
-**已实现并跑通 65/65**（`test_exec_identity.py`）。表里"实测"列写的是这条
+**已实现并跑通 68/68**（`test_exec_identity.py`）。表里"实测"列写的是这条
 **现在由哪个用例守着**；`v1.2-draft` 时这一列全是"待跑"。
 
 | # | 改动 | `run_id` | 该变什么 | 防的失败模式 |
@@ -810,6 +866,9 @@ workflow_id = "W1-" + sha256(
 | T19a | σ 数组逐位相同、来源口径不同（块 `abs` 与独立键 `sigma_abs` 同时 `None`→`0.03`） | **同** | `sigma.array_sha256` 不变 | 来源子字段不进哈希（P0-1）；**块与独立键必须同时改**，否则测不出冲突 |
 | T19b | `kind=none`（自由 σ）→ `kind=scalar_pair` | **必须不同** | `array_sha256` 从 `null` 变为有值 | 自由 σ 与固定 σ 不是同一组条件 |
 | T19c | 同 `mode`：`pct` 2→2.5；以及 `pct=2` vs `2.0` | 前者**不同**、后者**同** | `sigma.array_sha256` | D-8 的落点：数组才是噪声条件；同一个数两种写法不换号 |
+| T19d | `sigma.floor` 与顶层 `sigma_floor` 单向不一致（两个方向各测一次）；顶层整个缺失；两处同改 | 前三者 `derived`（`sigma_floor_mismatch` / `config_incomplete:sigma_floor`），最后一格**换号且 `recorded`** | 不一致时**没有** `R1-` | 同一个地板不能有两个身份入口，也不许静默选一个（P0-1 缺口 A） |
+| T19e | **手工构造**的块：`kind=scalar_pair` + `mode=free`；缺 `mode`；`kind=none` 带数组 | 全部 `unconfirmed`、**无号** | `sigma_block_invalid` + `unhashable:` | 自洽检查不能只写在构造函数里——落盘记录不走构造函数（P0-1 缺口 B） |
+| T19f | 只换冗余字段的写法：`sigma_floor` 写 `0` 与 `0.0` | **同号**，且 `sigma_floor` 不在载荷里 | `sigma.array_sha256` / `floor` 都不变 | 副本不是条件；退出哈希后写法差异不许造出第二个号 |
 | T20 | `adsorption=_UNSET` → 显式 `None`（等价） | **同** | `origin` 变 | 哨兵未解析（F12） |
 | T21 | `zeta="1.0"` → `1.0` | **同** | 归一化后同值 | 字符串/数字未归一（F12） |
 | T22 | 声明了 `numeric` 模块但这次没加载 | 同 | `declared_not_loaded` 非空 | 覆盖规则误判（应无害） |
@@ -823,7 +882,7 @@ T10/T19/T20/T21 是 `v1.2` 的核心主张，也是最容易被"改回去"的四
 它们都要求**同号**，而直觉上"改了配置"应该换号。理由在 §3.3.5–§3.3.6——
 `run_id` 认的是"进似然的东西"，不是"写下来的字符串"。
 
-**逐条实测状态（`test_exec_identity.py`，65/65）**：T1–T24 全部有对应用例，名字就是
+**逐条实测状态（`test_exec_identity.py`，68/68）**：T1–T24 全部有对应用例，名字就是
 `case_T1_branch` … `case_T24_bundle_gap`。三处**在写测试时才发现的措辞错误**已订正，
 这正是"边写边测"的价值：
 
@@ -853,7 +912,7 @@ Y 组测六块各自缺项时降哪一档，M 组测清单本身（含"降级零
 | S5 | `<f8` vs `>f8`；`float32(0.1)` vs `float64(0.1)` | 前两者同摘要；后者**必须不同** | 把"字节序"和"数值"混为一谈（原措辞写反） |
 | S6 | C/F 内存布局；转置 | 布局无关；转置**不同** | 把"归一化"写成"敏感性"（原措辞写反） |
 | S7 | σ ≤ 0 | 报错 | `Normal.scale` 不接受 0，写进身份才发现就晚了 |
-| S8 | `kind`/`mode` 不自洽；`floor` 缺失 / `None` / 负数 | 全部报错；`floor=0.0` 合法 | `(2,)` 与 `(2,n)` 是两个世界；`None` 被 `or 0.0` 静默当 0（P1-2） |
+| S8 | `kind`/`mode` 不自洽；`mode=None`；固定 σ + `floor>0`；`floor` 缺失 / `None` / 负数 | 全部报错；`floor=0.0` 合法 | `(2,)` 与 `(2,n)` 是两个世界；`None` 被 `or 0.0` 静默当 0（P1-2）；固定 σ 与 floor 在源码里本就互斥（v1.4） |
 | Y1–Y4 | `env` 摘要不符 / 未登记配置键 / 预算非 `recorded` / `rng.plan` 缺项或 `n_chains` 不符 | `derived`、`derived`、`unconfirmed`（无号）、`unconfirmed`（无号） | 三档台阶被抹平；"没有号"被伪造成号 |
 | Y5 | `sigma` 块坏掉（`kind≠none` 却无 `array_sha256`） | `unconfirmed` + `unhashable:`，**无号** | 载荷建不起来时"降一档发个号"是编造 |
 | Y6 | 只采到 `before_fit`/`after_fit`；以及再加 `runtime_snapshot_limitation` | 两者都是 `derived`（原因码不同）；三时点齐则 `recorded` | 两个时点的成功不能冒充三个（P1-3） |
@@ -983,7 +1042,7 @@ run_id_prefix: "R1-"/"D1-"           # D-4 已定；前缀只是辅助标识
 | 2 | 可恢复的证据有明确来源（文件 + 字段 + 复算方式） | ✅ 数据内容哈希 239/239；6 条 seed 有产物来源 |
 | 3 | 不可恢复的明确标为不可恢复（原因 + 为什么不可恢复） | ✅ 9 份产物零身份字段、mtime 只给上界、库模块无副本 |
 | 4 | 判重与独立性可复算（双口径同报、三套测试、`--check`） | ✅ 契约 76/76、快照 9/9、`--check` rc=0 |
-| 5 | 后续 runner 有一套**经过实跑验证**的身份契约 | ⚠️ 契约与声明集已实现并跑通 65/65，**但没有一次真实运行**（runner 未授权）⇒ 本条仍不成立 |
+| 5 | 后续 runner 有一套**经过实跑验证**的身份契约 | ⚠️ 契约与声明集已实现并跑通 68/68，**但没有一次真实运行**（runner 未授权）⇒ 本条仍不成立 |
 
 **冻结判据**：1–4 成立 + 5 的契约被审查通过并至少经一次真实运行验证（P1）。
 不由 `R-` 数量决定——233 条永远 `derived` 也可以是可信的历史基线；把"重跑补齐"当冻结条件，
@@ -1050,7 +1109,7 @@ W1；`bm_select` 选择/重跑变 → W2（入口）；`kk_mode` 门禁变 → T
 | P0 | 认下 §3.3.4 三张键表 | ✅ 已落成 `RUN_ID_CONFIG_KEYS`（38 键 × 类型 × `effect`） | 否 |
 | P1 | 落 `source_manifest.json`（三份 Profile） | ✅ 15/19/18 个文件，**降级零条** | 否 |
 | P1 | 实现身份计算（纯函数） | ✅ `exec_identity.py`：三层摘要、`run_id`、`workflow_id`、status | 否 |
-| P1 | 跑 §6.2 反例矩阵 | ✅ **65/65**（T×29、W×6、S×8、Y×6、M×8、X×5、C×3） | 否 |
+| P1 | 跑 §6.2 反例矩阵 | ✅ **68/68**（T×32、W×6、S×8、Y×6、M×8、X×5、C×3） | 否 |
 | P0 | 冻结契约（**只冻结验过的**） | ✅ §18 冻结台账；未验证项标 `draft` | 否 |
 | **P1** | **写 runner 落字段 + 1 次真实运行**（含补丁包重建校验） | ⛔ **仍待单独授权** | 是，限 runner |
 | P1 | 重跑 4 次历史条件建 6 条新记录（`purpose=baseline_rebuild`） | ⛔ 依赖上一行 | 是，跑实验 |
@@ -1098,6 +1157,19 @@ W1；`bm_select` 选择/重跑变 → W2（入口）；`kk_mode` 门禁变 → T
 | `v1.2-draft` | 2026-11-14 | **从实际签名反推参数表**：三入口键表（§3.3.4）、字段委托表（§3.3.3）、`sigma` 复合键（§3.3.5）、归一化规则（§3.3.6）、`workflow` 块（§3.3.7）；`effect` 三值 → 六值；新增 F11/F12、§3.1.3（三份 Profile，数字由 `audit_source_profiles.py` 算出）、§6.2 反例矩阵；新提 D-5～D-8 待裁；`data.transform`（D-7） |
 | **`v1.2`** | 2026-11-14 | **动工**：D-5 有条件采纳（补第三层 `workflow_source_tree_sha256`）、D-6/D-7/D-8 采纳；新增 `exec_identity.py`（三层摘要 / `run_id` / `workflow_id` / 状态阶梯，纯函数）、`source_manifest.json`（三 Profile，15/19/18 文件，降级零条）、`build_source_manifest.py`、`test_exec_identity.py`（**54/54**）；新增 §3.1.4（降级证据）、§6.3（`workflow_id`）、§6.2.1（W/S 组）、§18（冻结台账）；**订正三处原措辞**（T19、T1、T10，见 §6.2）；`sigma` 改为显式投影（只 `array_sha256`+`floor` 进哈希） |
 | **`v1.3`** | 2026-11-14 | **实现审查的修复轮**（P0-1/P0-2 + P1-1/P1-2/P1-3）：① `sigma_mode`/`sigma_pct`/`sigma_abs` 退出哈希（`SIGMA_MEMBER_KEYS`），复合块成噪声条件唯一载体，缺块 ⇒ `config_incomplete:sigma`；② `_chk_code()` 由 `runtime_loaded_modules` 与声明集**重算**覆盖关系，`undeclared_claim_mismatch`/`declared_not_loaded_mismatch`/`source_coverage_mismatch` 三码；③ `_type_ok()` 让键表的类型与枚举标签**被执行**，`bool` 不再冒充 `int`，`kk_mode` 收紧到 `{gate,warn,off}`；④ `sigma.floor` 缺失/`None`/负数报错，`kind`↔`mode` 由 `KIND_BY_MODE` 强制自洽；⑤ 三时点契约化（`SNAPSHOT_POINTS`）+ `runtime_snapshot_limitation`，声明限制也**照样降级**；⑥ 结构性非法落 `unconfirmed`（`unhashable:`），不降一档发号；**`identity_contract_version` `1.2`→`1.3`**；反例 54→**65** |
+| **`v1.4`** | 2026-11-14 | **P0-1 收尾**（缺口 A/B）：① `sigma_floor` 加入 `SIGMA_MEMBER_KEYS`（四个副本），退出哈希——它与 `sigma.floor` 是同一个量，原来有两条身份通道；`_chk_config_sigma()` 要求两者相等，不一致 ⇒ `sigma_floor_mismatch` ⇒ `derived`，顶层缺失 ⇒ `config_incomplete:sigma_floor`（**不拿全局默认值补 0.0**）；② `mode`↔`kind` 自洽检查从 `sigma_block()` 搬进 `sigma_run_id_value()`（身份入口），`mode` 缺失也报错；`sigma_block()` 的 `mode` 去掉默认值；③ 顺带落实 `_check_sigma` 的互斥约束：`kind≠none` 时 `floor` 必须为 `0.0`；**`identity_contract_version` `1.3`→`1.4`**；反例 65→**68**（T19d/T19e/T19f，X5 扩到四个副本） |
+
+**`v1.4` 的三处"退回即失败"验证**（不是"加了代码但没生效"）：
+
+| 退回什么 | 哪一格失败 | 观察到的错误行为 |
+|---|---|---|
+| `config_keys_in_run_id()` 去掉副本过滤（= `v1.3` 之前的键集） | X5 | `sigma_mode` 又进哈希 |
+| `_chk_config_sigma()` 退回 `v1.3`（不校 `sigma_floor`） | T19d | 自相矛盾的地板拿到 `recorded` + `R1-5f9727fb58…` |
+| `sigma_run_id_value()` 退回 `v1.3`（不校 `mode`↔`kind`） | T19e | `{kind: scalar_pair, mode: free}` 拿到 `recorded` + `R1-d40d48a3…` |
+
+做法是把对应函数替换成旧实现（`monkeypatch` 到模块属性上，因为 `_chk_config()` 走的是
+全局名字查找），跑那一格、确认 `AssertionError`，然后恢复。**"能通过"和"能被打破"
+是两件事**：一个反例只有在撤销修复后会失败，才证明它守着那条规则。
 
 ---
 
@@ -1123,7 +1195,8 @@ W1；`bm_select` 选择/重跑变 → W2（入口）；`kk_mode` 门禁变 → T
 | 状态阶梯（六块 → 三档） | Y1 Y2 Y3 Y4 T22 T23 | `data`/`rng`/`budget` 缺 ⇒ `unconfirmed` 且**无号**；`code`/`env`/`config` 缺 ⇒ `derived` |
 | `sha256` 语义与 registry 一致 | X1（+ registry D12） | 64 位十六进制；无效**抛错**不退化 |
 | 声明集合法性与清单同步（含预览可复算） | M1–M8 | 降级须 `why_not_numeric`+`evidence`；入口两处都在；`--check` rc=0 |
-| σ 的**单一主张者**：三个来源子字段不进哈希 | T19a T19b T19c X5 S8 | 复合块是唯一载体；`mode` 与 `kind` 一一对应；`floor` 缺失/`None`/负数报错，`0.0` 合法 |
+| σ 的**单一主张者**：四个冗余副本不进哈希 | T19a T19b T19c T19f X5 S8 | 复合块是唯一载体；`mode` 与 `kind` 一一对应；`floor` 缺失/`None`/负数报错，`0.0` 合法；`kind≠none` 时 `floor` 必须为 `0.0` |
+| σ 副本与本体**必须一致** | T19d T19e | `sigma_floor == sigma.floor`（含两个方向 + 缺失）；`mode`↔`kind` 在**身份入口**校而不只在构造函数校；`sigma_floor` 退出哈希 ≠ 不校验 |
 | 覆盖关系**从集合复算**，不信自称字段 | T23a T23b T23c T23d T22 | `undeclared = runtime − declared`、`not_loaded = declared − runtime`；两条差集与 `source_coverage` 都必须与重算一致 |
 | 配置值类型与枚举闭集进判定 | C1 C2 C3 Y2 | 类型标签会被执行（不再是注释）；`bool` 不是 `int`；`kk_mode ∈ {gate,warn,off}` |
 | 结构性非法 ⇒ `unconfirmed`（无号） | Y5 C1 | 载荷规范化不出来时不发号：`unhashable:<msg>` |
@@ -1140,6 +1213,7 @@ W1；`bm_select` 选择/重跑变 → W2（入口）；`kk_mode` 门禁变 → T
 | `env` 五项的真实采集 | `platform`/`packages` 在夹具里是常量 | runner 采集 |
 | D-3「线程数不进哈希」的量化前提 | 没有线程敏感性实验 | `sampler_sensitive` 那条线的实测 |
 | §12 判据 5（经过实跑验证的契约） | 现在就停在这一条 | 上面两行 |
+| σ 副本的真实取值 | 夹具里的 `sigma_floor` 恒为 `0.0`（`nested_fit` 路径根本不传 floor）；`floor>0` 与"固定 σ + floor=0"两个分支只有 `sigma_block` 的构造侧证据 | runner 捕获一条 `sigma=None + sigma_floor>0` 的真实记录 |
 
 **这张表不是待办清单，是免责边界**：18.1 的每一项都有反例护着，18.2 的每一项都只是
 设计合理。把 18.2 说成"已验证"，等于重犯 `HISTORICAL_EXEC_IDENTITY_GAP.md` 里那类错——

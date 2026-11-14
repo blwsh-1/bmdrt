@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""test_exec_identity.py —— 执行身份契约 v1.3 的反例矩阵（T/W/S/Y/M/X/C 七组）。
+"""test_exec_identity.py —— 执行身份契约 v1.4 的反例矩阵（T/W/S/Y/M/X/C 七组）。
 
 测的是**语义**不是数字：每一格问的都是"这个改动该不该换号"。所以记录是人工搭的
 最小 v1 记录，不跑拟合——`run_id` 的输入是记录，不是 numpyro。
@@ -452,6 +452,91 @@ def case_T19c_perpoint_pct():
     return "T19c pct 2≡2.0 同号；2→2.5 换号"
 
 
+def case_T19d_sigma_floor_single_claim():
+    """`sigma.floor` 与顶层 `sigma_floor` 是**同一个量**，必须一致（P0-1 缺口 A）。
+
+    它们分别走两条通道：块里的 `floor` 进哈希，顶层的 `sigma_floor` 原来也独立进哈希。
+    于是同一个噪声地板有两个身份入口，而且没有任何校验要求它们相等——一条
+    `sigma.floor=0.01 / sigma_floor=0.02` 的记录可以既自相矛盾、又拿到 `recorded`。
+    """
+    r = _rec()
+    base = E.evaluate(r)
+    assert base["status"] == "recorded", base
+
+    # ① 只改顶层（块内不动）⇒ 自相矛盾，不能 recorded
+    bad = _set(copy.deepcopy(r), "config.effective.sigma_floor.value", 0.01)
+    ev = E.evaluate(bad)
+    assert ev["status"] == "derived", f"自相矛盾的噪声地板拿到 R1-：{ev}"
+    assert any(x.startswith("sigma_floor_mismatch") for x in ev["reasons"]), ev["reasons"]
+
+    # ② 只改块内（顶层不动）⇒ 同样矛盾：两个方向都不许静默选一个
+    bad2 = _set(copy.deepcopy(r), "config.effective.sigma.value.floor", 0.01)
+    ev2 = E.evaluate(bad2)
+    assert ev2["status"] == "derived", ev2
+    assert any(x.startswith("sigma_floor_mismatch") for x in ev2["reasons"]), ev2["reasons"]
+
+    # ③ 顶层整个缺失 ⇒ 不拿全局默认值补齐，降级
+    r3 = _rec()
+    del r3["config"]["effective"]["sigma_floor"]
+    ev3 = E.evaluate(r3)
+    assert ev3["status"] == "derived", ev3
+    assert "config_incomplete:sigma_floor" in ev3["reasons"], ev3["reasons"]
+
+    # ④ 两处一起改（真实条件变了）⇒ 换号，而且仍 recorded
+    both = _set(copy.deepcopy(r), "config.effective.sigma.value.floor", 0.01)
+    _set(both, "config.effective.sigma_floor.value", 0.01)
+    ev4 = E.evaluate(both)
+    assert ev4["status"] == "recorded", ev4
+    assert ev4["run_id"] != base["run_id"], "floor 真的变了却没换号"
+    return "T19d 两向不一致/缺失 ⇒ derived；两处同改 ⇒ 换号"
+
+
+def case_T19e_persisted_mode_kind():
+    """**手工构造**的块（绕过 `sigma_block`）必须同样被校：`mode`↔`kind` 不自洽 ⇒ 无号。
+
+    这正是缺口 B：自洽检查只写在构造函数里，而身份判定处理的是**已经落盘的记录**——
+    历史/外部记录不会经过构造函数。下面这个块描述的是物理上不存在的形态：
+    `mode="free"` 意味着噪声由后验采样、没有固定数组，它却带着 `array_sha256`。
+    """
+    r = _rec()
+    arr = E.sigma_array_sha256(np.array([0.03, 0.03]))
+    blk = {"kind": "scalar_pair", "mode": "free", "array_sha256": arr,
+           "floor": 0.0, "pct": None, "abs": None,
+           "from_data": False, "elpd_valid": False}
+    _set(r, "config.effective.sigma.value", blk)
+    _set(r, "config.effective.sigma_mode.value", "free")     # 两处 mode 一致 ⇒ 旧检查放行
+    ev = E.evaluate(r)
+    assert ev["status"] == "unconfirmed", f"mode/kind 不一致却拿到号：{ev}"
+    assert ev["run_id"] is None and ev["workflow_id"] is None, ev
+    assert any("sigma_block_invalid" in x and "不自洽" in x for x in ev["reasons"]), \
+        ev["reasons"]
+
+    # 缺 `mode`：§3.3.5 标它必填；缺了就没法校自洽性
+    blk2 = {k: v for k, v in blk.items() if k != "mode"}
+    _set(r, "config.effective.sigma.value", blk2)
+    ev2 = E.evaluate(r)
+    assert ev2["status"] == "unconfirmed", ev2
+    assert any("sigma_block_invalid" in x and "mode" in x for x in ev2["reasons"]), \
+        ev2["reasons"]
+
+    # 反向：`kind="none"` 却带数组
+    _set(r, "config.effective.sigma.value", dict(blk, kind="none", mode="free"))
+    assert E.evaluate(r)["status"] == "unconfirmed"
+    return "T19e 持久化块 mode↔kind 不自洽 / 缺 mode / kind=none 带数组 ⇒ 均无号"
+
+
+def case_T19f_redundant_floor_writing():
+    """顶层 `sigma_floor` 退出哈希后，**只换写法**不许换号（副本不是条件）。"""
+    r = _rec()
+    r2 = _set(copy.deepcopy(r), "config.effective.sigma_floor.value", 0)
+    a, b = E.evaluate(r), E.evaluate(r2)
+    assert a["status"] == b["status"] == "recorded", (a, b)
+    assert a["run_id"] == b["run_id"], "`0` 与 `0.0` 换了号（同一个数两种写法）"
+    # 副本不进载荷：这条是"换号"的根因，结构侧再钉一次
+    assert "sigma_floor" not in E.run_id_payload(r)["config"], "sigma_floor 进了载荷"
+    return "T19f sigma_floor 只换写法同号；且不在载荷里"
+
+
 def case_T19b_sigma_none_vs_block():
     r1 = _rec()
     r2 = _set(copy.deepcopy(r1), "config.effective.sigma.value",
@@ -743,7 +828,13 @@ def case_S8_kind_mode_and_floor():
         m = _expect_raise(E.sigma_run_id_value, bad)
         assert "floor" in m, m
     assert E.sigma_run_id_value(dict(blk, floor=0.0))["floor"] == 0.0
-    return "S8 kind/mode 不自洽被拒；floor 缺失/None/负数被拒，0.0 合法"
+    # `mode` 没有默认值：它决定形状，缺了就无法校验自洽性（v1.4）
+    assert "mode" in _expect_raise(E.sigma_block, kind="none", mode=None)
+    # 固定 σ 与 floor 互斥（`bm_top._check_sigma` 的直接后果）
+    assert "互斥" in _expect_raise(E.sigma_block, kind="scalar_pair", mode="scalar",
+                                   sigma=(0.03, 0.03), floor=0.01)
+    return ("S8 kind/mode 不自洽、mode=None、固定σ+floor 均被拒；"
+            "floor 缺失/None/负数被拒，0.0 合法")
 
 
 # --------------------------------------------------------------------------
@@ -948,7 +1039,7 @@ def case_X2_v0_record_rejected():
     r2 = _set(_rec(), "identity_contract_version", "1.0")
     msg2 = _expect_raise(E.run_id_payload, r2)
     assert "1.0" in msg2 or "identity_contract_version" in msg2, msg2
-    return "X2 缺版本 / v1.0 记录不许套 v1.3 载荷"
+    return "X2 缺版本 / v1.0 记录不许套 v1.4 载荷"
 
 
 def case_X4_voigt_K_dual_effect():
@@ -1032,10 +1123,11 @@ def case_C3_types_dict_and_bool():
 
 
 def case_X5_sigma_members_not_hashed():
-    """结构护栏：三个来源子字段**不在**进哈希的键集里，`sigma`/`sigma_floor` 在。
+    """结构护栏：四个冗余副本**不在**进哈希的键集里，只有 `sigma` 在。
 
-    T19a 是行为侧（同号），这一格是结构侧（键集）。两格同时守着 P0-1：
-    只靠行为测试，将来有人"顺手把 effect 改回进哈希"，某条路径仍可能漏。
+    T19a/T19d 是行为侧（同号 / 不一致降级），这一格是结构侧（键集）。两格同时守着
+    P0-1：只靠行为测试，将来有人"顺手把 effect 改回进哈希"，某条路径仍可能漏。
+    `sigma_floor` 必须在这一格里——它曾经漏过一次，正是因为当时只列了三个。
     """
     eff = _val(_rec(), "config.effective")
     keys = E.config_keys_in_run_id(eff)
@@ -1043,11 +1135,14 @@ def case_X5_sigma_members_not_hashed():
         assert k in eff, f"夹具缺 {k}：这一格测不到"
         assert k not in keys, f"{k} 又进哈希了（P0-1 复发）"
         assert E.config_effect(k) == "execution_condition", f"{k} 的 effect 归类被改了"
-    assert "sigma" in keys and "sigma_floor" in keys
+    assert set(E.SIGMA_MEMBER_KEYS) == {"sigma_mode", "sigma_pct", "sigma_abs",
+                                        "sigma_floor"}, "副本清单被改了，先确认原因"
+    assert "sigma" in keys, "sigma 复合块本身必须进哈希"
     payload = E.run_id_payload(_rec())["config"]
     for k in E.SIGMA_MEMBER_KEYS:
         assert k not in payload, f"{k} 出现在载荷里"
-    return "X5 sigma_mode/pct/abs 已登记、不在哈希集、不在载荷里"
+    assert payload["sigma"] == {"array_sha256": None, "floor": 0.0}, payload["sigma"]
+    return "X5 四个副本已登记、不在哈希集、不在载荷里；载荷只有 sigma{2 子字段}"
 
 
 # --------------------------------------------------------------------------
@@ -1073,6 +1168,9 @@ CASES = [
     ("T19a sigma 来源", case_T19a_sigma_source_not_identity),
     ("T19b sigma kind", case_T19b_sigma_none_vs_block),
     ("T19c pct 物化", case_T19c_perpoint_pct),
+    ("T19d sigma_floor 单一主张", case_T19d_sigma_floor_single_claim),
+    ("T19e 持久化块 mode↔kind", case_T19e_persisted_mode_kind),
+    ("T19f 副本换写法", case_T19f_redundant_floor_writing),
     ("T20 _UNSET", case_T20_unset_resolved),
     ("T21 zeta", case_T21_zeta_norm),
     ("T22 声明未加载", case_T22_declared_not_loaded),
