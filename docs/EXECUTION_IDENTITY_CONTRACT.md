@@ -1,12 +1,15 @@
 # 执行身份契约 v1（草案，未实现，待审查）
 
-状态：**草案 `v1.1-draft`，2026-11-14。只定义，不实现。** 本轮仍零代码改动：
+状态：**草案 `v1.2-draft`，2026-11-14。只定义，不实现。** 本轮仍零代码改动：
 registry `0.7.0`（`b2675c8255bea716`）、`records.jsonl` 未动、快照未重冻结、
 `R-` 仍 0 条、独立数 239 / 严格 237。
 
-`v1.1` 只做一件事：把 `v1.0` 的三处 P0 缺陷（源码集不完整、`git_diff` 不能重建、
-按类型选配置键）与三处内部不一致改掉。**D-1～D-4 已裁决**（§13），但**实现仍未授权**：
-字段表、哈希纳入表、`recorded` 判据要先冻结成文本，再写 runner。
+`v1.2` 只做审查要求的两件事：**把参数表和字段委托规则从实际签名反推出来**，再据此给
+三个入口各定一份源码 Profile。新增 §3.3.3（委托表）、§3.3.4（三入口键表）、
+§3.3.5（`sigma` 复合键）、§3.3.6（归一化）、§3.3.7（`workflow` 块）、§3.1.3（三份
+声明集，数字由 `audit_source_profiles.py` 从源码算出）、§6.2（反例矩阵）。
+**D-1～D-4 已裁决**（§13.1），`v1.2` 又提出 **D-5～D-8 待裁**（§13.4）——它们是在
+反推参数时暴露的结构问题，不是新功能。**实现仍未授权**：键表与 Profile 需要先被认下来。
 
 为什么先写契约，而不是先去改 runner：`run_id` 是 `RUN_ID_BASIS` 六个字段的哈希，
 **加一个字段就等于换一次号**（0.5.0 → 0.7.0 已经把 239 行全换过一遍）。字段定义错一次，
@@ -52,6 +55,8 @@ registry `0.7.0`（`b2675c8255bea716`）、`records.jsonl` 未动、快照未重
 | **F8** | **`git diff` 被当成可重建**（v1.1 新增） | 未跟踪的 `new_model.py`：文件名进了清单，内容没进 diff | 补丁包必须含未跟踪文件**内容**，否则不许说"可重建"（§7.2） |
 | **F9** | **按类型选配置键**（v1.1 新增） | 只哈希数值 ⇒ `include_L`/`branch`/`adsorption` 这类开关漏掉，两个不同条件拿到同一个号 | 判据改为"是否改变算什么/怎么算"，键集合带类型与效果分类（§3.3） |
 | **F10** | **摘要声称覆盖未参与计算的字段**（v1.1 新增） | 说 `python` 已被 `env_sha256` 覆盖，而摘要只由包名版本拼成 | 解释器版本进摘要，或单列进哈希（§3.2） |
+| **F11** | **导入闭包被当成"参与计算的代码"**（v1.2 新增） | Profile B 的静态闭包 17 个模块，其中 `drt`/`bm_kk`/`bm_ws`/`bm_grade`/`bm_circuit` 只是被 `bm_real` 顶层的 `import` 拖进来，`fit_top` 一次都不调用；改一行画图脚本就换号 | 声明集（完整性）与 **numeric 集（进哈希）** 分开，`role` 默认 `numeric`，降级要有理由且要过验证（§3.1.3） |
+| **F12** | **"没写"与"写了但等于默认"混成一种状态**（v1.2 新增） | `adsorption=_UNSET` vs `None`（`bm_select.py:269/419`）、`zeta="1.0"` 是字符串、`include_L=None` 走 `detect_L`（`bm_real.py:2696`）、`sigma_abs=None` 在 `scalar` 模式下变成 `0.01·max|Z|`（`nested_fit.py:129`）——记原值等于什么都没记 | `effective` 记**归一化后的值** + `origin`，哨兵必须先解析成具体值（§3.3.6） |
 
 F1/F2/F3 是这次审计的对象；F4/F5/F6 是这批 239 条记录里**同样存在、但被"代码版本"挡住了**
 的问题——`R-` 0 条让人以为只缺一个字段。实际上就算补上代码版本，`budget_source` 仍有 233 条是
@@ -92,8 +97,9 @@ execution
 | 字段 | 类型 | 来源 | 必填 | 校验 | 缺失后果 | 进 `run_id` |
 |---|---|---|---|---|---|---|
 | `git_commit` | str | 运行时 `git rev-parse HEAD` | ✓ | 40 位十六进制；**不许短哈希** | `derived` / `code_commit_missing` | ✓ |
-| `declared_source_set` | list[{path, sha256, role}] | 声明清单（§3.1.1） | ✓ | role ∈ {entry, module, config, asset}；path 为 POSIX 相对路径；按路径码位排序；无重复 | `derived` / `declared_set_missing` | ✗（摘要由它算） |
-| `declared_source_tree_sha256` | str | 对上面这份集合求摘要 | ✓ | 64 位十六进制，可按 `declared_source_set` 复算 | `derived` / `declared_set_missing` | ✓ |
+| `declared_source_set` | list[{path, sha256, role, compute_role, why_not_numeric?}] | 声明清单（§3.1.1） | ✓ | `role ∈ {entry, module, config, asset}`；`compute_role ∈ {numeric, decision, plot_only, cli_only, reference_only, budget_source}`，**省略即 `numeric`**；非 numeric 必须给 `why_not_numeric`；path 为 POSIX 相对路径；按路径码位排序；无重复 | `derived` / `declared_set_missing` | ✗（摘要由它算） |
+| `declared_source_tree_sha256` | str | 对**整份**声明集求摘要 | ✓ | 64 位十六进制，可按 `declared_source_set` 复算 | `derived` / `declared_set_missing` | ✗（完整性证据，见 D-5） |
+| `numeric_source_tree_sha256` | str | 对 `compute_role == numeric` 的子集求摘要 | ✓ | 64 位；子集为空表 ⇒ 报错（不许"什么都不算"） | `derived` / `declared_set_missing` | ✓ |
 | `declared_not_loaded` | list[str] | 声明集 − 运行时集 | ✓（可为空表） | 子集关系必须成立 | —（只记录） | ✗ |
 | `runtime_loaded_modules` | list[{path, role}] | 三个时点的 `sys.modules` 快照并集（§3.1.2） | ✓ | 只含项目代码；realpath 记录 | `derived` / `runtime_snapshot_missing` | ✗ |
 | `runtime_snapshot_taken` | bool | runner | ✓ 且必须 `true` | 静态扫描得出的集合**不算** | `derived` / `runtime_snapshot_missing` | ✗ |
@@ -117,8 +123,10 @@ execution
 2. **显式补充**：`source_manifest.json`（入库文件）里手工列出的项——动态
    `importlib.import_module(<计算出的名字>)`、模板/配置/先验表等无法静态求出的依赖，
    每项必须写 `reason`；
-3. **角色标注**：`entry`（入口脚本）、`module`（项目模块）、`config`（影响数值的配置/先验表）、
-   `asset`（其它必须随代码一起的静态资源）；
+3. **角色标注**（两个维度，别混）：
+   - `role`（文件是什么）：`entry` / `module` / `config` / `asset`；
+   - `compute_role`（改不改数字）：`numeric`/`decision`/`plot_only`/`cli_only`/`reference_only`/`budget_source`，
+     **省略即 `numeric`**，见 §3.1.3；
 4. **摘要**：`sha256("v1\n" + 逐行 "<posix_path>\0<content_sha256>\n" 按路径码位排序)`；
    行尾按 `\n` 归一（`*.py`/`*.toml`/`*.json`/`*.yaml`/`*.cfg`），其余按字节；
    归一规则写进 `config.normalize`。
@@ -142,6 +150,57 @@ execution
 **覆盖规则被强制核对**，而不是来自"我们从 `sys.modules` 里看到了多少"。这是 `v1.0`
 最实质的一处修正：`v1.0` 说"盖不住未加载但会被 import 的下一次"，现在这句话不再成立——
 没被声明的东西一旦真的加载，运行就降级。
+
+#### 3.1.3 三份 Profile 的声明集（数字从源码算出，不是列目录）
+
+`docs/round_2026-11-13/audit_source_profiles.py`（只读，AST，不执行被审代码）从三个入口
+分别求导入闭包。**它立刻暴露了 F11**：
+
+| Profile | 入口 | 闭包模块数 | 行数 | 函数体内导入的项目模块（拟合前不可见） |
+|---|---|---|---|---|
+| A | `bm_real`（Voigt 单族） | **13** | 9392 | `bm_real → bm_circuit, bm_ref_rwp`；`bm_ad → bm_kk`；`bm_corr → bm_core`；`bm_diff → bm_core`；`bm_kk → fit_store`；`bm_ref_rwp → bm_core` |
+| B | `nested_fit`（nested） | **17** | 13376 | 同 A，另加 `nested_fit → bm_core`、`bm_top_gen → bm_top` |
+| C | `bm_select`（跨族） | **16** | 12860 | 同 B（`bm_select` 自身不延迟导入项目模块） |
+
+三条结论，都直接影响键表和 Profile：
+
+1. **`nested_fit` 在函数体内 `import bm_core`**（`nested_fit.py:211`，只在
+   `with_voigt=True` 的对照路径上）。这就是 F7 的活样本：**只在 `before_fit` 取一次
+   `sys.modules` 会漏掉它**，而 AST 闭包看得见。
+2. **Profile B 的闭包被 `bm_real` 拖宽**：`nested_fit` 只用到 `bm_real.load_spectrum`，
+   但 `bm_real` 顶层 `import bm_core/bm_experiments/bm_grade/drt/bm_kk`，于是
+   `drt`、`bm_kk`、`bm_ws`、`bm_grade`、`fit_store`、`bm_circuit`、`bm_ref_rwp`
+   全进了 B 的闭包——**`fit_top` 一次都不调用它们**。若把整份闭包哈希进 `run_id`，
+   改一行 `bm_circuit` 的画图代码就会让所有 nested 运行换号。这正是 F11。
+3. **`nested_fit → bm_select` 只为 `BUDGETS` 常量**（`nested_fit.py:73`）。它的数值效应
+   已经由 `budget_params`（`standard` 档 2000/1000/2/0.98/10）捕获，不需要再进 numeric 集。
+
+**所以 `role` 拆成两个字段**：`role` 说"这是什么文件"，`compute_role` 说"它改不改数字"。
+
+| `compute_role` | 含义 | 进 `numeric` 摘要 | 允许的模块（举例，最终以 `source_manifest.json` 为准） |
+|---|---|---|---|
+| `numeric` | 参与数据解析 / 正演 / 似然 / 先验 / 初值 / 采样调用 | ✓ | `bm_real` `bm_core` `bm_top` `bm_diff` `bm_ad` `bm_corr` `drt`（初值来源） |
+| `budget_source` | 只被读取常量（预算档） | ✗ | `bm_select`（Profile B 里只为 `BUDGETS`） |
+| `decision` | 事后诊断 / 选择 / 评分 | ✗ | `bm_experiments` `bm_grade` `bm_select`（Profile C 的判定逻辑） |
+| `reference_only` | 附加对照产物 | ✗ | `bm_ref_rwp` |
+| `plot_only` | 只画图 | ✗ | `bm_circuit` |
+| `cli_only` | 只解析命令行 / 打印 | ✗ | 入口脚本本身（`role=entry` 时可同时 `cli_only`？**不行**，见下） |
+
+**入口脚本必须是 `numeric`**：它决定调用哪个函数、传什么值。把入口降成 `cli_only`
+等于让"改了一行默认参数"不换号——正好是 F4。所以 `bm_real`/`nested_fit`/`bm_select`
+作为 Profile 入口一律 `numeric`（`bm_select` 在 Profile B 里是 `budget_source`，
+因为对 B 而言它不是入口、只贡献一个常量）。
+
+**降级不是声明就算数**，必须过验证（D-5 待裁）：
+
+- `plot_only` / `reference_only`：关掉该功能的那次运行里，模块**不出现在** `runtime_loaded_modules`；
+- `decision` / `budget_source`：**改动该模块里一个不相关的常量或注释**后重跑，产物数值字段
+  （`params`/`metrics`/`elpd`）逐位相同；
+- 两条都不过 ⇒ `compute_role` 判错，退回 `numeric`，`numeric_source_tree_sha256` 变、
+  该运行降 `derived`。
+
+**默认值的保守方向只有一个**：不写 `compute_role` 就是 `numeric`。宁可多换号，
+不能让一次真实的代码改动悄悄沿用旧号——后者会把两次不同代码的执行判成重复（F6 那类反向错误）。
 
 ### 3.2 `env` —— 环境身份（v1.1 修 F10）
 
@@ -178,7 +237,7 @@ v1.0 把 `python`/`python_impl` 写成"被 `env_sha256` 覆盖"，但当时的�
 "同 `run_id` ≠ 逐位相同"。若将来随机流敏感性实验证明线程配置显著改变结果，
 **升契约版本**处理，不在 v1 里偷偷改语义。
 
-### 3.3 `config` —— 实际生效的运行配置（v1.1 重写）
+### 3.3 `config` —— 实际生效的运行配置（v1.1 重写，v1.2 补键表与委托）
 
 | 字段 | 类型 | 来源 | 必填 | 校验 | 缺失后果 | 进 `run_id` |
 |---|---|---|---|---|---|---|
@@ -191,24 +250,57 @@ v1.0 把 `python`/`python_impl` 写成"被 `env_sha256` 覆盖"，但当时的�
 #### 3.3.1 判据：改变"算什么/怎么算"，不是"是不是数字"
 
 这是 P0-3 的修法。`v1.0` 的 `NUMERIC_CONFIG_KEYS` 会漏掉布尔与枚举开关，而后者的影响往往
-更大——本仓库里现成的例子（`bm_select.fit_voigt` / `fit_nested` 的真实签名）：
+更大。`v1.2` 按审查给的分类把 `effect` 从三值扩到**六值闭集**（D-6 待裁）：
 
-| 键 | 类型 | `effect` | 为什么 |
+| `effect` | 进 `run_id` | 含义 | 判据一句话 |
 |---|---|---|---|
-| `include_L` | bool | `model_definition` | 打开串联 `jωL`，族空间变了 |
-| `adsorption` | enum(str\|None) | `model_definition` | 打开 `R·jωτ/(1+jωτ)` 低频支路 |
-| `branch` | enum | `model_definition` | `parallel` / `series` 是两种拓扑 |
-| `layers` | int | `model_definition` | 嵌套层数 |
-| `sigma_floor` | float | `execution_condition` | 改变似然尺度 |
-| `sigma_mode` | enum | `execution_condition` | `make_sigma` 的口径 |
-| `progress` | bool | `display_only` | 只影响输出，不进哈希 |
+| `model_definition` | ✓ | 改"算什么"：拓扑、元件、层数、族能力 | 改完，模型空间变了 |
+| `execution_condition` | ✓ | 改"怎么算"：噪声口径、预算、种子、先验尺度 | 改完，同一次运行不再可复现 |
+| `admission_condition` | ✗ | 门禁：决定这次运行**有没有发生**，不改已发生运行的后验 | 门禁只拦，不改数 |
+| `decision_condition` | ✗ | 事后诊断/选择阈值：决定**选哪个** run | 改完，后验不变、结论可能变 |
+| `workflow_scope` | ✗ | 搜索空间、附加子运行、对照产物 | 它描述"跑几次"，不描述"哪一次" |
+| `display_only` | ✗ | 打印/画图/进度 | 改完，产物数值逐位不变 |
 
-所以闭集改名为 **`RUN_ID_CONFIG_KEYS`**，并带 `run_id_config_keys_version: 1`。
+为什么 `admission_condition` 和 `decision_condition` 不进哈希：`run_id` 回答的是
+**"这一次运行的条件"**，而门禁与选择回答的是"哪几次运行被允许发生、最后选了谁"。
+把它们塞进哈希，会让"把 KK 门禁从 gate 换成 warn 再跑一次"变成换号——两次的后验其实
+一模一样。它们的值记在 `workflow`（§3.3.7），**门禁的实际结果**（`kk.status`/`kk_performed`）
+记在产物里。
+
+**`RUN_ID_CONFIG_KEYS` 全局注册表（v1，`run_id_config_keys_version: 1`）**
+
 闭集的目的**不是**限制类型，而是**防止 `run_id` 随无害开关抖动**（每个多余键都把样本切碎）；
-类型只是每行的一个属性。
+类型只是每行的一个属性。键名一律用小写原样（不改写、不加前缀），`effect` 只允许上表六值。
 
-不进哈希、也不重复记录的键：`seed`（在 `rng.plan`）、五项预算（在 `budget_params`）、
-`init_strategy`（在 `rng.plan`）。§13 D-2 规定了这层权威关系。
+| 键 | 类型 | `effect` | 出现在 | 出处 |
+|---|---|---|---|---|
+| `branch` | enum(`parallel`/`series`) | `model_definition` | B、C | `bm_top.py:913`、`bm_top.py:162` |
+| `layers` | int | `model_definition` | B、C | 同上 |
+| `K` | int | `model_definition` | A、C | `bm_real.py:944`、`bm_select.py:331` |
+| `include_L` | bool（`None` 先解析） | `model_definition` | A、C | `bm_real.py:2696`、`bm_select.py:419` |
+| `adsorption` | enum(`none`/`RL`)（`_UNSET` 先解析） | `model_definition` | A、C | `bm_select.py:269/419` |
+| `diffusion` | enum(`none`/`Ws`/`Wo`…) | `model_definition` | A | `bm_real.py:2657` |
+| `zeta` | enum(`free`) 或 float | `model_definition` | A | `bm_real.py:2659` → `zeta_fixed` |
+| `sigma` | 复合（§3.3.5） | `execution_condition` | A、B | `bm_real.py:964`、`nested_fit.py:115` |
+| `sigma_floor` | float | `execution_condition` | A、B、C | `bm_real.py:944`、`bm_top.py:645` |
+| `sigma_mode` | enum(`free`/`scalar`/`perpoint`) | `execution_condition` | B | `nested_fit.py:121-133` |
+| `sigma_pct` | float | `execution_condition` | B | 同上 |
+| `sigma_abs` | float? | `execution_condition` | B | 同上（`None` ⇒ `0.01·max\|Z\|`） |
+| `zmax_override` | float? | `execution_condition` | A | `bm_real.py:944`、`bm_top.py:913` |
+| `krange` / `wide` / `kmax` / `K_force` | 见各 Profile | `workflow_scope` | A、C | `bm_real.py:2762-2778` |
+| `branches` / `pair_mode` / `n_seeds` / `retry` | 见各 Profile | `workflow_scope` | C | `bm_select.py:1057/1169` |
+| `auto_mechanism` / `auto_mechanism_full` / `auto_adsorption` | bool | `workflow_scope` | A | `bm_real.py:2657` |
+| `with_voigt` / `voigt_K` | bool / int | `workflow_scope`（子运行里 `voigt_K` 是 `model_definition`） | B | `nested_fit.py:319/393` |
+| `ref_rwp` | bool | `workflow_scope` | A | `bm_real.py:2657` |
+| `kk_mode` / `kk_opts` | enum / dict | `admission_condition` | A | `bm_real.py:2715` |
+| `diag` / `drt_opts` | dict | `decision_condition` | A | `bm_real.py:2657` |
+| `gate_b` / `strict` | bool | `decision_condition` | C | `bm_select.py:1072/1074` |
+| `progress` / `verbose` / `plot` / `dry` / `trace` | bool | `display_only` | A、B、C | 各处 |
+
+**不进这张表、也不重复记录的**（权威在别处，§3.3.3）：`seed`（`rng.plan`）、
+五项预算 `n_warmup`/`n_samples`/`num_chains`/`target_accept`/`max_tree_depth`（`budget_params`）、
+`init_values`/`init_strategy`（`rng.plan`/`rng.actual`）、`input_path`/`path`（`data`）、
+`outdir`（`instance`）。§13 D-2 规定这层权威关系，§3.3.3 给判定公式。
 
 #### 3.3.2 `unknown_keys` 怎么求（不能只靠 `inspect.signature`）
 
@@ -216,10 +308,13 @@ v1.0 把 `python`/`python_impl` 写成"被 `env_sha256` 覆盖"，但当时的�
 
 1. `capture_interface.callable` 记**实际被调用的那一层**（例如 `bm_select.fit_voigt`，
    而不是它内部再调用的 `bm_real.fit_one`）；`module`/`line` 供核对；
-2. 该 callable 签名里每个**显式命名参数**都必须出现在 `effective`；
+2. 该 callable 签名里每个**显式命名参数**必须**有归属**：要么在 `effective`，
+   要么被委托给 `data`/`rng`/`budget_params`/`instance`/`workflow`（§3.3.3）——
+   `v1.1` 写的是"必须出现在 `effective`"，与 §3.3.1 的委托条款直接冲突
+   （`nested_fit.run` 的 `seed`/`budget`/`input_path` 都不该重复进 `effective`）；
 3. 若签名有 `**kwargs` 捕获器：凡实际经它传入的键，必须**按名字**逐项出现在 `effective`，
    不许整体塞成一个字典——否则"传了什么"就查不到；
-4. 没有出现在 `effective` 的签名参数 ⇒ `unknown_keys`；出现了但不在 `RUN_ID_CONFIG_KEYS`
+4. 归属算完仍有剩余 ⇒ `unknown_keys`；落在 `effective` 但不在 `RUN_ID_CONFIG_KEYS`
    且没标 `effect` ⇒ `unclassified_keys`；
 5. 两者非空都降级。`unclassified` 单列一条原因，因为它的含义是"有个开关我们不知道它改不改条件"，
    不能和"漏记录"混成一种。
@@ -227,6 +322,170 @@ v1.0 把 `python`/`python_impl` 写成"被 `env_sha256` 覆盖"，但当时的�
 **默认值的界线**（与 §9 一致）：`origin=default` 的值是**生效值**，可以 `recorded`；
 区别在捕获位置——runner 在调用点把默认值物化成显式实参并记下来，是"记录实际值"；
 事后从代码里读一遍默认值是"猜当时用了什么"，不行。
+
+#### 3.3.3 字段委托表（"每个参数只有一个权威字段"）
+
+`v1.1` 只说了"`seed` 在 `rng.plan`、预算在 `budget_params`"，没说清**怎么算剩余**，
+于是为了让 `unknown_keys=[]`，实现者完全可以把 `seed` 再塞一遍进 `effective`。
+现在把它写成表 + 公式：
+
+| 参数类别 | 权威字段 | 允许在 `effective` 重复 | 例子 |
+|---|---|---|---|
+| 数据输入与解析 | `data` | **✗** | `path` / `input_path` / `fscale` / `zscale` / 掩码 |
+| 随机流与初值策略 | `rng.plan` | **✗** | `seed` / `init_strategy` |
+| 采样预算 | `budget_params` | **✗** | `n_warmup` / `n_samples` / `num_chains` / `target_accept` / `max_tree_depth` |
+| 运行实例 | `instance` | **✗** | `outdir` / 实际初值 / `elapsed_s` |
+| 搜索空间与附加运行 | `workflow` | **✗** | `krange` / `n_seeds` / `with_voigt` / `ref_rwp` |
+| 其它执行配置 | `config.effective` | **必须** | `branch` / `layers` / `include_L` / `sigma.*` |
+
+```
+actual_kwargs = 被调用接口本次实际收到的全部实参（含调用点物化的默认值）
+delegated     = { seed, init_* } ∪ { n_warmup, n_samples, num_chains,
+                                    target_accept, max_tree_depth }
+              ∪ { path, input_path, outdir, *workflow 键 }
+unknown_keys  = actual_kwargs − effective − delegated        （非空 ⇒ 降级）
+unclassified  = { k ∈ effective : effect(k) 未登记 }          （非空 ⇒ 降级）
+```
+
+**唯一的"两处出现"是 `num_chains`**：它同时是 `rng.plan.n_chains` 与
+`budget_params.num_chains`，且必须相等。这不算重复定义，算一致性校验
+（不一致 ⇒ `rng_budget_mismatch` ⇒ 降级），因为两处回答的是不同问题：
+"几条链"（随机流结构）与"多少采样预算"。
+
+同理，候选级参数（`K`/`layers`/`branch`/族能力）在 `candidate_id` 与
+`config.effective` 里都会出现——前者是**模型定义层**（已有，不动），后者是
+**执行记录层**；两者必须一致（不一致 ⇒ `candidate_config_mismatch` ⇒ 降级），
+否则"候选说 K=2、实际按 K=3 跑"这种错查不出来。
+
+#### 3.3.4 三个入口的键表（从实际签名反推，不是举例）
+
+审查指出的问题成立：`v1.1` 的七行示例只覆盖 `bm_select` 那一层，直接调
+`bm_real.run()` / `nested_fit.run()` 时需要的键根本没进表。下面三张表按**实际签名**
+逐参数列，出处写到行号。
+
+**Profile A —— `bm_real.run()`（`bm_real.py:2657`，Voigt 单族）**
+
+| 参数 | 类型 | `effect` | 归属 | 归一化 / 备注 |
+|---|---|---|---|---|
+| `path` | str | — | `data.ref` + `sha256` | 解析固定 `load_spectrum(zscale=1)` |
+| `K_force` | int? | `workflow_scope` | `workflow.search.fixed_K` | 固定 K ⇒ 只跑一个候选；模型身份在 `candidate_id` |
+| `krange` | "a,b"? | `workflow_scope` | `workflow.search.krange` | 默认 `[K_drt−1, K_drt+1] ∩ [1, kmax]`，**`K_drt` 由 DRT 预判数据决定** ⇒ "实际跑了几个 K"是数据派生的 |
+| `wide` | bool | `workflow_scope` | `workflow.search.wide` | |
+| `kmax` | int | `workflow_scope` | `workflow.search.kmax` | 默认 `K_MAX=5` |
+| `include_L` | bool? | `model_definition` | `effective.include_L` | `None` ⇒ `detect_L(f,Z)`（`:2696`）⇒ 记**解析后的 bool**，`origin=derived` |
+| `zeta` | str | `model_definition` | `effective.zeta_fixed` | `"free"`⇒null；`"1.0"`⇒1.0（F12） |
+| `dry` | bool | `display_only` | — | 不跑拟合 |
+| `quick` | bool | `execution_condition` | `budget_params` | 800/400/2（`:2770`）⇒ **档名不进哈希，数值进** |
+| `ta` | float? | `execution_condition` | `budget_params.target_accept` | `None` ⇒ 沿用档位 0.9 |
+| `diffusion` | str? | `model_definition` | `effective.diffusion` | `bm_core` 元件 |
+| `kk_mode` | enum | `admission_condition` | `workflow.kk.mode` | 只拦不改数；**实测结果** `kk.status`/`kk_performed` 记产物 |
+| `kk_opts` | dict | `admission_condition` | `workflow.kk.opts`（逐键） | `auto_L` 只影响 KK 内部去电感估计（`bm_kk.py:684`），**不回写** `include_L` |
+| `diag` | dict | `decision_condition` | `workflow.diag` | 事后阈值（相关矩阵 / 扩散可分辨性） |
+| `drt_opts` | dict | `decision_condition` | `workflow.drt` | 影响 DRT 去电感 → 初值 ⇒ 实际初值由 `rng.actual.init_values_sha256` 兜住 |
+| `sigma_floor` | float | `execution_condition` | `effective.sigma.floor` | 与 `sigma` 互斥（`bm_top.py:645`） |
+| `auto_mechanism` / `auto_mechanism_full` | bool | `workflow_scope` | `workflow.extras` | 触发 Ws / ad 补跑 |
+| `adsorption` | "RL"? | `model_definition` | `effective.adsorption` | 与 `diffusion` 互斥（一期屏蔽 both） |
+| `auto_adsorption` | bool | `workflow_scope` | `workflow.extras` | 触发 `(K, RL)` 补跑 |
+| `seed` | int? | `execution_condition` | `rng.plan.root_seed` | `None` ⇒ `KW["seed"]=0`（`_resolve_seed`，`:924`），`origin=default` |
+| `ref_rwp` | bool | `workflow_scope` | `workflow.extras` | 只加参考指标，不改参数推断 |
+
+**Profile B —— `nested_fit.run()`（`nested_fit.py:319`，nested 单族）**
+
+| 参数 | 类型 | `effect` | 归属 | 归一化 / 备注 |
+|---|---|---|---|---|
+| `input_path` | str | — | `data.ref` + `sha256` | `bm_real.load_spectrum` |
+| `outdir` | str | — | `instance.outdir` | 会影响产物落在哪，与条件无关 |
+| `branch` | enum(`parallel`/`series`) | `model_definition` | `effective.branch` | |
+| `layers` | int | `model_definition` | `effective.layers` | |
+| `budget` | enum | `execution_condition` | `budget_params` | `budget_kw`（`:101`）：`standard` = 2000/1000/2/**0.98**/10（`VALIDATION_STANDARD`），其它档取 `bm_select.BUDGETS` 的五项 ⇒ **档名不进哈希** |
+| `sigma_mode` | enum | `execution_condition` | `effective.sigma.mode` | |
+| `sigma_pct` | float | `execution_condition` | `effective.sigma.pct` | `perpoint` 时 σ= pct%·\|Z\|（`:122`） |
+| `sigma_abs` | float? | `execution_condition` | `effective.sigma.abs` | `scalar` 且 `None` ⇒ **`0.01·max\|Z\|`**（`:129`）⇒ 必须记实际 σ 摘要 |
+| `seed` | int | `execution_condition` | `rng.plan.root_seed` | |
+| `target_accept` | float? | `execution_condition` | `budget_params.target_accept` | `None` ⇒ 用档位值（standard 0.98 / quick 0.9） |
+| `plot` | bool | `display_only` | `effective.plot` | 值照记，不进哈希 |
+| `with_voigt` | bool | `workflow_scope` | `workflow.parent.children` | 只加对照子运行，**nested 后验不变** ⇒ 不进 nested 的 `run_id` |
+| `voigt_K` | int | 父：`workflow_scope` / 子：`model_definition` | `child.voigt_K` | 父运行的 `config.voigt_K` 在未开启时是 `None`（`:393`） |
+| `progress` / `verbose` | bool | `display_only` | `effective` | |
+
+**Profile C —— `bm_select.select_across_families()` / `_select_one()`（`:1169` / `:1057`）**
+
+| 参数 | 类型 | `effect` | 归属 | 归一化 / 备注 |
+|---|---|---|---|---|
+| `krange` | tuple | `workflow_scope` | `workflow.search.krange` | 候选 K 网格 |
+| `layers` | tuple | `workflow_scope`（搜索）/ `model_definition`（每候选） | `workflow.search.layers` | 每个候选的 `layers` 进它自己的 `run_id` |
+| `branches` | tuple | `workflow_scope` | `workflow.search.branches` | 默认 `("parallel","series")`（`:235`） |
+| `seed` | int | `execution_condition` | `rng.plan.root_seed` | `select_across_families` 用 `seed+i` ⇒ 每个子运行一个根种子 |
+| `sigma_floor` | float | `execution_condition` | `effective.sigma.floor` | 默认 `SIGMA_FLOOR=0.0` |
+| `kw` | dict | `execution_condition` | `budget_params` | 默认 `QUICK`= 800/400/2/0.9/10（`:127`） |
+| `trace` | bool | `display_only` | `effective` | |
+| `pair_mode` | enum(`pooled`/`per-branch`) | `workflow_scope` | `workflow.pair_mode` | 比较口径：改它不改任何单次运行 |
+| `retry` | int | `workflow_scope` | `workflow.retry` | 触发整批换档重跑 |
+| `strict` | bool | `decision_condition` | `workflow.guards.strict` | A 类 guard 是否进可用性门禁 |
+| `retry_kw` | dict | `execution_condition`（**子运行**） | `budget_params`（重跑档） | 默认 `standard` |
+| `include_L` | bool? | `model_definition` | `effective.include_L` | `None` ⇒ `VOIGT_CAPS["include_L"]`（`:419`） |
+| `adsorption` | `_UNSET` / `None` / `"RL"` | `model_definition` | `effective.adsorption` | `_UNSET` ⇒ `VOIGT_CAPS`；`None` = **显式关**——两者语义不同（F12） |
+| `gate_b` | bool | `decision_condition` | `workflow.guards.gate_b` | 把 `comp_unresolved` 接进族内择优 |
+| `n_seeds` | int | `workflow_scope` | `workflow.n_seeds` | 每个 seed 是一次独立运行，各自一个 `run_id` |
+| `K`（`fit_voigt`）/ `layers`（`fit_nested`） | int | `model_definition` | 候选 `run_id` | 候选级参数，见 §3.3.3 的一致性规则 |
+
+#### 3.3.5 `sigma` 是复合键，不是一个枚举
+
+审查点出的问题：两次都写 `sigma_from_data=True`，实际噪声数组可以不同。所以 `sigma`
+既不是 `sigma_mode` 一个枚举，也不是 `sigma_pct` 一个数：
+
+| 子字段 | 类型 | 必填 | 进 `run_id` | 说明 |
+|---|---|---|---|---|
+| `kind` | enum(`none`/`scalar_pair`/`perpoint`) | ✓ | ✗（由 `array_sha256` 承担） | `fit_top` 的三种形态（`_check_sigma`，`bm_top.py:645`） |
+| `mode` | enum(`free`/`scalar`/`perpoint`) | ✓ | ✗ | `make_sigma` 的**来源**口径（`nested_fit.py:121`） |
+| `pct` / `abs` | float? | 对应 mode | ✗ | 参数值；`abs=None` 会被物化成 `0.01·max\|Z\|` |
+| `array_sha256` | str? | `kind≠none` 时 ✓ | **✓** | 对**实际**传入的 `(2,n)` 数组求摘要 |
+| `floor` | float | ✓ | **✓** | `sigma_floor`，与 `sigma` 互斥 |
+| `from_data` | bool | ✓ | ✗ | 决定 `elpd` 有没有留一解释（`fit_top` 的 `elpd_valid_*`） |
+| `elpd_valid` | bool | ✓ | ✗ | 派生自 `from_data`，进产物供读者判断 |
+
+`array_sha256` 的口径：`sha256(b"v1\n2xN\n" + np.asarray(sigma, "<f8").tobytes(order="C"))`。
+**`kind`/`mode` 不进哈希**是故意的：两次运行的 `mode` 不同、但实际 σ 数组逐位相同
+⇒ 似然完全一样 ⇒ 是同一组条件（T19）。而 `from_data` 只改 `elpd` 的**解释**，
+不改后验 ⇒ 归 `workflow`（`decision` 层），不进 `run_id`。
+
+#### 3.3.6 归一化规则（F12 的对策）
+
+1. **布尔**写成 `true`/`false`；**整数原样**，且 `bool` 不许落进整数位（0.7.0 踩过：
+   `True` 被当成 `1`）；
+2. **浮点**用 `repr`（17 位有效数字），**不四舍五入**——四舍五入会把"改了第 12 位"抹平；
+3. **枚举**用小写原样字符串，且必须落在闭集里（写错就报错，不静默接受）；
+4. **哨兵必须先解析**，不许把哨兵本身记成值：
+
+   | 原值 | 解析后 | `origin` |
+   |---|---|---|
+   | `adsorption=_UNSET` | `VOIGT_CAPS["adsorption"]`（当前 `None`） | `derived` |
+   | `adsorption=None` | `None`（显式关） | `cli`/`config_file` |
+   | `include_L=None` | `detect_L(f, Z)` 的布尔结果 | `derived` |
+   | `target_accept=None` | 档位值（standard 0.98 / quick 0.9） | `tier` |
+   | `sigma_abs=None` + `mode="scalar"` | `0.01·max\|Z\|` | `derived` |
+   | `seed=None` | `KW["seed"]`=0 | `default` |
+
+5. **复合**（`kk_opts`/`diag`/`drt_opts`/`workflow.*`）按键名码位排序写 canonical JSON，
+   键名闭集校验；
+6. **`null` 与空容器不同**：`diag={}` ≠ `diag=null`；
+7. **禁止"就近相等"**：`0.1+0.2` 与 `0.3` 不归一，比较一律逐位。
+
+#### 3.3.7 `workflow` 块（不进 `run_id`，但必须有）
+
+`with_voigt=True` 不是"nested 模型变了"，而是**一次工作流多跑了一个对照**。审查给的
+处置是对的：父工作流 + 独立子运行，避免"多加一个对照"改掉 nested 自己的身份。
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `workflow_id` | str | 由**父运行的搜索空间 + 子运行列表**算出；**不反馈**进任何子 `run_id` |
+| `role` | enum(`parent`/`child`) | 子运行里 `parent_workflow_id` 指回父 |
+| `search` | {krange, kmax, wide, fixed_K, layers, branches, n_seeds} | 搜索空间 |
+| `extras` | {auto_mechanism, auto_mechanism_full, auto_adsorption, with_voigt, ref_rwp} | 触发了哪些附加运行 |
+| `gate` | {kk_mode, kk_status, kk_performed, strict} | 门禁设定**与实测结果** |
+| `guards` | {strict, gate_b, diag, drt_opts} | 事后判定阈值 |
+| `pair_mode` / `retry` / `retry_kw` | 见 Profile C | 比较与重跑口径 |
+| `children` | list[run_id] | 子运行清单（每个都是独立条件身份） |
 
 ### 3.4 `data` —— 数据身份（已有，扩两点）
 
@@ -237,10 +496,16 @@ v1.0 把 `python`/`python_impl` 写成"被 `env_sha256` 覆盖"，但当时的�
 | `f_min` / `f_max` | float? | ✗ | 数值 | ✓（频率窗改变 = 不同条件） |
 | `n_points` | int | ✓（v1 新增） | >0，且 ≤ 源文件行数 | ✓ |
 | `subset_sha256` | str? | 条件性（v1 新增） | 64 位；施加了掩码/抽样才要 | ✓（有掩码时） |
+| `transform` | {fscale, zscale, mask} | ✓（v1.2 新增，可为恒等） | 数值/枚举；`zscale≠1` 会缩放 Z，`fscale≠1` 会缩放频率 | ✓（D-7） |
 | `id_kind` | enum | ✓ | `content_sha256`/`ref_only` | ✗（哈希后看不出来，必须留痕） |
 
 为什么要 `n_points`/`subset_sha256`：同一份 CSV 用 50 点还是 60 点、按频率窗截还是按行号截，
 是**两种不同的输入**。只哈希文件内容会把它们合成同一个条件。
+
+为什么要 `transform`：`bm_real.load_spectrum(path, fscale=None, zscale=1.0)`（`bm_real.py:132`）
+允许在**读取时**缩放频率与阻抗。`zscale=2` 与 `zscale=1` 读同一个文件，进似然的 Z 差一倍，
+而文件哈希完全一样。当前三个 Profile 的入口都不传这两个参数（都是默认值），但字段必须在，
+否则将来一旦有人用上，它就会静默地和原值共用同一个 `run_id`（D-7）。
 
 ### 3.5 `rng` —— 随机流（条件 / 实例分开）
 
@@ -312,8 +577,8 @@ v1 只做一件事：把 `recorded` 的**必填集**写清楚。
 | `data` | `id_kind == content_sha256` + `n_points` | `unconfirmed`（不发 `run_id`） |
 | `rng` | `seed_source` 前缀 `artifact` + `plan` **五项**齐 + `init_values_sha256`（固定初值时） | `unconfirmed` |
 | `budget_params` | 五项全 `source == recorded`，且与 `config.effective` 重叠项逐项一致（§13 D-2；不一致 ⇒ `budget_config_mismatch`） | `unconfirmed` |
-| `config` | `unknown_keys == []` 且 `unclassified_keys == []` 且 `capture_interface` 完整 | `derived` |
-| `code` | `git_commit` + `declared_source_tree_sha256` + `runtime_snapshot_taken` + `source_coverage == complete` + `dirty_scope ∉ {stray, unknown}` + **`git_dirty` 时 `patch_bundle_sha256` 有效** | `derived` |
+| `config` | `unknown_keys == []` 且 `unclassified_keys == []` 且 `capture_interface` 完整；候选级参数与 `candidate_id` 一致（`candidate_config_mismatch` 为空） | `derived` |
+| `code` | `git_commit` + `numeric_source_tree_sha256`（**进哈希的那个**）+ `declared_source_tree_sha256` + `runtime_snapshot_taken` + `source_coverage == complete` + `dirty_scope ∉ {stray, unknown}` + **`git_dirty` 时 `patch_bundle_sha256` 有效** | `derived` |
 | `env` | `env_sha256` + `backend` + `x64_enabled` | `derived` |
 
 `v1.0` 的表漏了"dirty 时补丁包必落"这一条（§3.1 写了必填、§5 没写），现补上：
@@ -337,18 +602,56 @@ v1 只做一件事：把 `recorded` 的**必填集**写清楚。
 | `data.sha256` / `n_points` / `subset_sha256` / `f_min` / `f_max` | ✓ | 换了数据就是换了实验 |
 | `rng.plan.*`（五项） | ✓ | 随机流来源不同 = 条件不同 |
 | `budget_params`（五项 + source） | ✓ | 已有；数值与来源都进，档名不顶替 |
-| `config.effective` 中 `effect ∈ {model_definition, execution_condition}` 的键 | ✓ | 判据见 §3.3.1；含布尔/枚举（`include_L`/`branch`/`adsorption`/`layers`…） |
-| `code.git_commit` + `code.declared_source_tree_sha256` | ✓ | 基线 + 实际声明代码（缺一不可：commit 覆盖不到未跟踪文件，摘要覆盖不到未声明模块——后者由 `source_coverage` 核对兜住） |
+| `config.effective` 中 `effect ∈ {model_definition, execution_condition}` 的键 | ✓ | 判据见 §3.3.1；含布尔/枚举（`include_L`/`branch`/`adsorption`/`layers`…）与 `sigma.array_sha256`/`sigma.floor` |
+| `code.git_commit` + `code.numeric_source_tree_sha256` | ✓ | 基线 + **参与计算**的代码（D-5）。`declared_source_tree_sha256` 只作完整性证据，**不进哈希**——否则改一行画图脚本就换号（F11） |
 | `env.env_sha256` + `backend` + `x64_enabled` | ✓ | 环境会改数值；`x64` 改 dtype |
 | `identity_contract_version` | ✓ | 世代标签，防"语义变了但载荷没变"撞号（D-4） |
 | `code.git_describe` / `git_dirty` / `dirty_paths` / `dirty_scope` / `patch_bundle_*` | ✗ | 展示、范围判据或重建；由 commit+摘要或其自身派生 |
 | `code.runtime_loaded_modules` / `source_coverage` / `undeclared_modules` | ✗ | 覆盖性核对，不区分条件（用作降级判据） |
+| `code.declared_source_tree_sha256` / `compute_role` / `why_not_numeric` | ✗ | 完整性证据与角色声明；进哈希的是它的 numeric 子集（D-5） |
+| `workflow.*`（含 `kk_mode`/`kk_opts`/`diag`/`drt_opts`/`with_voigt`/`ref_rwp`/`krange`/`n_seeds`） | ✗ | 描述"跑几次、选哪个"，不描述"哪一次"；`admission_condition`/`decision_condition`/`workflow_scope` 三类都在这里 |
 | `config.unknown_keys` / `unclassified_keys` / `capture_interface` / `normalize` | ✗ | 校验与溯源 |
 | `rng.actual.*` / `instance.*` | ✗ | **实例**——进来会让同条件两次跑换号，判重失效（F6） |
 | `software.registry_version` | ✗（D-1 已定） | 它是**映射工具**版本，不是被拟合的代码；移入 `provenance` |
 
 `RUN_ID_CONFIG_KEYS` 必须是**闭集 + 显式版本化**（`run_id_config_keys_version`），
 否则 `run_id` 会随任何无害开关抖动，样本量被无意义地切碎。
+
+### 6.2 反例矩阵（定稿前必须先跑这 24 条）
+
+这组用例比再加十几个字段有用：它直接检验 `run_id` 的语义是否成立。左列是改动，
+右两列是**必须**出现的差异。任一格不符，键表或委托规则就是错的。
+
+| # | 改动 | `run_id` | 该变什么 | 防的失败模式 |
+|---|---|---|---|---|
+| T1 | `branch=parallel` → `series` | **必须不同** | `candidate_id` 也变 | 拓扑不同却同号（F9） |
+| T2 | `include_L=False` → `True` | **必须不同** | — | 族能力漏哈希（F9） |
+| T3 | `layers=2` → `1` | **必须不同** | — | 同上 |
+| T4 | `adsorption=None` → `"RL"` | **必须不同** | — | 同上 |
+| T5 | `progress=False` → `True` | 同 | `effective.progress` 值变 | `display_only` 混进哈希（样本被切碎） |
+| T6 | `plot=True` → `False` | 同 | `effective.plot` 值变 | 同上 |
+| T7 | `elapsed_s` / `started_at` 不同 | 同 | 仅 `instance.*` 变 | 实例字段误入条件哈希（F6） |
+| T8 | 同 seed、不同实际初值 | 同 | `rng.actual.init_values_sha256` 变 | 实例 vs 条件的边界（B3b 那条线） |
+| T9 | 源码里改一个影响数值的常量 | **必须不同** | `numeric_source_tree_sha256` 变 | 代码改动被旧号掩盖（F2） |
+| T10 | 改 `bm_circuit`（`plot_only`）一行 | 同 | `declared_source_tree_sha256` 变、numeric 不变 | 装饰性改动换号（F11） |
+| T11 | 只升 `registry_version`（映射工具） | 同 | `provenance` 变 | D-1 的回退检验 |
+| T12 | 换一份同点数、同频率窗的数据文件 | **必须不同** | `data.sha256` 变 | 数据身份 |
+| T13 | 同一文件加掩码 / 改 `n_points` | **必须不同** | `subset_sha256`/`n_points` 变 | 输入截取被当成同一次 |
+| T14 | `zscale=1` → `2`（同文件） | **必须不同** | `data.transform` 变 | D-7 |
+| T15 | `budget="standard"` → `"quick"` | **必须不同** | `budget_params` 数值变、档名不变 | 档名冒充数值（F4） |
+| T16 | `with_voigt=True` → `False` | nested 子运行**同**；父 `workflow_id` 不同 | `workflow.children` 变 | 附加对照污染主身份 |
+| T17 | `kk_mode="gate"` → `"warn"` | 同 | `workflow.gate` 变 | 门禁进哈希 |
+| T18 | `diag` 阈值改 | 同 | `workflow.guards` 变 | 事后阈值进哈希 |
+| T19 | `sigma_mode=perpoint,pct=2` → `scalar,abs=`使实际 σ 数组逐位相同 | **同** | `sigma.mode` 变 | 复合键要认"实际数组"，不是"枚举" |
+| T20 | `adsorption=_UNSET` → 显式 `None`（等价） | **同** | `origin` 变 | 哨兵未解析（F12） |
+| T21 | `zeta="1.0"` → `1.0` | **同** | 归一化后同值 | 字符串/数字未归一（F12） |
+| T22 | 声明了 `numeric` 模块但这次没加载 | 同 | `declared_not_loaded` 非空 | 覆盖规则误判（应无害） |
+| T23 | 加载了未声明的项目模块 | 降 `derived` | `source_coverage=undeclared_loaded` | F7 |
+| T24 | dirty 且补丁包缺未跟踪文件内容 | 降 `derived` | `bundle_excluded` 含声明集文件 | F8 |
+
+T10/T19/T20/T21 是 `v1.2` 的核心主张，也是最容易被"改回去"的四格：
+它们都要求**同号**，而直觉上"改了配置"应该换号。理由在 §3.3.5–§3.3.6——
+`run_id` 认的是"进似然的东西"，不是"写下来的字符串"。
 
 ---
 
@@ -358,7 +661,7 @@ v1 只做一件事：把 `recorded` 的**必填集**写清楚。
 
 | 层 | 谁做 | 查什么 |
 |---|---|---|
-| 写入时 | runner 自检 | 字段格式（40/64 位十六进制）；`unknown_keys`/`unclassified_keys` 为空；`dirty_scope` 与 `dirty_paths` 自洽；`runtime ⊆ declared`；`declared_source_tree_sha256` 与声明集可复算；`env_sha256` 可复算；dirty 时补丁包存在且可复算 |
+| 写入时 | runner 自检 | 字段格式（40/64 位十六进制）；`unknown_keys`/`unclassified_keys` 为空；`dirty_scope` 与 `dirty_paths` 自洽；`runtime ⊆ declared`；`declared_source_tree_sha256` 与 `numeric_source_tree_sha256` 均可按声明集复算（且 numeric 子集非空）；`env_sha256` 可复算；`sigma.array_sha256` 可复算；dirty 时补丁包存在且可复算 |
 | 读入时 | registry（`_check_execution` 现有机制） | 整块复算 `status`/`reason`/`run_id` 与观测对拍；带 `identity_contract_version ≥ 1.0` 的按 v1 必填集检查 |
 | 冻结时 | `map_stage0_records.py --check` | 文本 vs 冻结字节、清单 vs 磁盘、指纹、`source_sha256` / `data_sha256_files` 逐份重算 |
 
@@ -478,7 +781,7 @@ run_id_prefix: "R1-"/"D1-"           # D-4 已定；前缀只是辅助标识
 
 ---
 
-## 13. 裁决记录（v1.1）
+## 13. 裁决记录（v1.1 已定 / v1.2 待裁）
 
 ### 13.1 D-1～D-4：已定
 
@@ -511,6 +814,15 @@ D-4 的实现影响已核对：前缀的**写入**只有 `_run_id_from()`（`cir
 | §3.2 | 说 `python` 被 `env_sha256` 覆盖，而摘要只由包名版本拼成 | `env_sha256` 定义改为含 `python`/`impl`/`platform`/`packages`（§3.2 公式） |
 | §5 / §3.5 | "`rng.plan` 四项齐" vs 实际五项 | 统一为**五项** |
 
+### 13.4 `v1.2` 新提的四项（待裁）
+
+| # | 问题 | 我的建议 | 风险 / 代价 |
+|---|---|---|---|
+| **D-5** | 静态闭包 ⊋ 参与计算的代码（Profile B 的 17 个模块里有一半 `fit_top` 不调用）。要不要把 `declared_source_tree_sha256` 直接哈希进 `run_id`？ | **拆成两个摘要**：`declared`（完整性，只记录）+ `numeric`（进哈希，由 `compute_role` 声明）；`compute_role` 省略即 `numeric`，降级须过 §3.1.3 的两条验证 | 代价：`compute_role` 是一处**人的判断**，判错的方向只能是"把 numeric 误降"（会合并本该分开的运行）。对策：默认 numeric + 两条可执行验证 + 判错即降 `derived`。**若不采纳**：保留单摘要，接受"改画图脚本换号"，样本被无谓切碎 |
+| **D-6** | `effect` 从三值扩到六值（补 `admission_condition`/`decision_condition`/`workflow_scope`） | **采纳**。这是审查给的三类（门禁/诊断/工作流）的直接落地；不扩就得把它们硬塞进 `display_only`，而后者会被读成"无关紧要" | 代价：`effect` 闭集变长，`unclassified_keys` 的判定要按新闭集重算 |
+| **D-7** | `data.transform`（`fscale`/`zscale`/掩码）进哈希 | **采纳**。当前三个入口都传默认值，但 `bm_real.load_spectrum` 支持缩放；不记就会静默共用号 | 代价：现值恒等（`1.0`/`null`），对历史与现有运行零影响 |
+| **D-8** | `sigma` 用 `array_sha256` 进哈希、`kind`/`mode`/`from_data` 不进 | **采纳**。判据是"进似然的东西"，而 `kind`/`mode` 只是来源描述；`from_data` 只改 `elpd` 的解释 | 代价：两个 `mode` 不同但数组相同的运行会同号——这是**故意**的（T19），需在产物里保留 `mode` 供人读 |
+
 ---
 
 ## 14. 实现仍未授权（下一步顺序）
@@ -519,8 +831,10 @@ D-4 的实现影响已核对：前缀的**写入**只有 `_run_id_from()`（`cir
 
 | 优先级 | 工作 | 是否动生产代码 |
 |---|---|---|
-| P0 | 冻结本契约（字段表 / 哈希纳入表 / `recorded` 判据 / 四处裁决） | 否 |
-| P0 | 定 `RUN_ID_CONFIG_KEYS` v1 的具体键表与 `source_manifest.json` 初始内容 | 否 |
+| P0 | 裁 D-5～D-8（§13.4） | 否 |
+| P0 | 冻结本契约（字段表 / 哈希纳入表 / `recorded` 判据 / 全部裁决） | 否 |
+| P0 | 认下 §3.3.4 的三张键表（按实际签名逐参数核对一遍） | 否 |
+| P1 | 落 `source_manifest.json`（三份 Profile，含 `compute_role` + `why_not_numeric`）并跑 §6.2 的 T1–T24 | 否（只写清单） |
 | P1 | 写 runner 落字段 + **1 次真实运行**验证字段确实来自实际执行（含补丁包重建校验） | 是，限 runner |
 | P1 | 重跑对应 4 次历史条件，建 6 条新记录（`purpose=baseline_rebuild`） | 是，跑实验 |
 | P2 | 233 条的实验单位与优先级 | 否 |
@@ -549,3 +863,4 @@ D-4 的实现影响已核对：前缀的**写入**只有 `_run_id_from()`（`cir
 |---|---|---|
 | `v1.0-draft` | 2026-11-14 | 首版：五个块、`run_id` 纳入口径、降级规则、6 条/233 条处置、Stage 0 判据、D-1～D-4 待裁 |
 | `v1.1-draft` | 2026-11-14 | 修 P0-1（声明集/运行时集分离 + 覆盖规则）、P0-2（补丁包含未跟踪内容）、P0-3（`RUN_ID_CONFIG_KEYS` 类型无关 + 捕获接口 + `unclassified_keys`）；修四处内部不一致；D-1～D-4 记为已定并附约束 |
+| `v1.2-draft` | 2026-11-14 | **从实际签名反推参数表**：三入口键表（§3.3.4）、字段委托表（§3.3.3）、`sigma` 复合键（§3.3.5）、归一化规则（§3.3.6）、`workflow` 块（§3.3.7）；`effect` 三值 → 六值；新增 F11/F12、§3.1.3（三份 Profile，数字由 `audit_source_profiles.py` 算出）、§6.2 反例矩阵；新提 D-5～D-8 待裁；`data.transform`（D-7） |
