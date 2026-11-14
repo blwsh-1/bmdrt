@@ -3,6 +3,11 @@
 > **本轮只做审计，不写 `sampler_provenance.py`，不改任何生产代码，不动 `exec_identity.py`。**
 > 目标是回答一句话：**在采样调用点读到的五个值，是不是这一次拟合真实生效的值，以及
 > 「读到了」能不能证明「它从哪来」。**
+>
+> **补丁见 `SAMPLER_PROVENANCE_AUDIT_B.md`**：本文只覆盖五参数的值传递，
+> `chain_method` / `progress_bar` / `extra_fields` 的独立传递链与 NUTS/HMC 适用性
+> 在 B 补充审计里；§8 的接口建议与 10 格反例矩阵已被 B 文档 §7 修订为八项 / 15 格，
+> **以 B 为准**。
 
 审计对象：`n_warmup` / `n_samples` / `num_chains` / `target_accept` / `max_tree_depth`。
 边界：只覆盖**值的传递路径**，不涉及先验/似然/初始化策略，也不启动批量拟合。
