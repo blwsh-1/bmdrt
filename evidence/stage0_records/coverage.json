@@ -1,28 +1,24 @@
 {
   "n_records": 239,
-  "n_independent": 237,
+  "n_independent": 239,
   "n_independent_strict": 237,
   "duplicate_status": {
     "distinct": 237,
-    "confirmed_duplicate": 2
+    "possible_duplicate": 2
   },
-  "duplicate_kind": {
-    "rerun_same_conditions": 2
-  },
-  "confirmed_duplicate_records": [
+  "duplicate_kind": {},
+  "confirmed_duplicate_records": [],
+  "possible_duplicate_records": [
     {
       "record_id": "nested_json::coating__nested_capacitive_standard_1113.nested.json",
-      "duplicate_of": "nested_json::coating__nested_capacitive_standard.nested.json",
-      "kind": "rerun_same_conditions"
+      "duplicate_of": "nested_json::coating__nested_capacitive_standard.nested.json"
     },
     {
       "record_id": "nested_json::passivation__nested_capacitive_standard_default_init.nested.json",
-      "duplicate_of": "nested_json::passivation__nested_capacitive_standard_1113.nested.json",
-      "kind": "rerun_same_conditions"
+      "duplicate_of": "nested_json::passivation__nested_capacitive_standard_1113.nested.json"
     }
   ],
-  "possible_duplicate_records": [],
-  "dedup_rule": "重复判定只看来源（产物 path/sha、seed 及证据等级、预算数值及来源、run_id），摘要相同只是输入之一；证据不足只标 possible_duplicate、不从独立数里扣（n_independent_strict 给出扣掉后的对照）",
+  "dedup_rule": "重复判定只看来源（产物 path/sha、seed 及证据等级、预算数值及来源、代码版本、数据内容哈希、run_id），摘要相同只是输入之一；确认重复要求两侧执行身份都是 recorded；证据不足只标 possible_duplicate、不从独立数里扣（n_independent_strict 给出扣掉后的对照）",
   "run_status": {
     "completed": 239
   },
@@ -60,6 +56,9 @@
     "budget_source_in_identity": {
       "recorded": 6,
       "derived_from_tier": 233
+    },
+    "data_id_kind": {
+      "content_sha256": 239
     },
     "unavailable_reason": {
       "null": 239

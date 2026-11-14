@@ -1,9 +1,24 @@
 # -*- coding: utf-8 -*-
-"""map_stage0_records.py —— 把阶段 0 的历史产物映射成机器可读的观测记录（v3）。
+"""map_stage0_records.py —— 把阶段 0 的历史产物映射成机器可读的观测记录（v4）。
 
 目的**不是**让历史数据好看，而是检验 `circuit_registry.observation_block` 到底
 能不能承载它们。凡是映射不了的字段，一律进 `unmapped` 并写明原因，不丢、不改、
-不补猜。映射过程**不跑任何拟合**，只读 evidence/ 里的副本。
+不补猜。映射过程**不跑任何拟合**，只读 `evidence/` 与原始谱。
+
+v4 相对 v3 改的三件事（第四轮审计，全部成立）
+-------------------------------------------
+1. **确认重复的门槛提到 `recorded`**。v3 的 `duplicate_verdict` 只查 seed 与预算两项，
+   于是本批 239 条全是 `D-`（没有产物记代码版本）的情况下，仍把两对判成
+   `confirmed_duplicate`——用自己定义的门槛之外的两项去确认，等于把 `R-` 的定义降成摆设。
+   v4 要求两侧执行身份**整体**是 `recorded`（含代码版本与数据内容哈希）⇒ 本批 0 条满足，
+   两对降为 `possible_duplicate`，`n_independent` 由 237 变成 **239**（严格口径 237）。
+   **两个数必须一起报**：只给 239 会把疑似重跑算成新信息，只给 237 是把猜当结论。
+2. **数据身份改用内容哈希**。v3 的 `data.ref` 是文件名，两条不同实验的谱都叫
+   `spectrum.csv` 就会撞 `run_id`——这与"60 条谱不能共享一个号"是同一个错。
+   v4 从原始谱算 sha256（63 份），拿不到时留 `ref_only` 并**禁止**参与确认重复。
+3. **`--check` 校验整个快照**。v3 只比重算的两份数据文件，没碰 MANIFEST 里的
+   `registry_version`/`registry_digest`/`source_sha256`；注册表改了而记录序列化没变时会
+   "通过"。v4 用 `verify_frozen()` 分四层查，并支持 `--frozen <dir>` 供测试指向篡改副本。
 
 v3 相对 v2 改的两件事（都是审计指出的，不是措辞）
 -------------------------------------------------
@@ -70,6 +85,25 @@ import circuit_registry as R  # noqa: E402
 
 EVID = _ROOT / "evidence" / "stage0_three_spectra"
 FROZEN = _ROOT / "evidence" / "stage0_records"
+#: pilot 的原始谱目录（与 `coating_voigt_pilot.py:21` 同一处）。用它给 60 条记录
+#: 补内容哈希；目录不在时退成 `ref_only`，不假装知道数据内容。
+_PILOT_SUB = Path("D:/eis训练数据/测试数据/涂层/"
+                  "Coating_Generated EIS data and Nyquist plots/"
+                  "Generated EIS data and Nyquist plots")
+
+
+def _resolve(p, *, bases=(_ROOT, _PILOT_SUB)):
+    """产物里记的路径 → 磁盘路径。绝对路径直接用，相对路径依次试 `bases`。"""
+    if p is None or not str(p).strip():
+        return None
+    q = Path(str(p))
+    if q.is_absolute():
+        return q
+    for b in bases:
+        cand = Path(b) / q
+        if cand.is_file():
+            return cand
+    return q
 
 
 # --------------------------------------------------------------------------
@@ -133,6 +167,39 @@ _TRUTH_KEYS = {
 
 def _sha256(p: Path) -> str:
     return hashlib.sha256(p.read_bytes()).hexdigest()
+
+
+#: 本次映射实际哈希过的**数据文件**：路径 → sha256。冻结清单会把它落盘，
+#: `--check` 据此逐份复核原始谱有没有被改（审计 D5）。每次构建前清空。
+_HASHED_FILES: dict = {}
+
+
+def _sha256_file(p) -> str | None:
+    """数据文件的**内容**哈希。文件不在（换了机器、原始目录被清）就返回 None。"""
+    if p is None:
+        return None
+    p = Path(p)
+    try:
+        if not p.is_file():
+            return None
+        h = _sha256(p)
+    except OSError:
+        return None
+    _HASHED_FILES[str(p)] = h
+    return h
+
+
+def _data_id(ref: str, path=None, *, f_min=None, f_max=None) -> dict:
+    """谱标识 = `ref`（给人看）+ `sha256`（给机器认）+ 频率窗口。
+
+    v3 只填 `ref`（文件名）。文件名不是身份：两条不同实验的谱都可能叫
+    `spectrum.csv`、窗口也一样，于是 `run_id` 撞车、判重时被读成"同条件不同结果"。
+    v4 起优先用**内容哈希**；拿不到原始文件时退到 `ref_only`，并在
+    `execution.data_id_kind` 留痕——那种记录最高只能到 `derived`，
+    不能参与"确认重复"（见 `circuit_registry.DATA_ID_KINDS`）。
+    """
+    return {"ref": str(ref), "sha256": _sha256_file(path),
+            "f_min": _num(f_min), "f_max": _num(f_max)}
 
 
 def _num(v):
@@ -244,8 +311,10 @@ def map_nested_json(p: Path) -> dict:
         candidate_id=cand.candidate_id,
         # `data.ref` 取**文件名**：完整路径是机器相关的，进 run_id 会让同一个实验
         # 换台机器就换号。原样路径留在 `unmapped["input.path"]` 里可查。
-        data={"ref": Path(str(inp.get("path") or p.name)).name,
-              "f_min": _num(inp.get("f_min")), "f_max": _num(inp.get("f_max"))},
+        # v4：身份改由**内容哈希**承担（`sha256`），`ref` 只负责可读。
+        data=_data_id(Path(str(inp.get("path") or p.name)).name,
+                      _resolve(inp.get("path")),
+                      f_min=inp.get("f_min"), f_max=inp.get("f_max")),
         seed=seed,
         # seed 在 `config.seed` 里，是产物自己写的 —— 这是本批唯一够到
         # `artifact` 级别的执行要素；预算也是 recorded。但代码版本没记，
@@ -346,8 +415,8 @@ def _oracle_data(truth: dict) -> dict | None:
         return None
     if any(abs(t[k] / float(truth[k]) - 1.0) > 1e-6 for k in common):
         return None
-    return {"ref": Path(str(inp.get("path"))).name, "f_min": _num(inp.get("f_min")),
-            "f_max": _num(inp.get("f_max"))}
+    return _data_id(Path(str(inp.get("path"))).name, _resolve(inp.get("path")),
+                    f_min=inp.get("f_min"), f_max=inp.get("f_max"))
 
 
 def map_oracle(p: Path, budgets: dict) -> dict:
@@ -496,9 +565,9 @@ def map_pilot(p: Path) -> list:
             fl = [_num(x) for x in (r.get("f") or []) if _num(x) is not None]
             exe = R.execution_identity(
                 candidate_id=cand.candidate_id,
-                data={"ref": str(r["name"]),
-                      "f_min": min(fl) if fl else None,
-                      "f_max": max(fl) if fl else None},
+                data=_data_id(str(r["name"]), _PILOT_SUB / str(r["name"]),
+                              f_min=min(fl) if fl else None,
+                              f_max=max(fl) if fl else None),
                 seed=0,
                 # 四个段的调用点都写死 seed=0（voigt_fit:152 默认参数、
                 # :223 与 :268 显式传），但 results.jsonl 里没有 seed 字段
@@ -606,8 +675,9 @@ def map_az31(budgets: dict) -> list:
               if bw else {"source": "unavailable", "reason": "not_computed"})
         exe = R.execution_identity(
             candidate_id=cand.candidate_id,
-            data={"ref": Path(str(d.get("spec") or p.name)).name,
-                  "f_min": _num(d.get("f_min")), "f_max": _num(d.get("f_max"))},
+            data=_data_id(Path(str(d.get("spec") or p.name)).name,
+                          _resolve(d.get("spec")),
+                          f_min=d.get("f_min"), f_max=d.get("f_max")),
             seed=0,
             # m4_real_nested_fit.py:105/161 调 fit_voigt / fit_nested 都不传 seed，
             # 两者的默认参数是 seed=0（bm_select:331 / :385）⇒ 由代码推出。
@@ -773,8 +843,9 @@ def coverage(recs: list) -> dict:
             {"record_id": r["record_id"], "duplicate_of": r["provenance"]["duplicate_of"]}
             for r in recs if r["provenance"]["duplicate_status"] == "possible_duplicate"],
         "dedup_rule": "重复判定只看来源（产物 path/sha、seed 及证据等级、预算数值及来源、"
-                      "run_id），摘要相同只是输入之一；证据不足只标 possible_duplicate、"
-                      "不从独立数里扣（n_independent_strict 给出扣掉后的对照）",
+                      "代码版本、数据内容哈希、run_id），摘要相同只是输入之一；"
+                      "确认重复要求两侧执行身份都是 recorded；证据不足只标 "
+                      "possible_duplicate、不从独立数里扣（n_independent_strict 给出扣掉后的对照）",
         "run_status": dict(run),
         "sampling_status": dict(samp),
         "interpretation": dict(interp),
@@ -788,6 +859,7 @@ def coverage(recs: list) -> dict:
             "seed_source_kind": dict(Counter(str(e["seed_source"]).split(":")[0]
                                              for e in exe)),
             "budget_source_in_identity": dict(Counter(e.get("budget_source") for e in exe)),
+            "data_id_kind": dict(Counter(e.get("data_id_kind") for e in exe)),
             "unavailable_reason": dict(Counter(e.get("unavailable_reason") for e in exe)),
             "software_code_version_known": sum(
                 1 for e in exe if (e.get("software") or {}).get("code_version")),
@@ -855,11 +927,18 @@ def build(budgets: dict) -> list:
     return recs
 
 
-def _manifest(paths, cov: dict, recs: list) -> dict:
+def _manifest(texts: dict, cov: dict, recs: list) -> dict:
+    """冻结清单。`files` 段哈希的是**即将写入的字节**，不是磁盘上现有的内容。
+
+    这一点不是形式问题：如果哈希从磁盘读，那么"文件被改过"和"清单被改过"会互相
+    掩盖——先改文件再改清单哈希，两边自洽，`--check` 就查不出来。
+    """
     files = {}
-    for p in paths:
-        b = p.read_bytes()
-        files[p.name] = {"sha256": hashlib.sha256(b).hexdigest(), "bytes": len(b)}
+    for name in sorted(texts):
+        b = texts[name].encode("utf-8")
+        files[name] = {"sha256": hashlib.sha256(b).hexdigest(), "bytes": len(b)}
+    data_ids = sorted({(r["observation"]["execution"].get("data") or {}).get("sha256")
+                       for r in recs} - {None})
     return {
         "note": "本目录的冻结副本清单。`records.jsonl` 由 map_stage0_records.py "
                 "从 evidence/ 的原始产物映射而来，不跑拟合。",
@@ -872,64 +951,159 @@ def _manifest(paths, cov: dict, recs: list) -> dict:
         "duplicate_status": cov["duplicate_status"],
         "run_id_status": cov["execution"]["run_id_status"],
         "n_unique_run_id": cov["execution"]["n_unique_run_id"],
+        "data_id_kind": cov["execution"]["data_id_kind"],
         "source_sha256": {r["source"]["path"]: r["source"]["sha256"] for r in recs},
+        "data_sha256": data_ids,
+        "data_sha256_files": dict(sorted(_HASHED_FILES.items())),
         "files": files,
     }
+
+
+def verify_frozen(frozen: Path, texts: dict, manifest: dict,
+                  source_paths: dict) -> list:
+    """核对**整个**证据快照，返回问题清单（空 = 通过）。
+
+    四个层次，缺一层就会留下"改了但没报"的口子：
+
+    1. **重新生成的三个文件** vs 冻结副本磁盘字节——映射代码/原始产物变了会被抓；
+    2. **冻结清单里的 `files`** vs 冻结副本磁盘字节——副本被单独改过会被抓
+       （即使清单没动）；
+    3. **`registry_version` / `registry_digest`** vs 当前注册表——注册表改过、
+       但记录序列化没变时，这一层是唯一能发现的（审计 D4）；
+    4. **`source_sha256` / `data_sha256`** vs 磁盘上的证据文件与原始谱——原始证据
+       被改会被抓（审计 D5）。
+
+    第 1 层比对"重算文本"，第 2 层比对"磁盘字节"：两者都过才算这份快照没漂移。
+    """
+    problems = []
+    # --- 1. 重新生成 vs 冻结副本 ---
+    for name in sorted(texts):
+        fp = frozen / name
+        if not fp.is_file():
+            problems.append(f"{name}: 冻结副本缺失")
+            continue
+        got = hashlib.sha256(texts[name].encode("utf-8")).hexdigest()
+        disk = hashlib.sha256(fp.read_bytes()).hexdigest()
+        if got != disk:
+            problems.append(f"{name}: 重算 {got[:16]} ≠ 冻结副本 {disk[:16]}")
+    # --- 2. 清单自洽 ---
+    for name, meta in sorted((manifest.get("files") or {}).items()):
+        fp = frozen / name
+        if not fp.is_file():
+            problems.append(f"MANIFEST.files[{name}]: 文件不存在")
+            continue
+        disk = hashlib.sha256(fp.read_bytes()).hexdigest()
+        if disk != meta.get("sha256"):
+            problems.append(f"MANIFEST.files[{name}]: 磁盘 {disk[:16]} ≠ 清单 "
+                            f"{str(meta.get('sha256'))[:16]}")
+    # --- 3. 注册表身份 ---
+    if manifest.get("registry_version") != R.REGISTRY_VERSION:
+        problems.append(f"MANIFEST.registry_version={manifest.get('registry_version')!r} "
+                        f"≠ 当前 {R.REGISTRY_VERSION!r}")
+    if manifest.get("registry_digest") != R.registry_digest():
+        problems.append(f"MANIFEST.registry_digest={manifest.get('registry_digest')!r} "
+                        f"≠ 当前 {R.registry_digest()!r}")
+    # --- 4. 原始证据与数据内容 ---
+    for rel, want in sorted((manifest.get("source_sha256") or {}).items()):
+        p = source_paths.get(rel)
+        if p is None or not Path(p).is_file():
+            problems.append(f"source_sha256[{rel}]: 原始证据文件不在了（{p}）")
+            continue
+        got = _sha256(Path(p))
+        if got != want:
+            problems.append(f"source_sha256[{rel}]: 磁盘 {got[:16]} ≠ 清单 {str(want)[:16]}")
+    for rel, want in sorted((manifest.get("data_sha256_files") or {}).items()):
+        p = Path(rel)
+        if not p.is_file():
+            problems.append(f"data_sha256[{rel}]: 原始谱文件不在了")
+            continue
+        got = _sha256(p)
+        if got != want:
+            problems.append(f"data_sha256[{rel}]: 磁盘 {got[:16]} ≠ 清单 {str(want)[:16]}")
+    return problems
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="out/stage0_records")
+    ap.add_argument("--frozen", default=None,
+                    help=f"冻结副本目录（默认 {FROZEN.relative_to(_ROOT)}）")
     ap.add_argument("--freeze", action="store_true",
                     help=f"另存字节级副本到 {FROZEN.relative_to(_ROOT)} 并写 MANIFEST.json")
     ap.add_argument("--check", action="store_true",
-                    help="只重算并比对冻结副本（不写任何文件）")
+                    help="重算整个快照（三份文件 + 注册表指纹 + 原始证据 sha256）并逐项比对，"
+                         "不写任何文件")
     args = ap.parse_args(argv)
     outdir = (_ROOT / args.out) if not Path(args.out).is_absolute() else Path(args.out)
+    frozen = FROZEN if args.frozen is None else Path(args.frozen)
 
     import bm_select  # 只为 BUDGETS 的实际数值（AZ31 / oracle 只记了档名）
     budgets = {k: {kk: int(vv) if isinstance(vv, int) else float(vv)
                    for kk, vv in v.items() if kk in R.BUDGET_PARAM_KEYS}
                for k, v in bm_select.BUDGETS.items()}
 
+    _HASHED_FILES.clear()
     recs = build(budgets)
     cov = coverage(recs)
-    text = _serialize(recs)
-    cov_text = json.dumps(cov, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
+    texts = {"records.jsonl": _serialize(recs),
+             "coverage.json": json.dumps(cov, ensure_ascii=False, indent=2,
+                                         allow_nan=False) + "\n"}
+    man = _manifest(texts, cov, recs)
+    texts["MANIFEST.json"] = json.dumps(man, ensure_ascii=False, indent=2,
+                                        allow_nan=False) + "\n"
+    source_paths = {r["source"]["path"]: _ROOT / r["source"]["path"] for r in recs}
 
     if args.check:
-        man = json.loads((FROZEN / "MANIFEST.json").read_text(encoding="utf-8"))
-        bad = []
-        for name, text in (("records.jsonl", text), ("coverage.json", cov_text)):
-            got = hashlib.sha256(text.encode("utf-8")).hexdigest()
-            want = man["files"][name]["sha256"]
-            flag = "一致" if got == want else "不一致"
-            print(f"{name}: 重算 {got[:16]} / 冻结 {want[:16]} → {flag}")
-            if got != want:
-                bad.append(name)
-        if bad:
-            print(f"{bad} 与当前映射代码/原始产物不对应")
+        if not (frozen / "MANIFEST.json").is_file():
+            print(f"{frozen}/MANIFEST.json 不存在，无法核对快照")
             return 2
-        print(f"{cov['n_records']} 条，{cov['n_independent']} 独立，"
+        frozen_man = json.loads((frozen / "MANIFEST.json").read_text(encoding="utf-8"))
+        # MANIFEST 不哈希自己（自指），所以单独比"重新生成的字节 vs 冻结字节"。
+        for name in sorted(texts):
+            got = hashlib.sha256(texts[name].encode("utf-8")).hexdigest()
+            fp = frozen / name
+            disk = hashlib.sha256(fp.read_bytes()).hexdigest() if fp.is_file() else None
+            tag = "清单" if name != "MANIFEST.json" else "磁盘"
+            print(f"{name}: 重算 {got[:16]} / 冻结{tag} {str(disk)[:16]} → "
+                  f"{'一致' if got == disk else '不一致'}")
+        print(f"registry: {R.REGISTRY_VERSION} {R.registry_digest()} / "
+              f"冻结 {frozen_man.get('registry_version')} "
+              f"{frozen_man.get('registry_digest')}")
+        print(f"原始证据 {len(man['source_sha256'])} 份、数据文件 "
+              f"{len(man['data_sha256_files'])} 份逐份复核")
+        problems = verify_frozen(frozen, texts, frozen_man, source_paths)
+        # `verify_frozen` 比的是**冻结清单**；这里再比"重新生成的清单"是否与冻结的一致，
+        # 否则字段被删（而非被改）时两侧都不报警。
+        for k in ("n_records", "n_independent", "n_independent_strict",
+                  "duplicate_status", "run_id_status", "n_unique_run_id", "data_id_kind"):
+            if man.get(k) != frozen_man.get(k):
+                problems.append(f"MANIFEST.{k}: 重算 {man.get(k)!r} ≠ 冻结 "
+                                f"{frozen_man.get(k)!r}")
+        if problems:
+            print(f"发现 {len(problems)} 处不一致：")
+            for p in problems:
+                print("  -", p)
+            return 2
+        print(f"通过：{cov['n_records']} 条，{cov['n_independent']} 独立"
+              f"（严格口径 {cov['n_independent_strict']}），"
               f"{cov['execution']['n_unique_run_id']} 个唯一 run_id")
         return 0
 
     outdir.mkdir(parents=True, exist_ok=True)
-    (outdir / "records.jsonl").write_text(text, encoding="utf-8", newline="\n")
-    (outdir / "coverage.json").write_text(cov_text, encoding="utf-8", newline="\n")
+    (outdir / "records.jsonl").write_text(texts["records.jsonl"],
+                                          encoding="utf-8", newline="\n")
+    (outdir / "coverage.json").write_text(texts["coverage.json"],
+                                          encoding="utf-8", newline="\n")
+
 
     if args.freeze:
-        FROZEN.mkdir(parents=True, exist_ok=True)
-        for name in ("records.jsonl", "coverage.json"):
-            src = outdir / name
-            dst = FROZEN / name
-            dst.write_bytes(src.read_bytes())
-            assert dst.read_bytes() == src.read_bytes(), f"{name} 副本与源不一致"
-        man = _manifest([FROZEN / "records.jsonl", FROZEN / "coverage.json"], cov, recs)
-        (FROZEN / "MANIFEST.json").write_text(
-            json.dumps(man, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
-            encoding="utf-8", newline="\n")
-        print(f"冻结副本 + MANIFEST → {FROZEN}")
+        frozen.mkdir(parents=True, exist_ok=True)
+        for name in ("records.jsonl", "coverage.json", "MANIFEST.json"):
+            dst = frozen / name
+            dst.write_text(texts[name], encoding="utf-8", newline="\n")
+            assert dst.read_bytes() == texts[name].encode("utf-8"), \
+                f"{name} 副本与生成内容不一致"
+        print(f"冻结副本 + MANIFEST → {frozen}")
 
     print(f"记录 {cov['n_records']} 条（独立 {cov['n_independent']}；"
           f"严格口径 {cov['n_independent_strict']}）→ {outdir}")

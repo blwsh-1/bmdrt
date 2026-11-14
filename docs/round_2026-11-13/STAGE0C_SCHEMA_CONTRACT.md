@@ -2,6 +2,11 @@
 
 状态：**schema 层通过，判定逻辑未实现**。本轮不跑拟合、不接生产、不改任何门禁。
 
+> 0.5.0 修订（2026-11-14 第四轮审计后）：**确认重复的门槛提到 `recorded`**（不再只用
+> seed+预算两项自查）、**数据身份改用内容哈希**（`DATA_ID_KINDS`）、**执行状态整块复算**
+> （不再只信 `run_id_status` 字符串）、`--check` 校验整个证据快照。用例 66 → **71**，
+> 另有 `test_stage0_freeze.py` **8/8** 测快照漂移。见 §9。
+>
 > 0.4.0 修订（2026-11-14 第三轮审计后）：新增**执行身份**（`run_id`）与**重复判定三态**
 > （`duplicate_verdict`）。`candidate_id` 定义**未动**。用例 57 → **66**。见 §8。
 > 同时推翻 0.3.0 的一处判定：pilot 的 `voigt_prod`/`voigt_fix2` 是**默认初始化**，
@@ -17,9 +22,10 @@
 
 产物：
 - `circuit_registry.py`（注册表 + 三个输出块 + 执行身份 + 重复判定 + 冻结契约，导入 0.05s，不加载 jax/numpyro）
-- `test_circuit_registry.py`（66 条用例，实跑 **66/66 通过**）
+- `test_circuit_registry.py`（71 条用例，实跑 **71/71 通过**）
+- `test_stage0_freeze.py`（8 条快照完整性用例：篡改副本/清单/原始证据，实跑 **8/8**）
 - `docs/round_2026-11-13/STAGE0A_SCHEMA_PRESSURE.md`（三谱压测，只读既有产物）
-- `docs/round_2026-11-13/STAGE0_RECORDS_MAP.md`（239 条历史记录映射，v3）
+- `docs/round_2026-11-13/STAGE0_RECORDS_MAP.md`（239 条历史记录映射，v4）
 
 ## 1. 六类验收情形 → 用例对照
 
@@ -34,7 +40,9 @@
 | **候选身份不可复现** | `J1`–`J5` | `init_profile=unknown` → `U-` 前缀 + `unconfirmed` + **禁止进 manifest** |
 | **六项描述块语义独立** | `K1`–`K7` | 档名≠数值、分母必填、真值列只许合成谱、ELPD 可用性必须显式 |
 | **执行身份与模型身份分层** | `L1`–`L5` / `L9` | 同档名不同预算数值 ⇒ 同 `candidate_id`、不同 `run_id`；缺 seed/预算/数据不发号；`run_id` 由观测预算重算复核 |
-| **重复判定的证据门槛** | `L6`–`L8` | 摘要相同 ≠ 重复；证据不足只标 `possible_duplicate` 且**不扣**独立数 |
+| **重复判定的证据门槛** | `L6`–`L8` / `D1`–`D2` | 摘要相同 ≠ 重复；**确认重复要求两侧执行身份都是 `recorded`**；证据不足只标 `possible_duplicate` 且**不扣**独立数 |
+| **数据身份不是文件名** | `D3` / `D7` | 同名不同内容 ⇒ 两个 `run_id`；`ref_only` 不能升 `recorded`；自报等级与实际不符被拒 |
+| **执行状态不可自述** | `D6` | 有数据/seed/预算却标 `unconfirmed`、或原因指向错的要素，都被拒 |
 
 ## 2. schema 已强制的硬约束（可执行，不是注释）
 
@@ -77,8 +85,8 @@
     为 `False` 时必须给 `reason`。
 18. **执行身份与模型身份分层**：`candidate_id` 只含模型定义与预算**档名**；
     `run_id` = 候选 + 数据 + seed + **实际预算数值** + 软件。`R-` 要求 seed 来自产物、
-    预算 `recorded`、代码版本已知；`D-` 为推导；缺任一项**不发号**（`None` +
-    `RUN_ID_MISSING` 原因）。候选为 `U-` 时不许发 `run_id`。
+    预算 `recorded`、**代码版本已知**、**数据有内容哈希**；`D-` 为推导；缺任一项
+    **不发号**（`None` + `RUN_ID_MISSING` 原因）。候选为 `U-` 时不许发 `run_id`。
 19. **`run_id` 可复核**：`observation_block` 用观测里的 `budget_params` 重算
     `run_id`，不符即报错；给了 `run_id` 却没给 `budget_params` 也报错。
 20. **重复判定看来源，不看摘要**：`duplicate_verdict()` 的三态
@@ -86,6 +94,18 @@
     `independent` 是派生值，只有 `confirmed_duplicate` 才为 `False`；
     `confirmed_duplicate` 必须给 `kind`（`same_artifact` / `rerun_same_conditions`）；
     "同条件但结果不同"记为 `distinct` + `contradiction`（可复现性问题），不合并。
+21. **确认重复要求两侧执行身份都是 `recorded`**（0.5.0）：`_conditions_recorded()`
+    逐项检查 `run_id_status=="recorded"` ∧ seed `artifact` ∧ 预算 `recorded` ∧
+    `software.code_version` 非空 ∧ `data_id_kind=="content_sha256"`。只查其中两项
+    ——0.4.0 的做法——会把"同 seed 同预算同摘要但代码版本未知"判成确认重复。
+22. **数据身份只认内容哈希**（0.5.0）：`execution.data` 的 `sha256` 必须是 64 位
+    十六进制（拿文件名冒充直接报错）；没有 `sha256` 时 `data_id_kind="ref_only"`，
+    **最高只到 `derived`**，不能参与确认重复。`ref` 不进 `run_id` 哈希
+    （路径是机器相关的），有 `sha256` 时只哈希内容、无则退到 `ref` 并留痕。
+23. **执行状态整块复算**（0.5.0）：`_check_execution` 不只重算 `run_id`，还用
+    `_expected_status()` 复算 `run_id_status` 与 `unavailable_reason`（优先序
+    `data` → `seed` → `budget`）。"要素齐全却自称缺失""缺 A 却报 B"都报错，
+    `data_id_kind` 自报与实际不符也报错。
 
 ## 3. 注册内容
 
@@ -100,9 +120,10 @@
 未接线不是"没测"，是"没有接点"。AZ31 那次失败正是接点问题（`R∥L` 必须在第二并联节点内，
 挂到 voigt 最外层串联只能把 noise=0 残差从 44.0% 降到 40.7%），所以这一档必须显式区分。
 
-`registry_digest = 0f59a5686c2d0c5b`（本版，`0.4.0`）。manifest 会记录它，注册表被改可被发现；
+`registry_digest = 8e652d15390c290a`（本版，`0.5.0`）。manifest 会记录它，注册表被改可被发现；
 `consistency_id`、观测 schema 常量（含身份枚举、缺失语义、预算参数名）、
-**执行身份的哈希口径（`RUN_ID_BASIS`/`RUN_ID_SCOPE`/`RUN_ID_MISSING`）与重复判定三态**
+**执行身份的哈希口径（`RUN_ID_BASIS`/`RUN_ID_SCOPE`/`RUN_ID_MISSING`）与重复判定三态**、
+**数据身份等级（`DATA_ID_KINDS`）与"确认重复必须 `recorded`"这条口径**
 都在指纹内，所以改校验规则、改"什么算可复现身份"、改"什么算两次独立观测"
 都不会"指纹不变"。
 
@@ -199,14 +220,16 @@
 | 问题 | 答案 |
 |---|---|
 | 它是什么 | **执行条件**指纹，不是墙钟实例号 |
-| 哈希什么 | `candidate_id` + 数据（文件名 + `f_min/f_max`）+ seed + seed 的证据类别 + 实际预算（含 `source`）+ 软件 |
+| 哈希什么 | `candidate_id` + 数据（**内容 sha256** + `f_min/f_max`；无 sha256 时退到 `ref` 并由 `id_kind` 留痕）+ seed + seed 的证据类别 + 实际预算（含 `source`）+ 软件 |
 | 为什么含数据 | 同候选同 seed 同预算跑 60 条谱是 60 次执行；不写数据会共享一个号 |
+| 为什么不哈希 `ref` | 完整路径是机器相关的，会让同一个实验换台机器就换号 |
 | 为什么含 `source` | 数值相同、证据不同（产物记录 vs 档名推导）不能拿同一个号，否则推导出的条件被当成观测到的条件 |
 | 同条件重跑 | **共享同一个 `run_id`**，实例由 `source.path` 区分。这正是它能当去重键的原因 |
 | 什么时候不发 | 缺数据 / seed / 预算 ⇒ `None` + `unavailable_reason` |
 
-`recorded`（`R-`）要求 seed 来自产物、预算 `recorded`、代码版本已知三者齐。
-**本批 0 条**——没有一份历史产物记代码版本。这是待补字段，不是降门槛的理由。
+`recorded`（`R-`）要求四项齐：seed 来自产物、预算 `recorded`、代码版本已知、
+数据有内容哈希。**本批 0 条**——六条 `nested.json` 已满足 seed、预算、数据三项，
+只差代码版本：没有一份历史产物记 git sha / 包版本。这是待补字段，不是降门槛的理由。
 
 ### 8.3 推翻 0.3.0 的一处判定 + 查出的一处同类错误
 
@@ -229,4 +252,38 @@
 - runner（阶段 1）：未写。本轮只补身份与计数口径，**不是** runner 的前置条件已满足。
 - 代码版本字段（`software.code_version`）：schema 有位置，历史产物没有值。
 - 阈值：`acf`、区间宽度、`n_viable`，一个都没定。
+
+## 9. 0.5.0 修订（针对第四轮审计：判重门槛、数据身份、快照校验）
+
+### 9.1 三项都成立，其中第一项是自相矛盾
+
+| 编号 | 审计意见 | 核实结论 | 修法 | 用例 |
+|---|---|---|---|---|
+| P0 | `duplicate_verdict` 的确认条件只查 seed+预算，不查 `run_id_status` | **成立且自相矛盾**：同一份报告说"0 条 `recorded`（没有产物记代码版本）"，却把两对判成 `confirmed_duplicate`——用的正是自己定义的门槛之外的两项 | `_conditions_recorded()` 按 `recorded` 的**完整定义**整体判；本批两对降为 `possible_duplicate`，`confirmed` 归零 | `D1` / `D2` |
+| P1 | 数据身份用文件名，可能碰撞 | **成立**：`data.ref` 在 v3 就是 `Path(...).name`；两条同名同窗不同内容的谱会撞 `run_id` | `DATA_ID_KINDS`：`sha256` 进哈希、`ref` 只作标签；`ref_only` 不能升 `recorded` | `D3` / `D7` |
+| P1 | `--check` 没校验 MANIFEST 的注册表指纹与 `source_sha256` | **成立**：v3 只比重算的两份数据文件；注册表改了但序列化没变时会"通过" | `verify_frozen()` 四层校验 + `--frozen <dir>`；`test_stage0_freeze.py` 用篡改副本测 | `D4a`/`D4b`/`D5a`–`D5e` |
+| — | `_check_execution` 的 `unconfirmed` 分支过宽 | **成立**：0.4.0 只查"原因在枚举里"，"要素齐全却自称缺 seed"能过 | `_expected_status()` 复算状态与原因，优先序 `data`→`seed`→`budget` | `D6` |
+
+### 9.2 计数口径因此改变（必须两数同报）
+
+| 口径 | 值 | 含义 |
+|---|---|---|
+| `n_independent` | **239** | 只扣**已确认**重复；0 条确认 ⇒ 不扣 |
+| `n_independent_strict` | **237** | 把 2 条 `possible_duplicate` 也扣掉的对照 |
+| 唯一 `run_id` | **237** | 那两对的条件指纹相同（同候选/同 seed/同预算/同数据） |
+
+v3 报的"237 独立"其实是严格口径，却写成了主口径。**现在两个数一起给**，
+单独引用"239 独立"会把两对疑似重跑算成新信息，单独引用"237"则是把猜当结论。
+
+### 9.3 与 0.4.0 的关系
+
+20 条硬约束**一条未放宽**，只新增 21–23；`candidate_id` 六个字段、两处结构一致性、
+三态枚举全部原样。被收紧的只有"什么算确认重复"——这是**收紧**，不是让步。
+`registry_digest` 因此变化（`0f59a5686c2d0c5b` → `8e652d15390c290a`），冻结清单同步更新。
+
+### 9.4 仍未做的
+
+- `R-` 前缀仍 0 条：卡在代码版本字段，不是规则问题。
+- runner（阶段 1）：未写，**Stage 0 不冻结**。
+- 阈值（`acf` 上限、区间宽度、`n_viable`）：仍一个没定。
 
