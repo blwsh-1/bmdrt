@@ -179,3 +179,6 @@ csv_2e/
 .vscode/
 .DS_Store
 Thumbs.db
+
+# 会话/项目记忆（本地数据，不是交付物）
+.workbuddy/
