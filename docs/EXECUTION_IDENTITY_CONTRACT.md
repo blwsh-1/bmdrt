@@ -1,20 +1,32 @@
-# 执行身份契约 v1.2（部分冻结；`exec_identity.py` 已实现，runner 未授权）
+# 执行身份契约 v1.3（部分冻结；`exec_identity.py` 已实现，runner 未授权）
 
-状态：**`v1.2`，2026-11-14。声明集已落盘、反例矩阵已跑通；runner 仍未实现。**
+状态：**`v1.3`，2026-11-14。声明集已落盘、反例矩阵已跑通 65/65；runner 仍未实现。**
 registry `0.7.0`（`b2675c8255bea716`）、`records.jsonl`、快照、`R-` 计数（0 条）、
-独立数（239 / 严格 237）**全部未动**——本轮只新增四个文件（`exec_identity.py`、
+独立数（239 / 严格 237）**全部未动**——三轮只动四个文件（`exec_identity.py`、
 `source_manifest.json`、`round_2026-11-13/build_source_manifest.py`、
 `test_exec_identity.py`），没有一行生产拟合代码被改。
 
-本轮按审查裁决（§13.4）**停止审规格、开始动工**，顺序正是审查给的五步：
-① 写 `source_manifest.json`（三份 Profile，全部 `numeric` 默认值，零降级）；
-② 同批补 `workflow_source_tree_sha256`（第三层摘要，D-5 的附加条件）；
-③ 边写边跑反例矩阵（T1–T24 + 新增 W/S/Y/M/X 共 **54/54**）；
-④ 只冻结**跑过反例**的字段与规则（§18 冻结台账）；
-⑤ runner 仍待单独授权。
+`v1.3` 是**实现审查的修复轮**，不是新功能：审查指出实现没有忠实兑现设计的两处
+（P0-1 σ 的独立键与复合键同时主张同一个条件；P0-2 覆盖关系只看自称字段、没有从集合
+重算），以及两处 P1（配置类型没校验、`sigma.floor` 用真值判断掩盖非法输入）。
+四条都改了，新增 11 条反例（T19c/T23a–d/S8/Y5/Y6/C1–C3/X5）。
+**`identity_contract_version` 从 `1.2` 升到 `1.3`**——载荷语义变了（D-4：语义一变就换号，
+哪怕一条记录都还没有）。
+
+两处**"测试通过 ≠ 实现正确"**的实例，记在这里当方法提醒：
+
+- T19a 原来只改块里一个嵌套字段，于是"独立键把号拉开"这个 bug 测不出来。
+  现在按 `nested_fit.run` 的真实结构写记录（块 + `sigma_mode`/`sigma_pct`/`sigma_abs`
+  **同时**落盘）。把 `config_keys_in_run_id()` 退回旧实现，T19a **立刻失败**
+  （`R1-fb4f730c…` vs `R1-570cc781…`）——这一格现在有分辨力。
+- T23c 在修复前会**通过**：`source_coverage=complete` 与 `undeclared_modules=[]`
+  互相自洽，谁都没跟集合对过。现在 T23c 的三条原因
+  （`undeclared_claim_mismatch` / `undeclared_loaded:sneaky.py` / `source_coverage_mismatch`）
+  **全部**来自集合复算，旧代码一条也产生不出来。
 
 **本轮没有做的事**：没有为了让测试变绿而降低任何真实模块的 `compute_role`（M2 钉住
-"降级零条"）；没有把"同号"说成"结果相同"（T7/T8/W4 三格专测这条边界）。
+"降级零条"）；没有把"同号"说成"结果相同"（T7/T8/W4 三格专测这条边界）；
+没有把"声明限制"做成免降级通行证（Y6 钉住）。
 
 为什么先写契约再改 runner：`run_id` 是 `RUN_ID_BASIS` 六个字段的哈希，
 **加一个字段就等于换一次号**（0.5.0 → 0.7.0 已经把 239 行全换过一遍）。字段定义错一次，
@@ -156,6 +168,13 @@ execution
 
 三个时点：`before_fit`（进入拟合前）、`sampler_entry`（进入采样器前，若能挂）、`after_fit`（返回后）。
 取并集，避免"延迟导入发生在拟合中途"被漏掉。
+
+`sampler_entry` 若**结构上挂不上**（numpyro 的 `mcmc.run` 内部没有可挂接的入口），
+必须在 `code.runtime_snapshot_limitation` 里写清 `{missing_points, reason, fallback}`，
+原因码改为 `snapshot_point_declared_missing:sampler_entry`。**状态照样是 `derived`**：
+两个时点的成功采集不能说成三个都完成了。这一条的代价要说清——若实跑确认挂不上，
+**所有真实运行都会停在 `derived`**；那是需要改契约（而不是放宽判定）的事，
+本文件不替它作决定，`exec_identity.py` 也不给它开后门。
 
 **因此 `declared_source_tree_sha256` 的含义是"已声明源码集合摘要"**，它的完整性来自
 **覆盖规则被强制核对**，而不是来自"我们从 `sys.modules` 里看到了多少"。这是 `v1.0`
@@ -484,12 +503,20 @@ unclassified  = { k ∈ effective : effect(k) 未登记 }          （非空 ⇒
 | 子字段 | 类型 | 必填 | 进 `run_id` | 说明 |
 |---|---|---|---|---|
 | `kind` | enum(`none`/`scalar_pair`/`perpoint`) | ✓ | ✗（由 `array_sha256` 承担） | `fit_top` 的三种形态（`_check_sigma`，`bm_top.py:645`） |
-| `mode` | enum(`free`/`scalar`/`perpoint`) | ✓ | ✗ | `make_sigma` 的**来源**口径（`nested_fit.py:121`） |
-| `pct` / `abs` | float? | 对应 mode | ✗ | 参数值；`abs=None` 会被物化成 `0.01·max\|Z\|` |
-| `array_sha256` | str? | `kind≠none` 时 ✓ | **✓** | 对**实际**传入的数组求摘要 |
-| `floor` | float | ✓ | **✓** | `sigma_floor`，与 `sigma` 互斥 |
+| `mode` | enum(`free`/`scalar`/`perpoint`) | ✓ | ✗ | `make_sigma` 的**来源**口径（`nested_fit.py:121`）；与 `kind` 必须自洽（`KIND_BY_MODE`） |
+| `pct` / `abs` | float? | 对应 mode | ✗ | **入参**值；`abs=None` 会被物化成 `0.01·max\|Z\|`，所以它允许与物化值不同 |
+| `array_sha256` | str? | `kind≠none` 时 ✓ | **✓** | 对**实际**传入的数组求摘要；`kind=none` 时必须为 `null` |
+| `floor` | float | ✓ | **✓** | `sigma_floor`，与 `sigma` 互斥。**缺失 / `None` / 负数一律报错**：`0.0` 是"无下界"这个真实取值、`None` 是"没记录"、缺字段是"没写"，三者不许混（P1-2） |
 | `from_data` | bool | ✓ | ✗ | 决定 `elpd` 有没有留一解释（`fit_top` 的 `elpd_valid_*`） |
 | `elpd_valid` | bool | ✓ | ✗ | 派生自 `from_data`，进产物供读者判断 |
+
+**噪声条件只能有一个主张者（P0-1）**：`sigma_mode`/`sigma_pct`/`sigma_abs` 在
+`RUN_ID_CONFIG_KEYS` 里仍登记为 `execution_condition`（它们确实属于执行条件），但
+**不参与哈希**——`SIGMA_MEMBER_KEYS` 列出它们，`config_keys_in_run_id()` 跳过。
+它们是上面 `mode`/`pct`/`abs` 的副本；若各自再进哈希，两次运行"实际 σ 数组逐位相同、
+只是来源写法不同"就会换号，D-8 当场失效（T19a 守这一格，X5 守结构侧）。
+**"属于哪一类条件"和"由谁承载"是两个问题，别混。** 这一条的直接后果：`sigma` 块
+**必须**在场，缺了就是 `config_incomplete:sigma`——否则噪声条件会从身份里整体消失。
 
 **进哈希的是投影，不是整个块**：`sigma_run_id_value()` 只取
 `{array_sha256, floor}` 两个子字段，其余六个**留记录、不进哈希**。
@@ -518,11 +545,18 @@ sha256( b"v1\n" + f"{a.shape[0]}x{a.shape[1]}\n" + np.ascontiguousarray(a, "<f8"
 ⇒ 似然完全一样 ⇒ 是同一组条件。而 `from_data` 只改 `elpd` 的**解释**，不改后验
 ⇒ 归 `workflow`（`decision` 层），不进 `run_id`。
 
-**T19 的原措辞已订正**：原写"`mode=perpoint,pct=2` → `scalar,abs=` 使实际 σ 数组逐位相同"，
-这是**做不到的**——`_check_sigma` 里 `scalar` 是 `(2,)`、`perpoint` 是 `(2,n)`，形状不同
-就不可能是"同一个数组"。改为两格：
-**T19a 同一数组、不同 `mode` ⇒ 同号**（测"来源不进哈希"）；
-**T19b 同一 `mode`、数组差 0.01% ⇒ 换号**（测"实际数组进哈希"，这才是 D-8 的落点）。
+**T19 的措辞订正过两次，现在是这个形状（`v1.3`）**：
+
+| 原写法 | 为什么做不到 | 现写法 |
+|---|---|---|
+| `perpoint,pct=2` → `scalar,abs=` 使数组逐位相同 | `scalar` 是 `(2,)`、`perpoint` 是 `(2,n)`，形状不同就不可能"同一个数组" | 拆成"同数组不同**来源**"与"同 `mode` 数组变" |
+| T19a 只改块里的一个嵌套字段 | 真实捕获里 `sigma_mode`/`sigma_pct`/`sigma_abs` 是**三个独立入参**同时落盘；只改块内字段测不出 P0-1 | T19a 现在**块与独立键同时改**，模拟 `nested_fit.run` 的真实记录 |
+
+`mode` 与 `kind` **一一对应**（`KIND_BY_MODE`），所以"同数组、不同 `mode`"在物理上
+不存在——不是没测，是**不可能**。真正可实现的"同数组、不同来源"是：
+`abs=None` 物化成 `0.01·max|Z|=0.03` 与显式 `abs=0.03` 写出同一个数组，此时块里的
+`abs` 与独立键 `sigma_abs` **都从 `None` 变成 `0.03`**，而号必须不变——这就是 T19a。
+反向那一半由 **T19c** 守：`mode` 不变、`pct` 2→2.5 ⇒ 数组变 ⇒ 换号。
 
 #### 3.3.6 归一化规则（F12 的对策）
 
@@ -666,6 +700,15 @@ v1 只做一件事：把 `recorded` 的**必填集**写清楚。
 **dirty 而没有可用补丁包 ⇒ 不能 `recorded`**，因为这时"可重建"不成立，而 `recorded`
 是对外宣称"这次运行可复核"的那一档。
 
+**`v1.3` 补的三条（都来自实现审查，不是新功能）**：
+
+| 情形 | 结果 | 理由 |
+|---|---|---|
+| `code` 的覆盖关系与**集合复算**不一致（`undeclared_claim_mismatch` / `declared_not_loaded_mismatch` / `source_coverage_mismatch`） | `derived` | `source_coverage` 不再是可信输入：它由 `runtime_loaded_modules` 与声明集**重算**得出（P0-2） |
+| 三个快照时点只取到两个 | `derived` | `recorded` 要求 `before_fit` / `sampler_entry` / `after_fit` 齐；缺哪个写进原因码 |
+| 两个时点 + `code.runtime_snapshot_limitation`（写明缺哪个、为什么、降级处置） | `derived`，原因码 `snapshot_point_declared_missing:<p>` | 声明限制**不能**免降级，否则等于把 §3.1.2 偷偷放宽；区别只在读者能看出"结构上挂不上"而非"忘了采"（P1-3） |
+| 记录结构性非法（`sigma` 块坏、`floor` 缺失、进哈希的键类型错） | `unconfirmed`，**无号** | 载荷规范化不出来，"降一档发个号"做不到；三档里只有 `unconfirmed` 允许没有号（Y5/C1） |
+
 **为什么两组缺失后果不同**：`data`/`rng`/`budget` 缺了，我们连"跑的是什么"都不知道，
 这时发任何 id 都是编造（现有规则，`RUN_ID_MISSING` 三个真实原因 + `not_provided` 哨兵）；
 `code`/`env`/`config` 缺了，条件仍大致可描，发 `D-` 但必须标出缺哪一项。
@@ -736,12 +779,12 @@ workflow_id = "W1-" + sha256(
 `run_id` 相同 ⇒ 拟合条件相同；**不**表示初值/采样实例相同（`rng.actual.*` 不进哈希，T8）；
 **不**表示产物相同（`instance.*` 不进哈希，T7）；**不**表示工作流相同（那是 `workflow_id`）。
 
-### 6.2 反例矩阵（T1–T24 + W/S/Y/M/X 五组）
+### 6.2 反例矩阵（T/W/S/Y/M/X/C 七组，65 格）
 
 这组用例比再加十几个字段有用：它直接检验 `run_id` 的语义是否成立。左列是改动，
 右两列是**必须**出现的差异。任一格不符，键表或委托规则就是错的。
 
-**本轮已实现并跑通 54/54**（`test_exec_identity.py`）。表里"实测"列写的是这条
+**已实现并跑通 65/65**（`test_exec_identity.py`）。表里"实测"列写的是这条
 **现在由哪个用例守着**；`v1.2-draft` 时这一列全是"待跑"。
 
 | # | 改动 | `run_id` | 该变什么 | 防的失败模式 |
@@ -764,19 +807,23 @@ workflow_id = "W1-" + sha256(
 | T16 | `with_voigt=True` → `False` | nested 子运行**同**；父 `workflow_id` 不同 | `workflow.children` 变 | 附加对照污染主身份 |
 | T17 | `kk_mode="gate"` → `"warn"` | 同 | `workflow.gate` 变 | 门禁进哈希 |
 | T18 | `diag` 阈值改 | 同 | `workflow.guards` 变 | 事后阈值进哈希 |
-| T19a | 实际 σ 数组逐位相同、`sigma.mode` 不同（`perpoint`→`scalar` 标签） | **同** | `sigma.mode` 变 | 复合键要认"实际数组"，不是"来源枚举" |
-| T19b | 同一 `mode`、实际 σ 数组差 0.01% | **必须不同** | `sigma.array_sha256` 变 | D-8 的落点：数组才是噪声条件 |
+| T19a | σ 数组逐位相同、来源口径不同（块 `abs` 与独立键 `sigma_abs` 同时 `None`→`0.03`） | **同** | `sigma.array_sha256` 不变 | 来源子字段不进哈希（P0-1）；**块与独立键必须同时改**，否则测不出冲突 |
+| T19b | `kind=none`（自由 σ）→ `kind=scalar_pair` | **必须不同** | `array_sha256` 从 `null` 变为有值 | 自由 σ 与固定 σ 不是同一组条件 |
+| T19c | 同 `mode`：`pct` 2→2.5；以及 `pct=2` vs `2.0` | 前者**不同**、后者**同** | `sigma.array_sha256` | D-8 的落点：数组才是噪声条件；同一个数两种写法不换号 |
 | T20 | `adsorption=_UNSET` → 显式 `None`（等价） | **同** | `origin` 变 | 哨兵未解析（F12） |
 | T21 | `zeta="1.0"` → `1.0` | **同** | 归一化后同值 | 字符串/数字未归一（F12） |
 | T22 | 声明了 `numeric` 模块但这次没加载 | 同 | `declared_not_loaded` 非空 | 覆盖规则误判（应无害） |
-| T23 | 加载了未声明的项目模块 | 降 `derived` | `source_coverage=undeclared_loaded` | F7 |
+| T23a | 自称"加载了未声明模块"，但运行时集 ⊆ 声明集 | 降 `derived` | `undeclared_claim_mismatch` | 自称字段互相自洽也能造假 |
+| T23b | 运行时集真的多出一个未声明模块 | 降 `derived` | `undeclared_loaded:<path>` | F7 |
+| T23c | `source_coverage=complete` 且 `undeclared_modules=[]`，但运行时集含未声明模块 | 降 `derived` | `undeclared_loaded:<path>` + `source_coverage_mismatch` | **P0-2 的核心格**：不重算集合，这条会拿到 `R1-` |
+| T23d | `declared_not_loaded` 与「声明集 − 运行时集」不符 | 降 `derived` | `declared_not_loaded_mismatch` | 差集也要复算，不只未声明那一半 |
 | T24 | dirty 且补丁包缺未跟踪文件内容 | 降 `derived` | `bundle_excluded` 含声明集文件 | F8 |
 
 T10/T19/T20/T21 是 `v1.2` 的核心主张，也是最容易被"改回去"的四格：
 它们都要求**同号**，而直觉上"改了配置"应该换号。理由在 §3.3.5–§3.3.6——
 `run_id` 认的是"进似然的东西"，不是"写下来的字符串"。
 
-**逐条实测状态（`test_exec_identity.py`，54/54）**：T1–T24 全部有对应用例，名字就是
+**逐条实测状态（`test_exec_identity.py`，65/65）**：T1–T24 全部有对应用例，名字就是
 `case_T1_branch` … `case_T24_bundle_gap`。三处**在写测试时才发现的措辞错误**已订正，
 这正是"边写边测"的价值：
 
@@ -786,7 +833,7 @@ T10/T19/T20/T21 是 `v1.2` 的核心主张，也是最容易被"改回去"的四
 | T1「`branch` 变，`candidate_id` 也变」 | 真跑时 `candidate_id` 当然也变，于是这条用例即使配置通道漏了也会"通过" | 测试里**固定 `candidate_id`** 只改 `branch`：漏哈希立刻暴露 |
 | T10「改 `bm_circuit` 一行，`run_id` 同」 | 真实清单里 `bm_circuit` 仍是 `numeric`（未过运行验证），拿真实清单测必然失败 | 用**夹具**里已写 `why_not_numeric`+`evidence` 的 `plots.py` 测机制；真实模块等实测（M2 钉住零降级） |
 
-### 6.2.1 新增四组：`workflow_id`、`sigma` 数组、状态阶梯、清单自校验
+### 6.2.1 其余六组：`workflow_id`、`sigma` 数组、状态阶梯、清单自校验、配置类型、结构护栏
 
 审查要求"不能只测 `run_id`"。W 组测第二个号，S 组测 D-8 的规范化，
 Y 组测六块各自缺项时降哪一档，M 组测清单本身（含"降级零条"这条硬约束）。
@@ -806,8 +853,15 @@ Y 组测六块各自缺项时降哪一档，M 组测清单本身（含"降级零
 | S5 | `<f8` vs `>f8`；`float32(0.1)` vs `float64(0.1)` | 前两者同摘要；后者**必须不同** | 把"字节序"和"数值"混为一谈（原措辞写反） |
 | S6 | C/F 内存布局；转置 | 布局无关；转置**不同** | 把"归一化"写成"敏感性"（原措辞写反） |
 | S7 | σ ≤ 0 | 报错 | `Normal.scale` 不接受 0，写进身份才发现就晚了 |
+| S8 | `kind`/`mode` 不自洽；`floor` 缺失 / `None` / 负数 | 全部报错；`floor=0.0` 合法 | `(2,)` 与 `(2,n)` 是两个世界；`None` 被 `or 0.0` 静默当 0（P1-2） |
 | Y1–Y4 | `env` 摘要不符 / 未登记配置键 / 预算非 `recorded` / `rng.plan` 缺项或 `n_chains` 不符 | `derived`、`derived`、`unconfirmed`（无号）、`unconfirmed`（无号） | 三档台阶被抹平；"没有号"被伪造成号 |
-| M1–M7 | 三份 Profile 齐全 / **降级零条** / 路径存在 / 降级候选未应用 / 声明集可复算 / 清单与源码同步 / 降级缺证据被拒 | 见测试输出 | 为了让测试变绿而降低源码角色 |
+| Y5 | `sigma` 块坏掉（`kind≠none` 却无 `array_sha256`） | `unconfirmed` + `unhashable:`，**无号** | 载荷建不起来时"降一档发个号"是编造 |
+| Y6 | 只采到 `before_fit`/`after_fit`；以及再加 `runtime_snapshot_limitation` | 两者都是 `derived`（原因码不同）；三时点齐则 `recorded` | 两个时点的成功不能冒充三个（P1-3） |
+| M1–M8 | 三份 Profile 齐全 / **降级零条** / 路径存在 / 降级候选未应用 / 声明集可复算 / 清单与源码同步 / 降级缺证据被拒 / 预览可复算 | 见测试输出 | 为了让测试变绿而降低源码角色 |
+| C1 | `layers=True`（bool 冒充 int）；`include_L=1`（反向） | 都 `unconfirmed`（规范化失败 ⇒ 无号） | `True` 是 `int` 的子类，这类错**不报错**就会当层数用（P1-1） |
+| C2 | `kk_mode="bypass"`（闭集 `gate/warn/off`） | `derived` + `config_type_mismatch` | 越界档位一路走到门禁里当"不拦"用 |
+| C3 | `branch` 越界 / `diag` 非 dict / `plot` 非 bool | 均被拒 | 类型标签不能只是注释（P1-1） |
+| X5 | 三个 sigma 来源子字段的键集与载荷 | 已登记、**不在**哈希集、不在载荷里 | P0-1 的结构侧护栏（T19a 是行为侧） |
 
 ---
 
@@ -929,7 +983,7 @@ run_id_prefix: "R1-"/"D1-"           # D-4 已定；前缀只是辅助标识
 | 2 | 可恢复的证据有明确来源（文件 + 字段 + 复算方式） | ✅ 数据内容哈希 239/239；6 条 seed 有产物来源 |
 | 3 | 不可恢复的明确标为不可恢复（原因 + 为什么不可恢复） | ✅ 9 份产物零身份字段、mtime 只给上界、库模块无副本 |
 | 4 | 判重与独立性可复算（双口径同报、三套测试、`--check`） | ✅ 契约 76/76、快照 9/9、`--check` rc=0 |
-| 5 | 后续 runner 有一套**经过实跑验证**的身份契约 | ⚠️ 契约与声明集已实现并跑通 52/52，**但没有一次真实运行**（runner 未授权）⇒ 本条仍不成立 |
+| 5 | 后续 runner 有一套**经过实跑验证**的身份契约 | ⚠️ 契约与声明集已实现并跑通 65/65，**但没有一次真实运行**（runner 未授权）⇒ 本条仍不成立 |
 
 **冻结判据**：1–4 成立 + 5 的契约被审查通过并至少经一次真实运行验证（P1）。
 不由 `R-` 数量决定——233 条永远 `derived` 也可以是可信的历史基线；把"重跑补齐"当冻结条件，
@@ -996,16 +1050,21 @@ W1；`bm_select` 选择/重跑变 → W2（入口）；`kk_mode` 门禁变 → T
 | P0 | 认下 §3.3.4 三张键表 | ✅ 已落成 `RUN_ID_CONFIG_KEYS`（38 键 × 类型 × `effect`） | 否 |
 | P1 | 落 `source_manifest.json`（三份 Profile） | ✅ 15/19/18 个文件，**降级零条** | 否 |
 | P1 | 实现身份计算（纯函数） | ✅ `exec_identity.py`：三层摘要、`run_id`、`workflow_id`、status | 否 |
-| P1 | 跑 §6.2 反例矩阵 | ✅ **54/54**（T×25、W×6、S×7、Y×4、M×8、X×4） | 否 |
+| P1 | 跑 §6.2 反例矩阵 | ✅ **65/65**（T×29、W×6、S×8、Y×6、M×8、X×5、C×3） | 否 |
 | P0 | 冻结契约（**只冻结验过的**） | ✅ §18 冻结台账；未验证项标 `draft` | 否 |
 | **P1** | **写 runner 落字段 + 1 次真实运行**（含补丁包重建校验） | ⛔ **仍待单独授权** | 是，限 runner |
 | P1 | 重跑 4 次历史条件建 6 条新记录（`purpose=baseline_rebuild`） | ⛔ 依赖上一行 | 是，跑实验 |
 | P2 | 233 条的实验单位与优先级 | ⛔ 未开始（`STAGE2_SPEC.md`） | 否 |
 
-**授权 runner 前的唯一阻塞项**不是设计，而是这轮测试**证明不了**的两件事：
-① 声明集是否覆盖了**真实加载**的模块（要一次运行的 `runtime_loaded_modules`，T23 只用夹具）；
-② 补丁包能否**重建**工作树（要 dirty 状态下的真实产物，T24 只用夹具）。
+**授权 runner 前的阻塞项**不是设计，而是这轮测试**证明不了**的三件事：
+① 声明集是否覆盖了**真实加载**的模块（要一次运行的 `runtime_loaded_modules`，
+   T23a–d 只用夹具；复算逻辑本身已冻结）；
+② 补丁包能否**重建**工作树（要 dirty 状态下的真实产物，T24 只用夹具）；
+③ `sampler_entry` 到底挂不挂得上（Y6 只保证"少了不许冒充三个"，没保证可采）。
 其余字段与规则都已有反例护着（§18）。
+
+`v1.3` 修掉的两处 P0 说明一件事：**"测试全绿"不等于"实现忠实"**。T19a 与 T23c
+都是修复前能通过的格子——它们通过，是因为测试造的记录太干净，而不是因为实现正确。
 
 ## 15. 本契约**不**做的事
 
@@ -1038,6 +1097,7 @@ W1；`bm_select` 选择/重跑变 → W2（入口）；`kk_mode` 门禁变 → T
 | `v1.1-draft` | 2026-11-14 | 修 P0-1（声明集/运行时集分离 + 覆盖规则）、P0-2（补丁包含未跟踪内容）、P0-3（`RUN_ID_CONFIG_KEYS` 类型无关 + 捕获接口 + `unclassified_keys`）；修四处内部不一致；D-1～D-4 记为已定并附约束 |
 | `v1.2-draft` | 2026-11-14 | **从实际签名反推参数表**：三入口键表（§3.3.4）、字段委托表（§3.3.3）、`sigma` 复合键（§3.3.5）、归一化规则（§3.3.6）、`workflow` 块（§3.3.7）；`effect` 三值 → 六值；新增 F11/F12、§3.1.3（三份 Profile，数字由 `audit_source_profiles.py` 算出）、§6.2 反例矩阵；新提 D-5～D-8 待裁；`data.transform`（D-7） |
 | **`v1.2`** | 2026-11-14 | **动工**：D-5 有条件采纳（补第三层 `workflow_source_tree_sha256`）、D-6/D-7/D-8 采纳；新增 `exec_identity.py`（三层摘要 / `run_id` / `workflow_id` / 状态阶梯，纯函数）、`source_manifest.json`（三 Profile，15/19/18 文件，降级零条）、`build_source_manifest.py`、`test_exec_identity.py`（**54/54**）；新增 §3.1.4（降级证据）、§6.3（`workflow_id`）、§6.2.1（W/S 组）、§18（冻结台账）；**订正三处原措辞**（T19、T1、T10，见 §6.2）；`sigma` 改为显式投影（只 `array_sha256`+`floor` 进哈希） |
+| **`v1.3`** | 2026-11-14 | **实现审查的修复轮**（P0-1/P0-2 + P1-1/P1-2/P1-3）：① `sigma_mode`/`sigma_pct`/`sigma_abs` 退出哈希（`SIGMA_MEMBER_KEYS`），复合块成噪声条件唯一载体，缺块 ⇒ `config_incomplete:sigma`；② `_chk_code()` 由 `runtime_loaded_modules` 与声明集**重算**覆盖关系，`undeclared_claim_mismatch`/`declared_not_loaded_mismatch`/`source_coverage_mismatch` 三码；③ `_type_ok()` 让键表的类型与枚举标签**被执行**，`bool` 不再冒充 `int`，`kk_mode` 收紧到 `{gate,warn,off}`；④ `sigma.floor` 缺失/`None`/负数报错，`kind`↔`mode` 由 `KIND_BY_MODE` 强制自洽；⑤ 三时点契约化（`SNAPSHOT_POINTS`）+ `runtime_snapshot_limitation`，声明限制也**照样降级**；⑥ 结构性非法落 `unconfirmed`（`unhashable:`），不降一档发号；**`identity_contract_version` `1.2`→`1.3`**；反例 54→**65** |
 
 ---
 
@@ -1063,12 +1123,17 @@ W1；`bm_select` 选择/重跑变 → W2（入口）；`kk_mode` 门禁变 → T
 | 状态阶梯（六块 → 三档） | Y1 Y2 Y3 Y4 T22 T23 | `data`/`rng`/`budget` 缺 ⇒ `unconfirmed` 且**无号**；`code`/`env`/`config` 缺 ⇒ `derived` |
 | `sha256` 语义与 registry 一致 | X1（+ registry D12） | 64 位十六进制；无效**抛错**不退化 |
 | 声明集合法性与清单同步（含预览可复算） | M1–M8 | 降级须 `why_not_numeric`+`evidence`；入口两处都在；`--check` rc=0 |
+| σ 的**单一主张者**：三个来源子字段不进哈希 | T19a T19b T19c X5 S8 | 复合块是唯一载体；`mode` 与 `kind` 一一对应；`floor` 缺失/`None`/负数报错，`0.0` 合法 |
+| 覆盖关系**从集合复算**，不信自称字段 | T23a T23b T23c T23d T22 | `undeclared = runtime − declared`、`not_loaded = declared − runtime`；两条差集与 `source_coverage` 都必须与重算一致 |
+| 配置值类型与枚举闭集进判定 | C1 C2 C3 Y2 | 类型标签会被执行（不再是注释）；`bool` 不是 `int`；`kk_mode ∈ {gate,warn,off}` |
+| 结构性非法 ⇒ `unconfirmed`（无号） | Y5 C1 | 载荷规范化不出来时不发号：`unhashable:<msg>` |
 
 ### 18.2 未冻结（**没有真实运行**，所以不许当结论用）
 
 | 项 | 为什么还不行 | 需要什么 |
 |---|---|---|
-| `runtime_loaded_modules` / `source_coverage` 的判定 | T23 用夹具，未读过真 `sys.modules`；闭包与运行时的差集还没实测 | 一次真实运行的三个时点快照 |
+| `runtime_loaded_modules` / `source_coverage` 的判定 | **集合复算本身已冻结**（T23a–d），但复算的输入是夹具：真 `sys.modules` 还没读过，闭包与运行时的差集没实测 | 一次真实运行的三个时点快照 |
+| `sampler_entry` 到底能不能挂上 | Y6 只证明"少一个时点不许冒充三个"，没证明这个时点**可采** | runner 里试挂一次；若确认挂不上，要改的是契约（届时所有真实运行停在 `derived`），不是放宽 Y6 |
 | 补丁包**重建**工作树 | T24 只测"缺包 ⇒ 降级"，没测过"解包后复算摘要一致" | dirty 状态下的一次真实运行 |
 | 降级双条件（`plot_only`/`decision` 等） | 本轮**零降级**（M2）；`pending_demotions` 全部 `applied:false` | 关功能运行 / 改常量重跑 |
 | `capture_interface` / `unknown_keys` 的真实值 | 夹具里是手写的；真实调用点的 `**kwargs` 还没被枚举 | runner 捕获 |

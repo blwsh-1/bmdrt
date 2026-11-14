@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""exec_identity.py —— 执行身份契约 `v1.2` 的**纯函数**实现（不跑拟合、不写产物）。
+"""exec_identity.py —— 执行身份契约 `v1.3` 的**纯函数**实现（不跑拟合、不写产物）。
 
 本模块只做三件事，全部无副作用：
 
@@ -40,7 +40,9 @@ import numpy as np
 # ---------------------------------------------------------------------------
 
 #: 进 `run_id` 哈希的契约世代标签（D-4）。语义一变就换号，载荷不变也换。
-IDENTITY_CONTRACT_VERSION = "1.2"
+#: `1.3`（P0-1/P0-2 + 两个 P1）：σ 的来源子字段退出哈希、覆盖关系改为集合复算、
+#: 配置类型进判定、`floor` 显式三分。载荷语义变了 ⇒ 必须换号——哪怕一条记录都还没有。
+IDENTITY_CONTRACT_VERSION = "1.3"
 
 #: `RUN_ID_CONFIG_KEYS` 的闭集版本。加键/改 `effect` 必须 +1。
 RUN_ID_CONFIG_KEYS_VERSION = 1
@@ -68,6 +70,11 @@ RNG_PLAN_KEYS = ("root_seed", "prng", "derivation", "n_chains", "init_strategy")
 #: 三档身份状态。`unconfirmed` 不发 `run_id`。
 IDENTITY_STATES = ("recorded", "derived", "unconfirmed")
 
+#: 三个快照时点（§3.1.2）。`recorded` 要求三个齐。
+#: 只有两个时，必须在 `code.runtime_snapshot_limitation` 里显式写"缺哪个、为什么、
+#: 降级处置"，**且照样降 `derived`**——两个时点的成功采集不能被说成三个都完成了。
+SNAPSHOT_POINTS = ("before_fit", "sampler_entry", "after_fit")
+
 #: 前缀只作辅助标识（D-4），权威是 `identity_contract_version` + 状态。
 RUN_ID_PREFIX = {"recorded": "R1-", "derived": "D1-"}
 
@@ -85,14 +92,19 @@ RUN_ID_CONFIG_KEYS: dict[str, tuple[str, str]] = {
     "diffusion": ("enum[none,Ws,Wo,WsWo]", "model_definition"),
     "zeta": ("enum[free]|float", "model_definition"),
     # --- 执行条件（改完这次运行不再可复现） ---
-    "sigma": ("composite", "execution_condition"),
+    "sigma": ("composite", "execution_condition"),        # 噪声条件**唯一**载体
     "sigma_floor": ("float", "execution_condition"),
+    # ↓ 三个是 `sigma` 复合块的来源子字段：`effect` 归类是"执行条件"，
+    #   但**不进哈希**（`config_keys_in_run_id` 会跳过，见 SIGMA_MEMBER_KEYS）。
+    #   "属于哪一类条件"与"由谁承载"是两个问题，别混。
     "sigma_mode": ("enum[free,scalar,perpoint]", "execution_condition"),
     "sigma_pct": ("float", "execution_condition"),
     "sigma_abs": ("float|null", "execution_condition"),
     "zmax_override": ("float|null", "execution_condition"),
     # --- 门禁：只拦不改数 ---
-    "kk_mode": ("enum", "admission_condition"),
+    # 闭集来源：`bm_real.py:2663`「gate | warn | off」；不再用开放 `enum`，
+    # 否则 `kk_mode="bypass"` 这种笔误能一路走到门禁里当"不拦"用。
+    "kk_mode": ("enum[gate,warn,off]", "admission_condition"),
     "kk_opts": ("dict", "admission_condition"),
     # --- 事后诊断 / 选择阈值 ---
     "diag": ("dict", "decision_condition"),
@@ -125,6 +137,19 @@ RUN_ID_CONFIG_KEYS: dict[str, tuple[str, str]] = {
 #: `voigt_K` 是唯一一个"同一个键在不同 run 里 `effect` 不同"的键：
 #: 父工作流开对照时它只决定"多跑一次"，子运行里它就是模型定义。
 _EFFECT_BY_ROLE = {("voigt_K", "child"): "model_definition"}
+
+#: `sigma` 复合块的**来源子字段**。`sigma_mode`/`sigma_pct`/`sigma_abs` 是
+#: `make_sigma(Z, mode, pct, abs)` 的三个入参（`nested_fit.py:321`）；复合块里的
+#: `mode`/`pct`/`abs` 是它们的副本。
+#:
+#: 噪声条件由复合块**一次**承担（`array_sha256` + `floor`）。这三个键只作记录：
+#: 若再让它们各自进哈希，两次运行的实际 σ 数组逐位相同、仅"来源口径"不同就会换号，
+#: 与 D-8「实际进入似然的数组才是噪声条件」直接冲突（T19a）。
+#: 这是 P0-1：**复合键与独立键不能重复主张同一个条件**。
+SIGMA_MEMBER_KEYS = ("sigma_mode", "sigma_pct", "sigma_abs")
+
+#: `source_coverage` 的闭集（§3.1.2 四种结果）。
+COVERAGE_STATES = ("complete", "undeclared_loaded", "external_path", "snapshot_missing")
 
 
 class SentinelNotResolved(ValueError):
@@ -236,7 +261,12 @@ def canonical_json(obj: Any) -> str:
 
 
 def _norm_float(v: Any, *, key: str) -> float:
-    f = float(v)
+    if v is None:
+        raise ValueError(f"配置 {key!r} 是 None：未知不能当成 0.0 或 1.0")
+    try:
+        f = float(v)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"配置 {key!r} 不是数值：{v!r}（{exc}）") from None
     if not np.isfinite(f):
         raise ValueError(f"配置 {key!r} 是 {f!r}：NaN/Inf 不能进身份哈希")
     return f
@@ -250,10 +280,9 @@ def norm_effective(key: str, value: Any) -> Any:
     if isinstance(value, _Unset):
         raise SentinelNotResolved(
             f"配置 {key!r} 仍是 `_UNSET`：先用 VOIGT_CAPS/档位解析成实际值再算身份")
-    if isinstance(value, np.bool_):
-        return bool(value)
-    if isinstance(value, bool):
-        return value
+    # 这里**刻意没有**"bool 原样返回"的通用短路：`True` 是 `int` 的子类，
+    # 一旦在键分支之前就返回，`layers=True` 会绕过"必须是整数（bool 不算）"，
+    # 然后被当成第 1 层用。bool 只在 bool 类型的分支里被接受。
     if key == "zeta":
         # `zeta="1.0"` 与 `zeta=1.0` 是同一个固定值（T21）；`"free"` 保持字符串。
         if isinstance(value, str) and value.strip().lower() != "free":
@@ -300,8 +329,21 @@ def config_effect(key: str, *, role: str = "parent") -> str | None:
 
 
 def config_keys_in_run_id(effective: Mapping, *, role: str = "parent") -> list[str]:
-    """`config.effective` 里**进 `run_id`** 的键（按码位排序）。"""
-    return sorted(k for k in effective if config_effect(k, role=role) in RUN_ID_EFFECTS)
+    """`config.effective` 里**进 `run_id`** 的键（按码位排序）。
+
+    两道门：`effect ∈ RUN_ID_EFFECTS`，**且**不是 `sigma` 复合块的来源子字段。
+    后一道是 P0-1 的修正：`sigma_mode`/`sigma_pct`/`sigma_abs` 的语义已被复合键
+    承载（`array_sha256` + `floor`），再让它们各自进哈希就等于允许"来源写法"
+    冒充"噪声条件"：`abs=None` 物化成 `0.01·max|Z|` 与显式 `abs=0.03` 写出同一个
+    数组、`sigma_abs` 与块里 `abs` 却不同，这时换号就是 D-8 禁止的（T19a）。
+
+    它们仍留在 `RUN_ID_CONFIG_KEYS` 里（`effect=execution_condition` 不变）：
+    这张表管的是"这个键属于哪一类条件"，进不进哈希是"由谁承载"的第二个问题。
+    记录里保留它们，供人读"这个数组是怎么来的"。
+    """
+    return sorted(k for k in effective
+                  if k not in SIGMA_MEMBER_KEYS
+                  and config_effect(k, role=role) in RUN_ID_EFFECTS)
 
 
 # ---------------------------------------------------------------------------
@@ -360,17 +402,40 @@ SIGMA_RUN_ID_FIELDS = ("array_sha256", "floor")
 
 
 def sigma_run_id_value(block: Mapping) -> dict:
-    """把 `sigma` 复合块投影成进哈希的那两个子字段。"""
+    """把 `sigma` 复合块投影成进哈希的那两个子字段。
+
+    `floor` 显式区分**缺失 / `None` / `0.0`**：`0.0` 是"无下界"这个真实取值，
+    `None` 是"没记录"，缺字段是"没写"。原来的 `block.get("floor") or 0.0`
+    把后两种**静默当成 `0.0`**——那等于替记录编一个值，而且编得看不出来。
+    """
     if not isinstance(block, Mapping):
         raise ValueError("sigma 必须是复合块（见 sigma_block），收到 "
                          f"{type(block).__name__}")
+    if "floor" not in block:
+        raise ValueError("sigma.floor 缺失：噪声下界必须显式记录（无下界写 0.0）")
+    if block.get("floor") is None:
+        raise ValueError("sigma.floor 是 None：无下界请写 0.0，None 表示没记录")
+    floor = _norm_float(block.get("floor"), key="sigma.floor")
+    if floor < 0:
+        raise ValueError("sigma.floor 必须非负（与 bm_top._check_sigma 同口径），"
+                         f"收到 {floor!r}")
+    kind = block.get("kind")
+    if kind not in SIGMA_KINDS:
+        raise ValueError(f"sigma.kind 必须是 {SIGMA_KINDS} 之一，收到 {kind!r}")
     arr = block.get("array_sha256")
     if arr is not None:
         arr = canon_sha256(arr, what="sigma.array_sha256")
-    if block.get("kind") != "none" and arr is None:
+    if kind != "none" and arr is None:
         raise ValueError("sigma.kind≠none 却没有 array_sha256：实际噪声数组才是身份")
-    return {"array_sha256": arr,
-            "floor": _norm_float(block.get("floor") or 0.0, key="sigma.floor")}
+    if kind == "none" and arr is not None:
+        raise ValueError("sigma.kind='none' 却带 array_sha256：自由 σ 没有固定数组")
+    return {"array_sha256": arr, "floor": floor}
+
+
+#: `make_sigma` 的模式与"实际进似然的形态"是**一一对应**的（`nested_fit.py:113`）：
+#: `free` ⇒ 无固定数组；`scalar` ⇒ `(2,)` 广播；`perpoint` ⇒ `(2, n)`。
+#: 所以 `kind` 与 `mode` 不能各写各的——形状由模式决定，配错就是造一个不存在的记录。
+KIND_BY_MODE = {"free": "none", "scalar": "scalar_pair", "perpoint": "perpoint"}
 
 
 def sigma_block(*, kind: str, mode: str | None = None, sigma: Any = None,
@@ -379,11 +444,22 @@ def sigma_block(*, kind: str, mode: str | None = None, sigma: Any = None,
     """构造 `config.effective["sigma"]` 的复合值（§3.3.5）。
 
     `kind` 是**实际进似然的形态**（`_check_sigma` 的三分支），`mode` 是**来源口径**
-    （`make_sigma`）。两者不同不必换号，但都要记：前者决定 `array_sha256` 有没有值，
-    后者供人读。
+    （`make_sigma`）。两者必须自洽（`KIND_BY_MODE`），但 `pct`/`abs` 与块里的
+    投影值**不必相等**：`abs=None` 会被物化成 `0.01·max|Z|`，块里记的是物化后的数，
+    而 `sigma_abs` 记的是入参 `None`。**只有 `mode` 两边必须一致**——它决定数组形状。
     """
     if kind not in SIGMA_KINDS:
         raise ValueError(f"sigma.kind 必须是 {SIGMA_KINDS} 之一，收到 {kind!r}")
+    if mode is not None:
+        if mode not in KIND_BY_MODE:
+            raise ValueError(f"sigma.mode 必须是 {tuple(KIND_BY_MODE)} 或 None，"
+                             f"收到 {mode!r}")
+        if KIND_BY_MODE[mode] != kind:
+            raise ValueError(
+                f"sigma.kind={kind!r} 与 mode={mode!r} 不自洽："
+                f"mode={mode!r} 只能配 {KIND_BY_MODE[mode]!r}（形状由模式决定）")
+    if floor is None:
+        raise ValueError("sigma.floor 不能是 None：无下界写 0.0，None 表示没记录")
     if kind == "none":
         if sigma is not None:
             raise ValueError("kind='none' 表示噪声由后验采样，sigma 必须是 None")
@@ -663,36 +739,155 @@ def _chk_budget(bud: Mapping) -> list[str]:
     return r
 
 
+def _cell_value(cell: Any) -> Any:
+    """`{value, origin, effect}` 里取 `value`；裸值原样返回（兼容手写记录）。"""
+    return cell.get("value") if isinstance(cell, Mapping) else cell
+
+
+def _type_ok(tag: str, value: Any) -> bool:
+    """按 `RUN_ID_CONFIG_KEYS` 的类型标签校验一个**已归一**的值（`|` 表示"或"）。
+
+    存在的意义是把"标签只是注释"变成"标签会被执行"。没有它，表里写着 `int`
+    而记录里放 `True` 也照样 recorded——`True` 在 Python 里是 `int` 的子类，
+    这类错不报错、只会在下游被当成层数用。未知标签**报错**而不是放过：
+    表里写错标签比记录写错值更难发现。
+    """
+    for alt in str(tag).split("|"):
+        alt = alt.strip()
+        if alt == "null":
+            if value is None:
+                return True
+        elif alt == "bool":
+            if isinstance(value, (bool, np.bool_)):
+                return True
+        elif alt == "int":
+            if (isinstance(value, (int, np.integer))
+                    and not isinstance(value, (bool, np.bool_))):
+                return True
+        elif alt == "float":
+            if (isinstance(value, (int, float, np.integer, np.floating))
+                    and not isinstance(value, (bool, np.bool_))):
+                return True
+        elif alt == "str":
+            if isinstance(value, str):
+                return True
+        elif alt in ("dict", "composite"):
+            if isinstance(value, Mapping):
+                return True
+        elif alt == "list[str]":
+            if (isinstance(value, (list, tuple))
+                    and all(isinstance(v, str) for v in value)):
+                return True
+        elif alt == "enum":
+            if isinstance(value, str) and value.strip():
+                return True
+        elif alt.startswith("enum[") and alt.endswith("]"):
+            if value in [x for x in alt[5:-1].split(",") if x]:
+                return True
+        else:
+            raise ValueError(f"未知类型标签 {tag!r}")
+    return False
+
+
+def _chk_config_sigma(eff: Mapping) -> list[str]:
+    """`sigma` 复合块的有效性，以及它与来源子字段的一致性。
+
+    **为什么必须要求 `sigma` 在场**：P0-1 之后噪声条件只由复合块承载
+    （`array_sha256` + `floor`）。它要是不在，`sigma_mode`/`sigma_pct`/`sigma_abs`
+    又都不进哈希，噪声条件就**完全从身份里消失了**——所以缺块必须降级。
+
+    **为什么只校 `mode`，不校 `pct`/`abs`**：后两者是**入参**，块里记的是**物化后**
+    的值（`scalar` + `abs=None` ⇒ `0.01·max|Z|`）。入参 `None` 与物化值不相等是正常的，
+    硬校会把一次正常运行判成矛盾。`mode` 不同：它决定数组形状与走哪个分支，
+    两处写法必须一致。
+    """
+    if "sigma" not in eff:
+        return ["config_incomplete:sigma"]
+    block = _cell_value(eff.get("sigma"))
+    if not isinstance(block, Mapping):
+        return ["sigma_block_invalid:not_mapping"]
+    try:
+        sigma_run_id_value(block)
+    except (ValueError, TypeError) as exc:
+        return [f"sigma_block_invalid:{exc}"]
+    mode = block.get("mode")
+    got = _cell_value(eff.get("sigma_mode"))
+    if mode is not None and got is not None and got != mode:
+        return [f"sigma_mode_mismatch:{got}≠{mode}"]
+    return []
+
+
 def _chk_config(cfg: Mapping, rec: Mapping, *, role: str) -> list[str]:
-    r = []
+    r: list[str] = []
     eff = cfg.get("effective") or {}
     if cfg.get("unknown_keys", []) != []:
         r.append("config_incomplete:unknown_keys")
     if not cfg.get("capture_interface"):
         r.append("config_incomplete:capture_interface")
     unclassified = []
-    for k, cell in eff.items():
+    for k in sorted(eff):
+        cell = eff[k]
         declared = cell.get("effect") if isinstance(cell, Mapping) else None
         expect = config_effect(k, role=role)
         if expect is None or declared is None:
             unclassified.append(k)
-        elif declared != expect:
+            continue
+        if declared != expect:
             r.append(f"config_effect_mismatch:{k}")
+            continue
+        try:
+            got = norm_effective(k, _cell_value(cell))
+        except (ValueError, TypeError) as exc:
+            r.append(f"config_value_invalid:{k}({exc})")
+            continue
+        try:
+            ok = _type_ok(RUN_ID_CONFIG_KEYS[k][0], got)
+        except ValueError as exc:
+            r.append(f"config_key_table_invalid:{k}({exc})")
+            continue
+        if not ok:
+            r.append(f"config_type_mismatch:{k}")
     if unclassified:
         r.append("config_unclassified:" + ",".join(sorted(unclassified)))
+    r += _chk_config_sigma(eff)
     mismatch = rec.get("candidate_config_mismatch") or []
     if mismatch:
         r.append("candidate_config_mismatch:" + ",".join(sorted(mismatch)))
     return r
 
 
+def _path_set(entries: Any, what: str) -> tuple[set[str], list[str]]:
+    """从 `[{"path": …}]`（或裸字符串列表）抽 POSIX 相对路径集。
+
+    非法项进原因而不是被静默丢掉：丢一项就等于把"加载了未声明模块"变成
+    "加载了少一项"，覆盖关系会凭空变成 complete。
+    """
+    out: set[str] = set()
+    bad: list[str] = []
+    if entries is None:
+        return out, bad
+    if isinstance(entries, (str, bytes, Mapping)) or not isinstance(entries, Iterable):
+        # 写成 `entries in (None, [])` 会在 numpy 数组上触发逐元素比较而抛
+        # "truth value is ambiguous"——那是个与身份无关的崩溃，不该出现在这里。
+        return out, [f"{what}_not_list"]
+    for it in entries:
+        p = it.get("path") if isinstance(it, Mapping) else it
+        if not isinstance(p, str) or not p or p.startswith("/") or "\\" in p:
+            bad.append(f"{what}_path_invalid:{p!r}")
+            continue
+        out.add(p)
+    return out, bad
+
+
 def _chk_code(code: Mapping) -> list[str]:
-    r = []
+    r: list[str] = []
     try:
         canon_sha1_commit(code.get("git_commit"))
     except ValueError:
         r.append("code_commit_missing")
+
     items = code.get("declared_source_set") or []
+    declared_paths: set[str] = set()
     if not items:
         r.append("declared_set_missing")
     else:
@@ -700,6 +895,10 @@ def _chk_code(code: Mapping) -> list[str]:
             check_declared_set(items)
         except ValueError as exc:
             r.append(f"declared_set_invalid:{exc}")
+        for it in items:
+            p = it.get("path") if isinstance(it, Mapping) else None
+            if isinstance(p, str) and p:
+                declared_paths.add(p)
         for layer, rec_key, fn in (
             ("declared", "declared_source_tree_sha256", declared_source_tree_sha256),
             ("numeric", "numeric_source_tree_sha256", numeric_source_tree_sha256),
@@ -715,16 +914,59 @@ def _chk_code(code: Mapping) -> list[str]:
                 r.append(f"{layer}_digest_missing")
             elif got.strip().lower() != expect:
                 r.append(f"{layer}_digest_mismatch")
+
+    # --- 覆盖关系：**从两个集合重算**，不信 `source_coverage`（P0-2） ---
+    runtime, bad = _path_set(code.get("runtime_loaded_modules"), "runtime")
+    r += bad
+    if not runtime:
+        r.append("runtime_set_empty")
+    undeclared = sorted(runtime - declared_paths)
+    not_loaded = sorted(declared_paths - runtime)
+    rec_und, bad = _path_set(code.get("undeclared_modules"), "undeclared")
+    r += bad
+    rec_nl, bad = _path_set(code.get("declared_not_loaded"), "declared_not_loaded")
+    r += bad
+    if rec_und != set(undeclared):
+        # 自称的未声明集合与两个集合的差集不符：这一条比覆盖标记更可信
+        r.append("undeclared_claim_mismatch")
+    if rec_nl != set(not_loaded):
+        r.append("declared_not_loaded_mismatch")
+    if undeclared:
+        r.append("undeclared_loaded:" + ",".join(undeclared))
+
+    coverage = code.get("source_coverage")
+    if coverage not in COVERAGE_STATES:
+        r.append("snapshot_missing" if coverage is None
+                 else f"source_coverage_invalid:{coverage}")
+    else:
+        expect_cov = "undeclared_loaded" if undeclared else "complete"
+        if coverage in ("complete", "undeclared_loaded") and coverage != expect_cov:
+            r.append("source_coverage_mismatch")
+        elif coverage == "external_path" and not code.get("external_modules"):
+            r.append("source_coverage_mismatch")
+        elif coverage == "snapshot_missing":
+            r.append("snapshot_missing")
+
     if code.get("runtime_snapshot_taken") is not True:
         r.append("runtime_snapshot_missing")
-    pts = code.get("runtime_snapshot_points") or []
-    if not {"before_fit", "after_fit"} <= set(pts):
-        r.append("runtime_snapshot_points_incomplete")
-    coverage = code.get("source_coverage")
-    if coverage != "complete":
-        r.append({None: "snapshot_missing"}.get(coverage, str(coverage)))
-    if code.get("undeclared_modules"):
-        r.append("undeclared_loaded")
+    pts = list(code.get("runtime_snapshot_points") or [])
+    unknown = sorted(set(pts) - set(SNAPSHOT_POINTS))
+    if unknown:
+        r.append("runtime_snapshot_point_unknown:" + ",".join(unknown))
+    missing = [p for p in SNAPSHOT_POINTS if p not in pts]
+    if missing:
+        lim = code.get("runtime_snapshot_limitation") or {}
+        declared_missing = lim.get("missing_points")
+        ok_decl = (isinstance(declared_missing, (list, tuple))
+                   and sorted(str(x) for x in declared_missing) == sorted(missing)
+                   and str(lim.get("reason") or "").strip()
+                   and str(lim.get("fallback") or "").strip())
+        # 声明了限制**也照样降级**：两个时点的采集成功不能冒充三个时点。
+        # 区别只在原因码——读者能看出"这是结构上挂不上"，不是"忘了采"。
+        r.append("snapshot_point_declared_missing:" + ",".join(missing)
+                 if ok_decl else
+                 "runtime_snapshot_points_incomplete:" + ",".join(missing))
+
     if code.get("external_modules"):
         r.append("external_path")
     if code.get("git_dirty") is None:
@@ -735,7 +977,6 @@ def _chk_code(code: Mapping) -> list[str]:
     if code.get("git_dirty") is True:
         if not valid_sha256(code.get("patch_bundle_sha256")):
             r.append("bundle_missing_when_dirty")
-        declared_paths = {it.get("path") for it in items}
         leaked = [e.get("path") for e in (code.get("bundle_excluded") or [])
                   if e.get("path") in declared_paths]
         if leaked:
@@ -777,6 +1018,10 @@ def evaluate(rec: Mapping, *, role: str = "parent") -> dict:
 
     `unconfirmed` 时 `workflow_id` 也置 `None`：一个成员没有条件身份的工作流，
     给它发工作流号就是把"不知道"包装成"知道"。宁可不发，也不发一个空壳。
+
+    另一条通往 `unconfirmed` 的路是**结构性非法**（`unhashable:`）：`sigma` 块坏掉、
+    `floor` 缺失、类型不对时，载荷根本规范化不出来。这时三档里只有 `unconfirmed`
+    允许没有号——"降 `derived` 发个号"在这里做不到，够不着的东西不许假装够得着。
     """
     dat = rec.get("data") or {}
     rng = rec.get("rng") or {}
@@ -799,7 +1044,18 @@ def evaluate(rec: Mapping, *, role: str = "parent") -> dict:
     reasons = list(dict.fromkeys(reasons))          # 去重但保留首次出现的顺序
     out = {"status": status, "reasons": reasons,
            "run_id": None, "workflow_id": None}
-    if status != "unconfirmed":
-        out["run_id"] = RUN_ID_PREFIX[status] + run_id_digest(rec, role=role)[:32]
-        out["workflow_id"] = WORKFLOW_PREFIX + workflow_id_digest(rec)[:32]
+    if status == "unconfirmed":
+        return out
+    try:
+        rid = run_id_digest(rec, role=role)
+        wid = workflow_id_digest(rec)
+    except (ValueError, TypeError, KeyError) as exc:
+        # 记录结构性坏掉（`sigma` 块非法、缺 `floor`、字段类型不对…）时，
+        # **任何号都是猜的**：不是"降一档"，而是"发不出号"。三档状态里
+        # 只有 `unconfirmed` 允许没有号，所以落在这里，并在原因里点名。
+        return {"status": "unconfirmed",
+                "reasons": reasons + [f"unhashable:{exc}"],
+                "run_id": None, "workflow_id": None}
+    out["run_id"] = RUN_ID_PREFIX[status] + rid[:32]
+    out["workflow_id"] = WORKFLOW_PREFIX + wid[:32]
     return out

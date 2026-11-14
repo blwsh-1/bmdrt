@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""test_exec_identity.py —— 执行身份契约 v1.2 的反例矩阵（T1–T24 + W + S + M）。
+"""test_exec_identity.py —— 执行身份契约 v1.3 的反例矩阵（T/W/S/Y/M/X/C 七组）。
 
 测的是**语义**不是数字：每一格问的都是"这个改动该不该换号"。所以记录是人工搭的
 最小 v1 记录，不跑拟合——`run_id` 的输入是记录，不是 numpyro。
@@ -81,7 +81,7 @@ def _code(items: list[dict], **over) -> dict:
         "runtime_loaded_modules": [{"path": it["path"], "role": it["role"]}
                                    for it in items],
         "runtime_snapshot_taken": True,
-        "runtime_snapshot_points": ["before_fit", "after_fit"],
+        "runtime_snapshot_points": list(E.SNAPSHOT_POINTS),
         "source_coverage": "complete",
         "undeclared_modules": [],
         "external_modules": [],
@@ -138,6 +138,15 @@ def _rec(*, items: list[dict] | None = None) -> dict:
                                "effect": "model_definition"},
                 "sigma": {"value": sig, "origin": "cli",
                           "effect": "execution_condition"},
+                # `sigma_mode`/`sigma_pct`/`sigma_abs` 是 `nested_fit.run` 的三个入参
+                # （`nested_fit.py:321`），真实捕获与复合块**同时**落盘。它们不进哈希
+                # （身份由块承担），但必须在场——夹具不写它们，T19 就测不出 P0-1。
+                "sigma_mode": {"value": "free", "origin": "cli",
+                               "effect": "execution_condition"},
+                "sigma_pct": {"value": 2.0, "origin": "default",
+                              "effect": "execution_condition"},
+                "sigma_abs": {"value": None, "origin": "default",
+                              "effect": "execution_condition"},
                 "sigma_floor": {"value": 0.0, "origin": "default",
                                 "effect": "execution_condition"},
                 "kk_mode": {"value": "warn", "origin": "cli",
@@ -376,21 +385,71 @@ def case_T18_diag():
 # --------------------------------------------------------------------------
 # T19–T21 复合键与哨兵
 # --------------------------------------------------------------------------
-def case_T19_sigma_array_not_mode():
-    z = np.array([[0.02, 0.03, 0.04], [0.02, 0.03, 0.04]])
-    r1 = _rec()
-    s1 = E.sigma_block(kind="perpoint", mode="perpoint", sigma=z, pct=2.0, from_data=True)
-    s2 = E.sigma_block(kind="perpoint", mode="scalar", sigma=z, abs_=0.03, from_data=True)
-    _set(r1, "config.effective.sigma.value", s1)
-    r2 = _set(copy.deepcopy(r1), "config.effective.sigma.value", s2)
-    a, b = _ids(r1), _ids(r2)
-    assert a[0] == b[0], "实际 σ 数组相同、只是来源不同，却换了号（T19 的核心主张）"
-    assert s1["mode"] != s2["mode"], "夹具没构造出 mode 差异"
-    # 反向：数组不同就必须换号——这才是 D-8 真正的落点
-    s3 = E.sigma_block(kind="perpoint", mode="perpoint", sigma=z * 1.0001, pct=2.0)
-    r3 = _set(copy.deepcopy(r1), "config.effective.sigma.value", s3)
-    assert _ids(r3)[0] != a[0], "实际 σ 数组变了 run_id 没变（D-8 没落地）"
-    return "T19 同数组不同 mode=同号；数组差 0.01%=换号"
+def _sig_rec(*, kind, mode, sigma, pct=None, abs_=None, from_data=False,
+             key_mode="follow", key_pct="follow", key_abs="follow"):
+    """按**真实捕获**结构写一条记录：复合块 + 三个入参键同时落盘。
+
+    `nested_fit.run`（`:321`）先收 `sigma_mode/sigma_pct/sigma_abs`，再调
+    `make_sigma` 物化数组、调 `sigma_block` 记块。所以真实记录里两处都有；
+    只改块里一个嵌套字段，测不出 P0-1 那个"独立键又把号拉开"的冲突。
+    """
+    r = _rec()
+    blk = E.sigma_block(kind=kind, mode=mode, sigma=sigma, pct=pct,
+                        abs_=abs_, from_data=from_data)
+    # `nested_fit.run` 的 `sigma_pct` 声明是 `float = 2.0`，**总会被传一个 float**；
+    # `scalar` 分支不用它，但记录里仍然是 2.0。块里的 `pct` 记的是"用了没有"，
+    # 所以 `scalar` 时块 `pct=None` 而入参键 `sigma_pct=2.0`——这正是
+    # "入参 ≠ 物化值"的另一半，不能硬校成相等。
+    pct_key = pct if pct is not None else 2.0
+    _set(r, "config.effective.sigma.value", blk)
+    _set(r, "config.effective.sigma_mode.value", mode if key_mode == "follow" else key_mode)
+    _set(r, "config.effective.sigma_pct.value", pct_key if key_pct == "follow" else key_pct)
+    _set(r, "config.effective.sigma_abs.value", abs_ if key_abs == "follow" else key_abs)
+    return r
+
+
+def case_T19a_sigma_source_not_identity():
+    """同数组、不同来源口径 ⇒ 同号。**复合块与独立键同时改**（P0-1 的回归点）。
+
+    构造：`make_sigma` 的 `scalar` 分支在 `abs=None` 时把 σ 物化成
+    `0.01·max|Z| = 0.03`。于是两次运行：
+      A: 入参 `sigma_abs=None`，块里 `abs=None`；
+      B: 入参 `sigma_abs=0.03`，块里 `abs=0.03`。
+    块与独立键**都变了**，但实际 σ 数组逐位相同 ⇒ 必须同号。
+    若 `sigma_abs` 还各自进哈希，这一对就换号——D-8 当场被推翻。
+    """
+    a = _sig_rec(kind="scalar_pair", mode="scalar", sigma=np.array([0.03, 0.03]),
+                 abs_=None, key_abs=None)
+    b = _sig_rec(kind="scalar_pair", mode="scalar", sigma=np.array([0.03, 0.03]),
+                 abs_=0.03, key_abs=0.03)
+    assert _val(a, "config.effective.sigma.value.abs") is None
+    assert _val(b, "config.effective.sigma.value.abs") == 0.03
+    assert _val(a, "config.effective.sigma_abs.value") != _val(b, "config.effective.sigma_abs.value")
+    ea, eb = E.evaluate(a), E.evaluate(b)
+    assert ea["status"] == "recorded" and eb["status"] == "recorded", (ea, eb)
+    assert ea["run_id"] == eb["run_id"], \
+        f"同数组、来源口径不同却换号（P0-1 复发）：{ea['run_id']} vs {eb['run_id']}"
+    # 反向：数组差 0.01% 必须换号——这才是 D-8 真正的落点
+    c = _sig_rec(kind="scalar_pair", mode="scalar", sigma=np.array([0.030003, 0.03]),
+                 abs_=0.03, key_abs=0.03)
+    assert E.evaluate(c)["run_id"] != ea["run_id"], "实际 σ 数组变了没换号（D-8 没落地）"
+    return "T19a 同数组不同来源（块+独立键都变）：同号；数组差 0.01%：换号"
+
+
+def case_T19c_perpoint_pct():
+    """同模式、`pct` 变 ⇒ 数组变 ⇒ 换号；`pct` 只是 `2` 与 `2.0` ⇒ 不换。"""
+    z = np.abs(np.array([1.0, 2.0, 4.0]))
+    base = _sig_rec(kind="perpoint", mode="perpoint",
+                    sigma=np.stack([2.0 / 100 * z] * 2), pct=2.0, from_data=True)
+    same = _sig_rec(kind="perpoint", mode="perpoint",
+                    sigma=np.stack([2.0 / 100 * z] * 2), pct=2, from_data=True,
+                    key_pct=2)
+    other = _sig_rec(kind="perpoint", mode="perpoint",
+                     sigma=np.stack([2.5 / 100 * z] * 2), pct=2.5, from_data=True)
+    a, b, c = E.evaluate(base), E.evaluate(same), E.evaluate(other)
+    assert a["run_id"] == b["run_id"], "pct 写 2 与 2.0 换了号（同一个数两种写法）"
+    assert a["run_id"] != c["run_id"], "pct 2→2.5 数组变了却没换号"
+    return "T19c pct 2≡2.0 同号；2→2.5 换号"
 
 
 def case_T19b_sigma_none_vs_block():
@@ -442,14 +501,65 @@ def case_T22_declared_not_loaded():
     return "T22 declared_not_loaded 非空：仍 recorded、同号"
 
 
-def case_T23_undeclared_loaded():
+def case_T23a_claim_mismatch():
+    """自称"加载了未声明模块"，但两个集合根本不支持这句话 ⇒ 降级。
+
+    P0-2 的一半：原来只看 `source_coverage` 与 `undeclared_modules` 两个**自称**字段，
+    它们互相自洽就够了。现在从 `runtime_loaded_modules` 与声明集重算，自称必须
+    与重算结果一致。
+    """
     r = _rec()
     r2 = _set(copy.deepcopy(r), "code.undeclared_modules", ["sneaky.py"])
     _set(r2, "code.source_coverage", "undeclared_loaded")
     ev = E.evaluate(r2)
-    assert ev["status"] == "derived", f"加载了未声明模块却没降级：{ev['status']}"
-    assert ev["run_id"].startswith("D1-"), ev["run_id"]
-    return f"T23 未声明模块：降 derived（{ev['reasons']}）"
+    assert ev["status"] == "derived", f"自称与实际集合矛盾却 recorded：{ev}"
+    assert "undeclared_claim_mismatch" in ev["reasons"], ev["reasons"]
+    return f"T23a 自称未声明但集合不支持 ⇒ derived（{ev['reasons'][:2]}）"
+
+
+def case_T23b_real_undeclared():
+    """真加载了未声明模块 ⇒ 降级，且原因里点名是哪个文件。"""
+    r = _rec()
+    rt = copy.deepcopy(_val(r, "code.runtime_loaded_modules")) + [
+        {"path": "sneaky.py", "role": "module"}]
+    r2 = _set(copy.deepcopy(r), "code.runtime_loaded_modules", rt)
+    _set(r2, "code.undeclared_modules", ["sneaky.py"])
+    _set(r2, "code.source_coverage", "undeclared_loaded")
+    ev = E.evaluate(r2)
+    assert ev["status"] == "derived", f"加载了未声明模块却没降级：{ev}"
+    assert any(x.startswith("undeclared_loaded") and "sneaky.py" in x
+               for x in ev["reasons"]), ev["reasons"]
+    return f"T23b 真未声明加载 ⇒ derived（{ev['reasons'][:2]}）"
+
+
+def case_T23c_complete_but_undeclared():
+    """**P0-2 的核心格**：`source_coverage=complete`、`undeclared_modules=[]`，
+    但运行时集里真有未声明模块 ⇒ 必须降级。
+
+    这一格在修复前会**通过**（状态是 `recorded`）：两个自称字段互相自洽，
+    谁都没跟集合对过。runner 一个 bug 就能让这条记录拿到 `R1-` 号。
+    """
+    r = _rec()
+    rt = copy.deepcopy(_val(r, "code.runtime_loaded_modules")) + [
+        {"path": "sneaky.py", "role": "module"}]
+    r2 = _set(copy.deepcopy(r), "code.runtime_loaded_modules", rt)
+    assert _val(r2, "code.source_coverage") == "complete"
+    assert _val(r2, "code.undeclared_modules") == []
+    ev = E.evaluate(r2)
+    assert ev["status"] == "derived", f"coverge 谎报 complete 却 recorded：{ev}"
+    assert any(x.startswith("undeclared_loaded") for x in ev["reasons"]), ev["reasons"]
+    assert "source_coverage_mismatch" in ev["reasons"], ev["reasons"]
+    return f"T23c 谎报 complete ⇒ derived（{ev['reasons'][:3]}）"
+
+
+def case_T23d_declared_not_loaded_mismatch():
+    """`declared_not_loaded` 也必须与 `声明集 − 运行时集` 一致。"""
+    r = _rec()
+    r2 = _set(copy.deepcopy(r), "code.declared_not_loaded", ["main.py"])   # 实际是空集
+    ev = E.evaluate(r2)
+    assert ev["status"] == "derived", ev
+    assert "declared_not_loaded_mismatch" in ev["reasons"], ev["reasons"]
+    return f"T23d declared_not_loaded 与差集不符 ⇒ derived（{ev['reasons']}）"
 
 
 def case_T24_bundle_gap():
@@ -618,6 +728,24 @@ def case_S7_sign_positive():
     return "S7 σ≤0 被拒（Normal.scale 不接受 0）"
 
 
+def case_S8_kind_mode_and_floor():
+    """`kind`/`mode` 必须自洽；`floor` 缺失 / `None` / 负数都要报错（P1-2）。
+
+    原来 `sigma_run_id_value` 写的是 `block.get("floor") or 0.0`：`None`、缺字段
+    与 `0.0` 三者被当成同一件事。那等于替记录编一个值，而且编得看不出来。
+    """
+    msg = _expect_raise(E.sigma_block, kind="perpoint", mode="scalar",
+                        sigma=np.array([[1.0, 2.0], [1.0, 2.0]]))
+    assert "不自洽" in msg, msg
+    blk = E.sigma_block(kind="scalar_pair", mode="scalar", sigma=(0.03, 0.03))
+    missing = {k: v for k, v in blk.items() if k != "floor"}
+    for bad in (missing, dict(blk, floor=None), dict(blk, floor=-0.1)):
+        m = _expect_raise(E.sigma_run_id_value, bad)
+        assert "floor" in m, m
+    assert E.sigma_run_id_value(dict(blk, floor=0.0))["floor"] == 0.0
+    return "S8 kind/mode 不自洽被拒；floor 缺失/None/负数被拒，0.0 合法"
+
+
 # --------------------------------------------------------------------------
 # M1–M7 source_manifest.json
 # --------------------------------------------------------------------------
@@ -764,6 +892,42 @@ def case_Y4_rng_plan_missing():
     return "Y4 rng.plan 缺项 / n_chains 与预算不符 ⇒ unconfirmed"
 
 
+def case_Y5_unhashable_record():
+    """记录结构性坏掉 ⇒ `unconfirmed` 且**没有号**，不是降一档发个号。"""
+    r = _rec()
+    blk = E.sigma_block(kind="scalar_pair", mode="scalar", sigma=(0.03, 0.03))
+    _set(r, "config.effective.sigma.value", dict(blk, array_sha256=None))
+    ev = E.evaluate(r)
+    assert ev["status"] == "unconfirmed", ev
+    assert ev["run_id"] is None and ev["workflow_id"] is None, ev
+    assert any(x.startswith("unhashable") for x in ev["reasons"]), ev["reasons"]
+    assert any(x.startswith("sigma_block_invalid") for x in ev["reasons"]), ev["reasons"]
+    return f"Y5 σ 块坏掉 ⇒ unconfirmed、无号（{ev['reasons'][-1][:44]}…）"
+
+
+def case_Y6_sampler_entry():
+    """两个时点的成功采集**不能**被说成三个都完成（P1-3）。
+
+    声明限制也照样降 `derived`——区别只在原因码：读者能看出这是"结构上挂不上"，
+    不是"忘了采"。把限制声明变成免降级通行证，等于把契约 §3.1.2 偷偷放宽。
+    """
+    r = _rec()
+    two = [p for p in E.SNAPSHOT_POINTS if p != "sampler_entry"]
+    r2 = _set(copy.deepcopy(r), "code.runtime_snapshot_points", two)
+    ev = E.evaluate(r2)
+    assert ev["status"] == "derived", f"少一个时点却 recorded：{ev}"
+    assert any("runtime_snapshot_points_incomplete" in x for x in ev["reasons"]), ev["reasons"]
+    lim = {"missing_points": ["sampler_entry"],
+           "reason": "numpyro 的 `mcmc.run` 内部没有可挂接的入口，只能采到拟合前后",
+           "fallback": "只取 before_fit/after_fit，覆盖判定按未取全处理（降 derived）"}
+    r3 = _set(copy.deepcopy(r2), "code.runtime_snapshot_limitation", lim)
+    ev3 = E.evaluate(r3)
+    assert ev3["status"] == "derived", "声明了限制就当成三时点齐了（这条不许放宽）"
+    assert "snapshot_point_declared_missing:sampler_entry" in ev3["reasons"], ev3["reasons"]
+    assert E.evaluate(_rec())["status"] == "recorded", "三时点齐时不该降级"
+    return "Y6 少 sampler_entry ⇒ derived；显式声明限制仍 derived（原因码不同）"
+
+
 # --------------------------------------------------------------------------
 # X 跨模块一致性
 # --------------------------------------------------------------------------
@@ -784,7 +948,7 @@ def case_X2_v0_record_rejected():
     r2 = _set(_rec(), "identity_contract_version", "1.0")
     msg2 = _expect_raise(E.run_id_payload, r2)
     assert "1.0" in msg2 or "identity_contract_version" in msg2, msg2
-    return "X2 缺版本 / v1.0 记录不许套 v1.2 载荷"
+    return "X2 缺版本 / v1.0 记录不许套 v1.3 载荷"
 
 
 def case_X4_voigt_K_dual_effect():
@@ -816,6 +980,77 @@ def case_X3_determinism():
 
 
 # --------------------------------------------------------------------------
+# C1–C3 配置类型与枚举闭集（P1-1）
+# --------------------------------------------------------------------------
+def case_C1_bool_not_int():
+    """`layers=True` 在 Python 里是 `int` 的子类——必须在身份层被拒。
+
+    这是最容易被漏的一类：没有类型校验时，布尔开关能一路当层数用，
+    而且**不报错**。
+    """
+    r = _rec()
+    _set(r, "config.effective.layers.value", True)
+    ev = E.evaluate(r)
+    # 比"降级"更硬：`layers` 是进哈希的键，规范化不出来 ⇒ 载荷建不起来 ⇒ 没有号。
+    assert ev["status"] == "unconfirmed", f"bool 冒充 int 却发了号：{ev}"
+    assert ev["run_id"] is None, "类型错到无法规范化的记录不该拿到号"
+    assert any(x.startswith("config_value_invalid:layers") for x in ev["reasons"]), ev["reasons"]
+    r2 = _rec()
+    _set(r2, "config.effective.include_L.value", 1)          # 反过来：int 冒充 bool
+    ev2 = E.evaluate(r2)
+    assert ev2["status"] == "unconfirmed", ev2
+    assert any(x.startswith("config_value_invalid:include_L") for x in ev2["reasons"]), ev2["reasons"]
+    return "C1 layers=True / include_L=1 双向被拒（规范化失败 ⇒ 无号）"
+
+
+def case_C2_enum_closed():
+    """`kk_mode` 闭集来自 `bm_real.py:2663`，越界值必须被拒。"""
+    r = _rec()
+    _set(r, "config.effective.kk_mode.value", "bypass")
+    _set(r, "workflow.gate.kk_mode", "bypass")
+    ev = E.evaluate(r)
+    assert ev["status"] == "derived", ev
+    assert "config_type_mismatch:kk_mode" in ev["reasons"], ev["reasons"]
+    return f"C2 kk_mode=bypass ⇒ derived（{ev['reasons']}）"
+
+
+def case_C3_types_dict_and_bool():
+    r = _rec()
+    _set(r, "config.effective.branch.value", "diagonal")
+    ev = E.evaluate(r)
+    assert "config_type_mismatch:branch" in ev["reasons"], ev["reasons"]
+    r2 = _rec()
+    _set(r2, "config.effective.diag",
+         {"value": "r_min=0.9", "origin": "cli", "effect": "decision_condition"})
+    ev2 = E.evaluate(r2)
+    assert any(x.startswith("config_value_invalid:diag") for x in ev2["reasons"]), ev2["reasons"]
+    r3 = _rec()
+    _set(r3, "config.effective.plot.value", "no")
+    ev3 = E.evaluate(r3)
+    assert any(x.startswith("config_value_invalid:plot") for x in ev3["reasons"]), ev3["reasons"]
+    return "C3 branch 越界 / diag 非 dict / plot 非 bool 都被拒"
+
+
+def case_X5_sigma_members_not_hashed():
+    """结构护栏：三个来源子字段**不在**进哈希的键集里，`sigma`/`sigma_floor` 在。
+
+    T19a 是行为侧（同号），这一格是结构侧（键集）。两格同时守着 P0-1：
+    只靠行为测试，将来有人"顺手把 effect 改回进哈希"，某条路径仍可能漏。
+    """
+    eff = _val(_rec(), "config.effective")
+    keys = E.config_keys_in_run_id(eff)
+    for k in E.SIGMA_MEMBER_KEYS:
+        assert k in eff, f"夹具缺 {k}：这一格测不到"
+        assert k not in keys, f"{k} 又进哈希了（P0-1 复发）"
+        assert E.config_effect(k) == "execution_condition", f"{k} 的 effect 归类被改了"
+    assert "sigma" in keys and "sigma_floor" in keys
+    payload = E.run_id_payload(_rec())["config"]
+    for k in E.SIGMA_MEMBER_KEYS:
+        assert k not in payload, f"{k} 出现在载荷里"
+    return "X5 sigma_mode/pct/abs 已登记、不在哈希集、不在载荷里"
+
+
+# --------------------------------------------------------------------------
 CASES = [
     ("T1 branch", case_T1_branch),
     ("T2 include_L", case_T2_include_L),
@@ -835,12 +1070,16 @@ CASES = [
     ("T16 with_voigt", case_T16_with_voigt),
     ("T17 kk_mode", case_T17_kk_mode),
     ("T18 diag", case_T18_diag),
-    ("T19 sigma 数组", case_T19_sigma_array_not_mode),
+    ("T19a sigma 来源", case_T19a_sigma_source_not_identity),
     ("T19b sigma kind", case_T19b_sigma_none_vs_block),
+    ("T19c pct 物化", case_T19c_perpoint_pct),
     ("T20 _UNSET", case_T20_unset_resolved),
     ("T21 zeta", case_T21_zeta_norm),
     ("T22 声明未加载", case_T22_declared_not_loaded),
-    ("T23 未声明加载", case_T23_undeclared_loaded),
+    ("T23a 自称与集合矛盾", case_T23a_claim_mismatch),
+    ("T23b 真未声明加载", case_T23b_real_undeclared),
+    ("T23c 谎报 complete", case_T23c_complete_but_undeclared),
+    ("T23d 未加载集不符", case_T23d_declared_not_loaded_mismatch),
     ("T24 补丁包缺口", case_T24_bundle_gap),
     ("W1 decision 模块", case_W1_decision_module),
     ("W2 入口重跑逻辑", case_W2_entry_retry),
@@ -855,6 +1094,7 @@ CASES = [
     ("S5 dtype/字节序", case_S5_dtype_endian),
     ("S6 C 顺序归一", case_S6_c_order_canonical),
     ("S7 σ>0", case_S7_sign_positive),
+    ("S8 kind/mode + floor", case_S8_kind_mode_and_floor),
     ("M1 三份 Profile", case_M1_three_profiles),
     ("M2 无乐观降级", case_M2_no_optimistic_demotion),
     ("M3 路径存在", case_M3_paths_exist),
@@ -866,11 +1106,17 @@ CASES = [
     ("Y2 配置未登记", case_Y2_config_unclassified),
     ("Y3 预算未记录", case_Y3_budget_not_recorded),
     ("Y4 rng.plan 缺项", case_Y4_rng_plan_missing),
+    ("Y5 不可哈希记录", case_Y5_unhashable_record),
+    ("Y6 sampler_entry", case_Y6_sampler_entry),
     ("M8 预览可复算", case_M8_preview_recomputes),
     ("X1 sha 口径", case_X1_sha_semantics_match_registry),
     ("X4 voigt_K 双效", case_X4_voigt_K_dual_effect),
     ("X2 版本隔离", case_X2_v0_record_rejected),
     ("X3 确定性", case_X3_determinism),
+    ("C1 bool≠int", case_C1_bool_not_int),
+    ("C2 枚举闭集", case_C2_enum_closed),
+    ("C3 dict/bool 类型", case_C3_types_dict_and_bool),
+    ("X5 sigma 成员不进哈希", case_X5_sigma_members_not_hashed),
 ]
 
 
