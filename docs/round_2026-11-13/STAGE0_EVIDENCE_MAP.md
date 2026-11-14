@@ -134,9 +134,19 @@ sha256sum evidence/stage0_three_spectra/*.json evidence/coating_voigt_pilot/*.js
 | 同一条 pilot 记录内的敏感性 | `sensitivity`（`method:"data_init"`）与 `voigt_prod`/`voigt_fix2` 并列成子块 | 子块带 `method`/`note`，是全部产物里**唯一显式写了初始化方法**的地方 |
 | 历史遗留 | `sensitivity_old_warmup`（4/60） | 存的是 M2 修订前的加力重采样，`note` 写明"非参数初值替换" |
 
-⇒ `nested.json` 的 `config` 块里**没有 `init_profile` 字段**。目前靠文件名和目录名区分，
-一旦目录被改名或产物被移动，初始化就不可追溯。这直接坐实 0A 的结论：
+⇒ `nested.json` 的 `config` 块里**没有 `init_profile` 字段**。这直接坐实 0A 的结论：
 `init_profile` 必须进 `candidate_id`（`circuit_registry.py` 已按此实现，见 `make_candidate(init_profile=)`）。
+
+> **更正（2026-11-14 第二轮审计后）**：本节原写"目前靠文件名和目录名区分"。
+> 核查发现**目录名这条路走不通也不该走**：
+> ① 归档文件平铺在 `evidence/stage0_three_spectra/`，映射脚本用 `p.parent.name`
+> 查表时**一次都没命中**，回落成真实档名 `"uniform"`，等于给 13 条记录发了无依据的身份；
+> ② 更硬的是**产物自己能说清**——`files.json` 记录它写到哪个目录，
+> `input` 记录 `f_min/f_max` 与含真值参数的文件名。据此确认
+> `*_1113.nested.json` 是 `out/_user_fit_nested/` 下的**同配置同 seed 重跑**
+> （elapsed 110.1s vs 57.9s、指标逐位相同），不是 `data_driven`。
+> 初始化改由**生成脚本的代码路径**判定（`nested_fit.py` 不传 `init_values`
+> ⇒ `init_to_uniform`），查不到就写 `unknown`。详见 `STAGE0_RECORDS_MAP.md` §0/§1。
 
 ### 3.2 指标口径是否可比
 

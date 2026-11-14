@@ -1,5 +1,7 @@
 {
   "n_records": 239,
+  "n_independent": 237,
+  "n_duplicate": 2,
   "run_status": {
     "completed": 239
   },
@@ -12,31 +14,53 @@
     "reliable": 3
   },
   "candidate_identity": {
-    "inferred": 13,
-    "complete": 226
+    "derived": 239
   },
-  "init_profile_recorded_true": 227,
+  "init_profile": {
+    "uniform": 12,
+    "value": 1,
+    "data_driven": 226
+  },
+  "init_source_kind": {
+    "producer_code": 239
+  },
+  "budget_params_source": {
+    "recorded": 6,
+    "unavailable": 1,
+    "derived_from_tier": 232
+  },
+  "noise_floor_source": {
+    "not_available": 13,
+    "truth_forward": 226
+  },
+  "ratio_denominator_scope": {
+    "null": 59,
+    "converged_subset": 180
+  },
+  "predictive_valid_for_comparison": {
+    "False": 233,
+    "True": 6
+  },
+  "production_unreachable_records": 1,
   "blocked_by_old_schema": 70,
-  "blocked_note": "这些记录是「跑完了、残差算了、后验没过」；0.1.0 的 converged=False 禁报 rms/acf 会让它们全部无法入库",
+  "blocked_note": "「跑完了、残差算了、后验没过」；0.1.0 的 converged=False 禁报 rms/acf 会让它们全部无法入库",
   "unmapped_field_counts": {
     "status": 6,
-    "warning": 6,
     "rel_median": 6,
-    "rel_max": 6,
-    "elpd": 12,
-    "elpd_valid_for_predictive_comparison": 6,
-    "sigma_mode": 6,
-    "budget_kw": 6,
+    "rel_max": 12,
     "target_accept_override": 6,
     "derived.L_ad_H": 6,
+    "voigt_reference": 6,
     "elapsed_s": 7,
-    "median_vs_truth": 1,
-    "param_err": 226,
     "param_max_err": 226,
-    "ratio": 226,
-    "floor": 226,
     "verdict": 226,
     "sec": 226,
-    "rel_med": 6
+    "RsR1": 226,
+    "rms_re": 6,
+    "rms_im": 6,
+    "rel_med": 6,
+    "acf_base": 6,
+    "sigma_re": 6,
+    "sigma_im": 6
   }
 }
