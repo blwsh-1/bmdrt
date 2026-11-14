@@ -396,7 +396,7 @@
 
 阶段 0 自身状态：**未冻结、不进阶段 1**（239 条历史记录的预算 233/239 靠档名推出、
 0 条记代码版本、`run_id` 的 `recorded` 一档发不出去）。详见
-`round_2026-11-13/STAGE0C_SCHEMA_CONTRACT.md` §10 与 `round_2026-11-13/STAGE0_RECORDS_MAP.md` §3。
+`round_2026-11-13/STAGE0C_SCHEMA_CONTRACT.md` §10–§11 与 `round_2026-11-13/STAGE0_RECORDS_MAP.md` §3。
 
 ## 9. 引用
 

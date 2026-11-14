@@ -746,6 +746,7 @@ _BP = dict(source="recorded", n_warmup=2000, n_samples=1000, num_chains=2,
 
 _SHA = "a" * 64
 _SHA2 = "b" * 64
+_SHA3 = "c" * 64
 
 
 def _exec(**kw):
@@ -841,9 +842,9 @@ def case_observation_recomputes_run_id():
 def case_duplicate_needs_provenance():
     """P0：摘要相同**不**等于重复；证据不足只标 possible，不从分母里扣。"""
     c = _nested()
-    a = {"candidate_id": c.candidate_id, "source": {"path": "x/a.json", "sha256": "s1"},
+    a = {"candidate_id": c.candidate_id, "source": {"path": "x/a.json", "sha256": _SHA},
          "execution": _exec(candidate_id=c.candidate_id)}
-    b = {"candidate_id": c.candidate_id, "source": {"path": "x/b.json", "sha256": "s2"},
+    b = {"candidate_id": c.candidate_id, "source": {"path": "x/b.json", "sha256": _SHA2},
          "execution": _exec(candidate_id=c.candidate_id,
                             seed_source="producer_code:bm_real._resolve_seed")}
     v = R.duplicate_verdict(a, b, summary_equal=True)
@@ -858,9 +859,9 @@ def case_duplicate_confirmed_with_recorded_seed():
     """确认重复需要**完整**的 `recorded` 执行身份（含代码版本与数据内容哈希）。"""
     c = _nested()
     ver = {"producer": "nested_fit.py", "code_version": "a1b2c3d"}
-    a = {"candidate_id": c.candidate_id, "source": {"path": "x/a.json", "sha256": "s1"},
+    a = {"candidate_id": c.candidate_id, "source": {"path": "x/a.json", "sha256": _SHA},
          "execution": _exec(candidate_id=c.candidate_id, software=ver)}
-    b = {"candidate_id": c.candidate_id, "source": {"path": "x/b.json", "sha256": "s2"},
+    b = {"candidate_id": c.candidate_id, "source": {"path": "x/b.json", "sha256": _SHA2},
          "execution": _exec(candidate_id=c.candidate_id, software=ver)}
     v = R.duplicate_verdict(a, b, summary_equal=True)
     assert v["duplicate_status"] == "confirmed_duplicate", v
@@ -875,7 +876,7 @@ def case_duplicate_confirmed_with_recorded_seed():
     assert v3["evidence"].get("contradiction") is True, v3
     # 不同候选即使摘要相同也不构成重复
     other = {"candidate_id": _nested(branch="parallel").candidate_id,
-             "source": {"path": "x/c.json", "sha256": "s3"},
+             "source": {"path": "x/c.json", "sha256": _SHA3},
              "execution": _exec(candidate_id=_nested(branch="parallel").candidate_id,
                                 software=ver)}
     v4 = R.duplicate_verdict(a, other, summary_equal=True)
@@ -897,9 +898,9 @@ def case_run_id_includes_data():
     a = _exec(candidate_id=c.candidate_id, data="s0.csv")
     b = _exec(candidate_id=c.candidate_id, data="s1.csv")
     assert a["run_id"] != b["run_id"], (a["run_id"], b["run_id"])
-    rec_a = {"candidate_id": c.candidate_id, "source": {"path": "x/a", "sha256": "1"},
+    rec_a = {"candidate_id": c.candidate_id, "source": {"path": "x/a", "sha256": _SHA},
              "execution": a}
-    rec_b = {"candidate_id": c.candidate_id, "source": {"path": "x/b", "sha256": "2"},
+    rec_b = {"candidate_id": c.candidate_id, "source": {"path": "x/b", "sha256": _SHA2},
              "execution": b}
     v = R.duplicate_verdict(rec_a, rec_b, summary_equal=False)
     assert v["duplicate_status"] == "distinct", v
@@ -914,9 +915,9 @@ def case_run_id_includes_data():
 def case_d1_duplicate_needs_code_version():
     """D1：同 seed、同预算、同摘要，但代码版本未知 ⇒ 只能 possible，不能扣。"""
     c = _nested()
-    a = {"candidate_id": c.candidate_id, "source": {"path": "x/a.json", "sha256": "s1"},
+    a = {"candidate_id": c.candidate_id, "source": {"path": "x/a.json", "sha256": _SHA},
          "execution": _exec(candidate_id=c.candidate_id)}
-    b = {"candidate_id": c.candidate_id, "source": {"path": "x/b.json", "sha256": "s2"},
+    b = {"candidate_id": c.candidate_id, "source": {"path": "x/b.json", "sha256": _SHA2},
          "execution": _exec(candidate_id=c.candidate_id)}
     assert a["execution"]["run_id_status"] == "derived", a["execution"]
     v = R.duplicate_verdict(a, b, summary_equal=True)
@@ -932,9 +933,9 @@ def case_d2_duplicate_confirmed_with_full_recorded():
     """D2：同 seed、同预算、同摘要，且代码版本与数据内容都记了 ⇒ confirmed。"""
     c = _nested()
     ver = {"producer": "nested_fit.py", "code_version": "a1b2c3d"}
-    a = {"candidate_id": c.candidate_id, "source": {"path": "x/a.json", "sha256": "s1"},
+    a = {"candidate_id": c.candidate_id, "source": {"path": "x/a.json", "sha256": _SHA},
          "execution": _exec(candidate_id=c.candidate_id, software=ver)}
-    b = {"candidate_id": c.candidate_id, "source": {"path": "x/b.json", "sha256": "s2"},
+    b = {"candidate_id": c.candidate_id, "source": {"path": "x/b.json", "sha256": _SHA2},
          "execution": _exec(candidate_id=c.candidate_id, software=ver)}
     for r in (a, b):
         assert r["execution"]["run_id_status"] == "recorded", r["execution"]
@@ -945,7 +946,7 @@ def case_d2_duplicate_confirmed_with_full_recorded():
     other = _exec(candidate_id=c.candidate_id,
                   software={"producer": "nested_fit.py", "code_version": "fffffff"})
     v2 = R.duplicate_verdict(a, {"candidate_id": c.candidate_id,
-                                 "source": {"path": "x/c.json", "sha256": "s3"},
+                                 "source": {"path": "x/c.json", "sha256": _SHA3},
                                  "execution": other}, summary_equal=True)
     assert v2["duplicate_status"] == "possible_duplicate", v2
     assert v2["evidence"]["run_id_equal"] is False, v2
@@ -1047,33 +1048,33 @@ def case_d8_same_artifact_needs_sha256():
     assert v["evidence"]["artifact_equal"] is False, v
     assert "sha256" in (v["evidence"]["artifact_gap"] or ""), v["evidence"]
     # 一边有 sha256、一边没有：同样不是证据
-    v2 = _art({"path": "result.json", "sha256": "s1"}, {"path": "result.json"},
+    v2 = _art({"path": "result.json", "sha256": _SHA}, {"path": "result.json"},
               summary_equal=True)
     assert v2["duplicate_status"] == "possible_duplicate", v2
     assert v2["evidence"]["artifact_scope"] == ["file", None], v2["evidence"]
     # 没有 path 但有 sha256：也不算
-    v3 = _art({"sha256": "s1"}, {"sha256": "s1"}, summary_equal=True)
+    v3 = _art({"sha256": _SHA}, {"sha256": _SHA}, summary_equal=True)
     assert v3["duplicate_status"] == "possible_duplicate", v3
     return "缺字段不充当来源证据：path/sha256 任一缺失都不能确认同一产物"
 
 
 def case_d9_same_path_diff_sha256():
     """D9：`path` 相同、`sha256` 不同 ⇒ 同名不同内容，不能确认同一产物。"""
-    v = _art({"path": "result.json", "sha256": "s1"},
-             {"path": "result.json", "sha256": "s2"}, summary_equal=True)
+    v = _art({"path": "result.json", "sha256": _SHA},
+             {"path": "result.json", "sha256": _SHA2}, summary_equal=True)
     assert v["duplicate_status"] == "possible_duplicate", v
     assert v["evidence"]["artifact_equal"] is False, v
     assert "sha256 不同" in (v["evidence"]["artifact_gap"] or ""), v["evidence"]
     # 路径不同但内容相同：也不是同一产物（同一个文件在另一处的副本是另一条来源）
-    v2 = _art({"path": "a/result.json", "sha256": "s1"},
-              {"path": "b/result.json", "sha256": "s1"}, summary_equal=True)
+    v2 = _art({"path": "a/result.json", "sha256": _SHA},
+              {"path": "b/result.json", "sha256": _SHA}, summary_equal=True)
     assert v2["duplicate_status"] == "possible_duplicate", v2
     return "同名不同内容、同内容不同路径，都不能确认是同一产物"
 
 
 def case_d10_artifact_scope_file_vs_row():
     """D10：文件级与行级定位互不相认；行号/分段不同 ⇒ 两条记录。"""
-    sha = "s1"
+    sha = _SHA
     # 同 path 同 sha、row 不同 ⇒ 是同一文件的两条不同记录
     v = _art({"path": "r.jsonl", "sha256": sha, "row": 1, "section": "nested"},
              {"path": "r.jsonl", "sha256": sha, "row": 2, "section": "nested"},
@@ -1105,12 +1106,46 @@ def case_d10_artifact_scope_file_vs_row():
 
 def case_d11_section_requires_row():
     """D11：`section` 脱离 `row` ⇒ 报错（不能靠"忽略分段"凑出同一行）。"""
-    msg = _expect_raise(R._artifact_key, {"path": "r.jsonl", "sha256": "s1",
+    msg = _expect_raise(R._artifact_key, {"path": "r.jsonl", "sha256": _SHA,
                                           "section": "nested"})
     assert "section" in msg and "row" in msg, msg
-    msg2 = _expect_raise(R._artifact_key, {"path": "r.jsonl", "sha256": "s1", "row": True})
+    msg2 = _expect_raise(R._artifact_key, {"path": "r.jsonl", "sha256": _SHA, "row": True})
     assert "row" in msg2, msg2
     return "section 必须有 row；row 必须是整数（布尔不算）"
+
+
+def case_d12_sha256_must_be_hex64():
+    """D12：`sha256` **非空不等于有效**——必须是 64 位十六进制。
+
+    0.6.0 的门槛只问"填了没有"。两条 `{"path": "result.json", "sha256": "same"}`
+    都会构造出 `("file", "result.json", "same")`，键相等 ⇒ `same_artifact` ⇒
+    从独立数里扣掉。这和 0.5.0 拿"两个 `None` 相等"当证据是同一个毛病，只是把
+    缺失值换成了随手写的字符串。
+    """
+    good = _SHA
+    k = R._artifact_key({"path": "r.json", "sha256": good})
+    assert k == ("file", "r.json", good), k
+    # 行级键同样要求合法哈希
+    kr = R._artifact_key({"path": "r.jsonl", "sha256": good, "row": 3, "section": "nested"})
+    assert kr == ("row", "r.jsonl", good, 3, "nested"), kr
+    # 十六进制大小写不改变内容 ⇒ 必须归一到同一个键（否则同内容被当成两份产物）
+    assert R._artifact_key({"path": "r.json", "sha256": good.upper()}) == k
+    assert R._artifact_key({"path": "r.json", "sha256": " " + good + " "}) == k
+    # 四种无效形态：伪哈希 / 63 位 / 65 位 / 非十六进制字符
+    for bad in ("same", good[:-1], good + "a", "z" * 64):
+        msg = _expect_raise(R._artifact_key, {"path": "r.json", "sha256": bad})
+        assert "64 位十六进制" in msg, (bad, msg)
+    # 非字符串（数字/列表）不是"缺失"，也不是哈希
+    for bad in (64, ["a" * 64]):
+        msg = _expect_raise(R._artifact_key, {"path": "r.json", "sha256": bad})
+        assert "64 位十六进制" in msg, (bad, msg)
+    # 判重入口同样拦住：两条 "same" 不许凑成确认重复
+    msg = _expect_raise(_art, {"path": "result.json", "sha256": "same"},
+                        {"path": "result.json", "sha256": "same"}, summary_equal=True)
+    assert "sha256" in msg, msg
+    # 空串仍然只是"缺字段"（返回 None，走 possible_duplicate），不是格式错误
+    assert R._artifact_key({"path": "r.json", "sha256": "   "}) is None
+    return "sha256 必须是 64 位十六进制；伪哈希/截断/非十六进制一律报错，空串算缺失"
 
 
 CASES = [
@@ -1188,6 +1223,7 @@ CASES = [
     ("D9 同名不同内容不算同一产物", case_d9_same_path_diff_sha256),
     ("D10 文件级/行级定位分层", case_d10_artifact_scope_file_vs_row),
     ("D11 section 必须有 row", case_d11_section_requires_row),
+    ("D12 sha256 必须是 64 位十六进制", case_d12_sha256_must_be_hex64),
 ]
 
 

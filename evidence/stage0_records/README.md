@@ -43,7 +43,8 @@
    因此 `n_independent=239`（不扣），另给 `n_independent_strict=237`（扣掉）作对照。
    **两个数要一起报**：只给 239 会把疑似重跑算成新信息，只给 237 是把猜当结论。
    另一支确认路径 `same_artifact` 要求 `path` 与 `sha256` **均非空**、且文件级/行级定位
-   不互认（registry 0.6.0）——"两个 `None` 相等"不是来源证据。
+   不互认（registry 0.6.0）——"两个 `None` 相等"不是来源证据；0.7.0 起 `sha256`
+   还必须是 64 位十六进制，`"same"` 这种非空但无效的值直接报错，不当证据。
 2. `nested.json` 的 `status` 字段恒为 `"exploratory"`，是**成熟度标签**，不是执行状态。
    执行状态由 `metrics` + `diagnostics` 是否存在判断。原文保留在 `unmapped.status`。
 3. `passivation__diag_truth_init.json` 是 **oracle 初值**（脚本直接读文件名里的真值参数），

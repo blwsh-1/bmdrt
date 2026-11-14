@@ -114,8 +114,8 @@ nested 名下。所以 0.3.0 规定：
 `distinct` / `possible_duplicate`（标记但**不扣**）/ `confirmed_duplicate`；
 "同条件但结果不同"记为 `distinct` + `contradiction`，是**可复现性问题**，不靠合并记录消掉。
 
-数据身份与产物定位（0.5.0 / 0.6.0）
------------------------------------
+数据身份与产物定位（0.5.0 / 0.6.0 / 0.7.0）
+-----------------------------------------
 "确认重复"必须整体按 `recorded` 判（seed 来自产物 + 预算 `recorded` + 代码版本已知
 + 数据有内容哈希），只挑两项自查就是绕过自己定的门槛。数据身份认**内容**不认文件名：
 `execution.data.sha256` 进 `run_id`，`ref` 只作标签；只有文件名时 `data_id_kind="ref_only"`，
@@ -124,6 +124,12 @@ nested 名下。所以 0.3.0 规定：
 另一支 `same_artifact` 要求 `path` 与 `sha256` **均非空**，且文件级/行级定位
 （`("file", ...)` vs `("row", ..., row, section)`）**互不相认**——"两个 `None` 相等"
 不是来源证据。缺字段时原因写进 `duplicate_evidence["artifact_gap"]`。
+
+0.7.0 再进一步：**非空不等于有效**。`sha256` 必须是 64 位十六进制，否则
+`_artifact_key()` 直接抛 `ValueError`——`{"path": "x", "sha256": "same"}` 这种
+"字段相等"曾经会凑出一个 `same_artifact`，与 0.5.0 的"缺失值相等"是同一个毛病，
+只是换了件外衣。格式错误不是"来源缺失"，不能静默降级成 `possible_duplicate`：
+那会把调用方的 bug 藏起来。
 
 边界
 ----
@@ -140,7 +146,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
-REGISTRY_VERSION = "0.6.0"        # 0.6：产物定位缺字段不再算证据（same_artifact 要求 sha256 非空 + 层级一致）
+REGISTRY_VERSION = "0.7.0"        # 0.7：产物 sha256 必须是 64 位十六进制（非空 ≠ 有效）
 PRECHECK_VERSION = "0.1.0"
 
 PRECHECK_STATES = ("excluded", "not_excluded", "unknown")
@@ -220,6 +226,9 @@ DUPLICATE_KINDS = ("same_artifact", "rerun_same_conditions")
 ARTIFACT_SCOPES = ("file", "row")
 #: 产物定位必须非空的字段。少一个就只能到 `possible_duplicate`，不能确认同一产物。
 ARTIFACT_KEY_FIELDS = ("path", "sha256")
+#: 内容哈希的合法形态：`SHA256_HEX_LEN` 位十六进制（大小写不敏感）。**非空不等于有效**：
+#: `"same"`、文件名、63 位截断哈希都是非空字符串，却不能证明"跑的是同一份东西"。
+SHA256_HEX_LEN = 64
 EVIDENCE_STATES = ("identified", "weak_preference", "non_identifiable",
                    "model_inadequate", "insufficient_evidence")
 PRECHECK_LEVELS = ("L0", "L1", "L2")
@@ -1152,7 +1161,7 @@ def _check_data(v, *, candidate_id: str) -> dict | None:
             raise ValueError(
                 f"候选 {candidate_id}：execution.data.sha256 必须是 64 位十六进制字符串")
         sha = sha.strip().lower()
-        if len(sha) != 64 or any(c not in "0123456789abcdef" for c in sha):
+        if not _valid_sha256(sha):
             raise ValueError(
                 f"候选 {candidate_id}：execution.data.sha256={sha!r} 不是 64 位十六进制。"
                 "别把文件名当哈希填进来——那会让两条不同数据拿到同一个身份")
@@ -1343,36 +1352,64 @@ def _nonempty_str(v) -> bool:
     return isinstance(v, str) and bool(v.strip())
 
 
+_HEX_DIGITS = frozenset("0123456789abcdef")
+
+
+def _valid_sha256(v) -> bool:
+    """是否是**格式合法**的内容哈希：64 位十六进制，大小写不敏感。
+
+    存在的理由不是洁癖：`_nonempty_str` 只能回答"填了没有"，回答不了"填的是不是哈希"。
+    `"same"` 显然是两个字的字符串，两条 `{"path": "x", "sha256": "same"}` 会因此
+    被判成同一产物——0.5.0 把"缺失值相等"当证据，0.6.0 又留下"无效值相等"当证据，
+    同一个毛病换了一件外衣。字段存在 ≠ 字段内容有效。
+    """
+    v = v.strip().lower() if isinstance(v, str) else v
+    return (isinstance(v, str) and len(v) == SHA256_HEX_LEN
+            and all(c in _HEX_DIGITS for c in v))
+
+
 def _artifact_key(src: Mapping) -> tuple | None:
     """把 `source` 归一成「同一个产物」的可比键；定位字段不足时返回 `None`。
 
-    三道门槛，都是"缺失值不能当证据"的直接对策：
+    四道门槛，都是"缺失值不能当证据"的直接对策：
 
     1. **`path` 与 `sha256` 都必须非空**。0.5.0 只查 `path is not None`，于是
        `{"path": "result.json", "sha256": None}` 两条会被判成同一产物——
        `same_artifact` 因此能把两条"什么都不知道"的记录合并掉，
        与"确认重复必须靠来源证据"的原则直接冲突。
-    2. **`row` 决定层级**：有 `row` ⇒ 行级键 `("row", path, sha256, row, section)`；
+    2. **`sha256` 必须是 64 位十六进制**（0.7.0）。非空但格式无效不许退化成 `None`
+       ——那会把调用方的错误静默降级成"证据不足"，看似安全实则把 bug 藏起来；
+       也不许直接用来比相等——`"same"` 相等不证明任何事。所以**报错**，
+       这是"调用方提供了违反字段定义的数据"，不是"来源信息缺失"。
+    3. **`row` 决定层级**：有 `row` ⇒ 行级键 `("row", path, sha256, row, section)`；
        无 `row` ⇒ 文件级键 `("file", path, sha256)`。键前缀不同，
        所以"一条文件级、一条行级"永不相等——它们本来就不是同一个定位。
-    3. **`section` 不能脱离 `row`**：section 是文件内的行内分段定位，缺行号就无从
+    4. **`section` 不能脱离 `row`**：section 是文件内的行内分段定位，缺行号就无从
        定位；静默忽略它等于把同一 `path` 下两个不同分段的记录当成同一行。
     """
     if not isinstance(src, Mapping):
         raise ValueError(f"source 必须是 Mapping，收到 {type(src).__name__}")
     path, sha = src.get("path"), src.get("sha256")
-    if not _nonempty_str(path) or not _nonempty_str(sha):
+    blank_sha = sha is None or (isinstance(sha, str) and not sha.strip())
+    if not _nonempty_str(path) or blank_sha:
         return None
+    if not _valid_sha256(sha):
+        raise ValueError(
+            f"source.sha256={sha!r} 不是 {SHA256_HEX_LEN} 位十六进制："
+            "字段非空不等于内容有效。拿随手写的字符串（\"same\"、文件名、截断哈希）"
+            "当内容哈希，两条不同产物就会因为「这个字符串相等」被判成同一份；"
+            "确认重复必须靠真哈希，缺就留空（走 possible_duplicate），别编")
+    sha = sha.strip().lower()
     row, sec = src.get("row"), src.get("section")
     if row is None:
         if sec is not None:
             raise ValueError(
                 f"source 给了 section={sec!r} 却没有 row：section 是文件内的行内定位，"
                 "缺行号时它不能充当定位证据（要么补 row，要么文件级别就不记 section）")
-        return ("file", path.strip(), sha.strip())
+        return ("file", path.strip(), sha)
     if isinstance(row, bool) or not isinstance(row, int):
         raise ValueError(f"source.row 必须是整数，收到 {row!r}")
-    return ("row", path.strip(), sha.strip(), row, sec)
+    return ("row", path.strip(), sha, row, sec)
 
 
 def _artifact_gap(sa: Mapping, sb: Mapping, ka, kb) -> str | None:
@@ -1409,7 +1446,7 @@ def duplicate_verdict(a: Mapping, b: Mapping, *, summary_equal: bool) -> dict:
     | 情形 | 判定 | 独立计数 |
     |---|---|---|
     | 候选定义不同 | `distinct` | 算 |
-    | 同一产物（`path` 与 `sha256` **均非空**且相同，`row`/`section` 同层相同） | `confirmed_duplicate` / `same_artifact` | 不算 |
+    | 同一产物（`path` 与 `sha256` **均非空**、`sha256` 是合法 64 位十六进制且相同，`row`/`section` 同层相同） | `confirmed_duplicate` / `same_artifact` | 不算 |
     | 同 `run_id` + 摘要相同 + 两侧执行身份均 `recorded` | `confirmed_duplicate` / `rerun_same_conditions` | 不算 |
     | 同 `run_id` + 摘要相同 + 执行身份未达 `recorded` | `possible_duplicate` | **算**（只标记） |
     | 同 `run_id` + 摘要不同 | `distinct` + `contradiction` | 算（这是可复现性问题） |
@@ -1418,6 +1455,9 @@ def duplicate_verdict(a: Mapping, b: Mapping, *, summary_equal: bool) -> dict:
     产物定位的"缺字段"一律不算证据（0.5.0 的错）：`path` 相同但 `sha256` 两边都
     没有、或一边没有、或 `sha256` 不同，都不能确认同一产物；文件级定位与行级定位
     互不相认。理由逐条写进 `evidence["artifact_gap"]`。
+
+    "字段非空但内容无效"更不算证据（0.7.0 的错）：`sha256="same"` 两条不判重复，
+    而是**直接报错**——那是调用方给了违反字段定义的数据，不是来源缺失。
 
     最后一行是关键：来源不同的两份摘要相同的记录，可能是两个不同实验的巧合，
     也可能是同一次运行的两次导出而产物没记来源。扣掉是**猜**，不扣也是猜——
@@ -1859,7 +1899,10 @@ def registry_digest() -> str:
             # 0.6.0：产物定位的门槛（缺字段不算证据、文件级/行级不互认）也进指纹。
             "artifact_scopes": list(ARTIFACT_SCOPES),
             "artifact_key_fields": list(ARTIFACT_KEY_FIELDS),
-            "confirm_same_artifact_requires_nonempty_sha256": True,
+            # 0.7.0：**字段内容有效性**也进指纹。"非空即有效"与"必须 64 位十六进制"
+            # 会让同一对记录得到不同判定，改了口径而不换指纹，旧记录会被静默重判。
+            "confirm_same_artifact_requires_valid_sha256": True,
+            "artifact_sha256_hex_len": SHA256_HEX_LEN,
         },
         "registry_version": REGISTRY_VERSION,
         "precheck_version": PRECHECK_VERSION,

@@ -2,6 +2,10 @@
 
 状态：**schema 层通过，判定逻辑未实现**。本轮不跑拟合、不接生产、不改任何门禁。
 
+> 0.7.0 修订（2026-11-14 第六轮审计后）：**`sha256` 非空不等于有效**——`same_artifact`
+> 要求 64 位十六进制，`"same"`/截断哈希/非十六进制字符直接报 `ValueError`，不再退化成
+> `possible_duplicate`。用例 75 → **76**（`D12`），快照用例仍 9 条。见 §11。
+>
 > 0.6.0 修订（2026-11-14 第五轮审计后）：**`same_artifact` 不再把"缺失字段相等"
 > 当来源证据**——`path` 与 `sha256` 必须均非空，文件级与行级定位显式分层、互不相认。
 > 用例 71 → **75**，快照用例 8 → **9**。见 §10。
@@ -26,10 +30,10 @@
 
 产物：
 - `circuit_registry.py`（注册表 + 三个输出块 + 执行身份 + 重复判定 + 冻结契约，导入 0.05s，不加载 jax/numpyro）
-- `test_circuit_registry.py`（75 条用例，实跑 **75/75 通过**）
+- `test_circuit_registry.py`（76 条用例，实跑 **76/76 通过**）
 - `test_stage0_freeze.py`（9 条快照完整性用例：篡改副本/清单/原始证据/删字段，实跑 **9/9**）
 - `docs/round_2026-11-13/STAGE0A_SCHEMA_PRESSURE.md`（三谱压测，只读既有产物）
-- `docs/round_2026-11-13/STAGE0_RECORDS_MAP.md`（239 条历史记录映射，v4，0.6.0 下重跑 `--check` 通过）
+- `docs/round_2026-11-13/STAGE0_RECORDS_MAP.md`（239 条历史记录映射，v4，0.7.0 下重跑 `--check` 通过）
 
 ## 1. 六类验收情形 → 用例对照
 
@@ -115,6 +119,11 @@
     **均非空**；有 `row` 走行级键 `("row", path, sha256, row, section)`，无 `row`
     走文件级键 `("file", path, sha256)`，两类键**不互比**；`section` 脱离 `row`
     直接报错。缺字段不构成证据——"两个 `None` 相等"不能推出同一产物。
+25. **`sha256` 非空 ≠ 有效**（0.7.0）：`_artifact_key()` 在造键前要求 64 位十六进制
+    （大小写不敏感，首尾空白归一），否则**抛 `ValueError`**。两条
+    `{"path": "x", "sha256": "same"}` 不许因为"这个字符串相等"凑出 `same_artifact`；
+    格式错误也不许静默降级成 `None`（那是调用方的 bug，不是来源缺失）。空串/`None`
+    仍算缺失。同一条判定在 `_check_data` 里对 `execution.data.sha256` 复用。
 
 ## 3. 注册内容
 
@@ -129,10 +138,12 @@
 未接线不是"没测"，是"没有接点"。AZ31 那次失败正是接点问题（`R∥L` 必须在第二并联节点内，
 挂到 voigt 最外层串联只能把 noise=0 残差从 44.0% 降到 40.7%），所以这一档必须显式区分。
 
-`registry_digest = 43f2d2ac08f84c38`（本版，`0.6.0`）。manifest 会记录它，注册表被改可被发现；
+`registry_digest = b2675c8255bea716`（本版，`0.7.0`）。manifest 会记录它，注册表被改可被发现；
 `consistency_id`、观测 schema 常量（含身份枚举、缺失语义、预算参数名）、
 **执行身份的哈希口径（`RUN_ID_BASIS`/`RUN_ID_SCOPE`/`RUN_ID_MISSING`）与重复判定三态**、
-**数据身份等级（`DATA_ID_KINDS`）与"确认重复必须 `recorded`"这条口径**
+**数据身份等级（`DATA_ID_KINDS`）与"确认重复必须 `recorded`"这条口径**、
+**产物定位的层级与"`sha256` 必须 64 位十六进制"（`ARTIFACT_SCOPES`/`ARTIFACT_KEY_FIELDS`/
+`artifact_sha256_hex_len`）**
 都在指纹内，所以改校验规则、改"什么算可复现身份"、改"什么算两次独立观测"
 都不会"指纹不变"。
 
@@ -363,3 +374,76 @@ same_art = (sa.get("path") is not None and all(sa.get(k) == sb.get(k) for k in l
 ### 10.5 仍未做的
 
 - `R-` 仍 0 条（卡代码版本）、runner 未写、阈值未定——与前两轮一致，**Stage 0 不冻结**。
+
+## 11. 0.7.0 修订（针对第六轮审计：`sha256` 只查非空）
+
+### 11.1 缺陷：从"缺失值相等"换成"无效值相等"
+
+0.6.0 把门槛改成 `_nonempty_str(path) and _nonempty_str(sha)`。它挡住了 `None`，
+但只回答"填了没有"，回答不了"填的是不是哈希"：
+
+```python
+a = {"path": "result.json", "sha256": "same"}
+b = {"path": "result.json", "sha256": "same"}
+```
+
+两条都会构造出 `("file", "result.json", "same")`，键相等 ⇒ `confirmed_duplicate` /
+`same_artifact` ⇒ 从独立数里扣掉。这与 0.5.0 拿"两个 `None` 相等"当证据**是同一个
+毛病**，只是把缺失值换成了随手写的字符串。字段存在 ≠ 字段内容有效。
+
+### 11.2 修法：格式校验独立成函数，两处复用
+
+```python
+def _valid_sha256(v) -> bool:      # 64 位十六进制，大小写不敏感，首尾空白归一
+    v = v.strip().lower() if isinstance(v, str) else v
+    return isinstance(v, str) and len(v) == SHA256_HEX_LEN and all(c in _HEX_DIGITS for c in v)
+```
+
+`_artifact_key()` 在造键前调用它。**无效就抛 `ValueError`，不返回 `None`**：
+
+| 输入 | 0.6.0 | 0.7.0 |
+|---|---|---|
+| `sha256=None` / 空串 | `None` ⇒ 不能确认 | 同（这是"缺失"） |
+| `sha256="same"` | 造键 ⇒ **可确认** | `ValueError` |
+| `sha256` 63 位 / 65 位 | 造键 ⇒ **可确认** | `ValueError` |
+| `sha256` 含非十六进制字符 | 造键 ⇒ **可确认** | `ValueError` |
+| `sha256` 是 `int`/`list` | 造键/`None` 不定 | `ValueError` |
+| 合法 64 位、大小写不同 | 两个不同键 ⇒ 永不相等 | 归一后**同一个键** |
+
+选报错而不是返回 `None`：这不是"来源信息缺失"，是"调用方提供了违反字段定义的数据"。
+静默降级会把 bug 藏成"证据不足"，看起来安全，实际让人永远查不到是谁写错了字段。
+同一函数也替换了 `_check_data()` 里原来内联的 `len==64 and all(...)`，两处口径只剩一份。
+
+### 11.3 用例
+
+- `test_circuit_registry.py`：75 → **76**。新增 `D12`：合法值可造键（文件级与行级）、
+  大小写/首尾空白归一、伪哈希 / 63 位 / 65 位 / 非十六进制 / 非字符串一律报错、
+  `duplicate_verdict` 入口同样拦住两条 `"same"`、空串仍按缺失处理。
+- `D8`–`D11` 的夹具同步换掉：原来用 `"s1"`/`"s2"`/`"s3"` 当哈希（**它们本身就是
+  11.1 那个 bug 的样本**），现在统一用 `_SHA`/`_SHA2`/`_SHA3`（`a`×64 / `b`×64 / `c`×64）。
+  这些用例的断言内容未变——它们证的是缺字段与层级，不是格式。
+- `test_stage0_freeze.py`：仍 **9/9**。注册表版本变了，快照按 0.7.0 重冻结。
+
+### 11.4 计数与指纹
+
+- 239 条记录**零影响**：本批 `source.sha256` 全部是 `hashlib` 算出的 64 位十六进制
+  （实测 239/239 长度 64）。`coverage.json` 重算字节与 0.6.0 冻结副本**逐位相同**
+  （`d58a14a6d0398a00`）：239 条 / 独立 239 / 严格 237 / 唯一 `run_id` 237 /
+  2 对 `possible_duplicate` / 0 条 `confirmed_duplicate` / `R-` 0 条，一个都没动。
+- `records.jsonl` 字节变了（`ebd8f8a08f1ed071` → `bf22f64b75ea8ea9`）：239 行
+  `run_id` 全部换号，因为 `software.registry_version` 在 `RUN_ID_BASIS` 里。
+  这是设计后果，不是漂移——**跨 registry 版本比 `run_id` 不成立**这个结论继续有效。
+- `registry_digest`：`43f2d2ac08f84c38` → `b2675c8255bea716`（`confirm_same_artifact_
+  requires_valid_sha256` / `artifact_sha256_hex_len` 进指纹，`…requires_nonempty_sha256`
+  退出——被更严的那条取代）。
+
+### 11.5 仍未做的
+
+- **历史执行身份缺代码版本**（233 条 `producer_code` seed、0 条 `code_version`）：
+  结构问题，不是本轮能修的，`R-` 继续 0 条。
+- **233 条预算数值由档名推导**：同上。
+- runner 未写、阈值未定、`n_viable` 判据未定——**Stage 0 不冻结**，不进阶段 1。
+
+原则记在这里：Stage 0 的目标不是让所有历史记录都能被确认，而是让每条记录**只能
+获得它实际拥有的证据等级**。`R-` 为零不是系统失败，是"历史产物没记代码版本"这个
+事实的正确反映；同样，两条随手写 `"same"` 的记录不该被"合并"，而该让写错的地方报错。
