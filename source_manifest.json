@@ -1,0 +1,376 @@
+{
+  "manifest_version": "1",
+  "identity_contract_version": "1.2",
+  "generated_by": "docs/round_2026-11-13/build_source_manifest.py",
+  "note": "声明集只列**文件与角色**，不存内容哈希；降级须 why_not_numeric + evidence。",
+  "defaults": {
+    "compute_role": "numeric",
+    "workflow_scope": true,
+    "why": "误降会静默合并两次不同代码的运行；误升只会多换号（看得见）"
+  },
+  "profiles": {
+    "A": {
+      "label": "bm_real / Voigt 单族（fit_one）",
+      "entries": [
+        "bm_real"
+      ],
+      "process_entry": "bmdrt.py",
+      "closure_source": "audit_source_profiles.closure (AST，含函数体内导入)",
+      "n_files": 15,
+      "declared_source_set": [
+        {
+          "path": "bm_ad.py",
+          "role": "module"
+        },
+        {
+          "path": "bm_circuit.py",
+          "role": "module"
+        },
+        {
+          "path": "bm_core.py",
+          "role": "module"
+        },
+        {
+          "path": "bm_corr.py",
+          "role": "module"
+        },
+        {
+          "path": "bm_diff.py",
+          "role": "module"
+        },
+        {
+          "path": "bm_experiments.py",
+          "role": "module"
+        },
+        {
+          "path": "bm_grade.py",
+          "role": "module"
+        },
+        {
+          "path": "bm_kk.py",
+          "role": "module"
+        },
+        {
+          "path": "bm_real.py",
+          "role": "entry"
+        },
+        {
+          "path": "bm_ref_rwp.py",
+          "role": "module"
+        },
+        {
+          "path": "bm_ws.py",
+          "role": "module"
+        },
+        {
+          "path": "bmdrt.py",
+          "role": "entry",
+          "reason": "真实进程入口：解析命令行 + 合并 config.json 后再调 fit；在 AST 闭包‘上方’，闭包看不到它，但它决定传给 fit 的实参"
+        },
+        {
+          "path": "config.json",
+          "role": "config",
+          "reason": "显式清单：数值默认值的来源（fit/kk/diag 段）；非 Python 文件，静态导入闭包必然漏掉"
+        },
+        {
+          "path": "drt.py",
+          "role": "module"
+        },
+        {
+          "path": "fit_store.py",
+          "role": "module"
+        }
+      ],
+      "digest_preview": {
+        "note": "审阅快照，不是身份；身份由 runner 在运行点重算（§3.1.1）",
+        "declared": "ccc207002556ef362cb258aebc59ddc86bab282e3fc55ba146358ce32c075c66",
+        "numeric": "bb98ed4cf1182443bd8be750e18bd90452cf983bb93a05128f1cb718fb76c583",
+        "workflow": "67ffe9886927240ec9664c22bc9dd94126db24dfcc6777528d980b77830ddea6"
+      }
+    },
+    "B": {
+      "label": "nested / bm_top（fit_top）",
+      "entries": [
+        "nested_fit"
+      ],
+      "process_entry": "bmdrt.py",
+      "closure_source": "audit_source_profiles.closure (AST，含函数体内导入)",
+      "n_files": 19,
+      "declared_source_set": [
+        {
+          "path": "bm_ad.py",
+          "role": "module"
+        },
+        {
+          "path": "bm_circuit.py",
+          "role": "module"
+        },
+        {
+          "path": "bm_core.py",
+          "role": "module"
+        },
+        {
+          "path": "bm_corr.py",
+          "role": "module"
+        },
+        {
+          "path": "bm_diff.py",
+          "role": "module"
+        },
+        {
+          "path": "bm_experiments.py",
+          "role": "module"
+        },
+        {
+          "path": "bm_grade.py",
+          "role": "module"
+        },
+        {
+          "path": "bm_kk.py",
+          "role": "module"
+        },
+        {
+          "path": "bm_real.py",
+          "role": "module"
+        },
+        {
+          "path": "bm_ref_rwp.py",
+          "role": "module"
+        },
+        {
+          "path": "bm_select.py",
+          "role": "module"
+        },
+        {
+          "path": "bm_top.py",
+          "role": "module"
+        },
+        {
+          "path": "bm_top_gen.py",
+          "role": "module"
+        },
+        {
+          "path": "bm_ws.py",
+          "role": "module"
+        },
+        {
+          "path": "bmdrt.py",
+          "role": "entry",
+          "reason": "真实进程入口：解析命令行 + 合并 config.json 后再调 fit；在 AST 闭包‘上方’，闭包看不到它，但它决定传给 fit 的实参"
+        },
+        {
+          "path": "config.json",
+          "role": "config",
+          "reason": "显式清单：数值默认值的来源（fit/kk/diag 段）；非 Python 文件，静态导入闭包必然漏掉"
+        },
+        {
+          "path": "drt.py",
+          "role": "module"
+        },
+        {
+          "path": "fit_store.py",
+          "role": "module"
+        },
+        {
+          "path": "nested_fit.py",
+          "role": "entry"
+        }
+      ],
+      "digest_preview": {
+        "note": "审阅快照，不是身份；身份由 runner 在运行点重算（§3.1.1）",
+        "declared": "fa11cef38840edaff18580f76cece4a0562b539ea214805f3d4437c905ed77f2",
+        "numeric": "6c043abcd406cf4e792fe2dc67bf337809cba3620f27138dc486b86580d9f141",
+        "workflow": "11a4b18919ae6e1935f999fc90267311b6f941cdb265760c672b077405e8611a"
+      }
+    },
+    "C": {
+      "label": "跨族比较 bm_select（fit_voigt + fit_nested）",
+      "entries": [
+        "bm_select"
+      ],
+      "process_entry": "bmdrt.py",
+      "closure_source": "audit_source_profiles.closure (AST，含函数体内导入)",
+      "n_files": 18,
+      "declared_source_set": [
+        {
+          "path": "bm_ad.py",
+          "role": "module"
+        },
+        {
+          "path": "bm_circuit.py",
+          "role": "module"
+        },
+        {
+          "path": "bm_core.py",
+          "role": "module"
+        },
+        {
+          "path": "bm_corr.py",
+          "role": "module"
+        },
+        {
+          "path": "bm_diff.py",
+          "role": "module"
+        },
+        {
+          "path": "bm_experiments.py",
+          "role": "module"
+        },
+        {
+          "path": "bm_grade.py",
+          "role": "module"
+        },
+        {
+          "path": "bm_kk.py",
+          "role": "module"
+        },
+        {
+          "path": "bm_real.py",
+          "role": "module"
+        },
+        {
+          "path": "bm_ref_rwp.py",
+          "role": "module"
+        },
+        {
+          "path": "bm_select.py",
+          "role": "entry"
+        },
+        {
+          "path": "bm_top.py",
+          "role": "module"
+        },
+        {
+          "path": "bm_top_gen.py",
+          "role": "module"
+        },
+        {
+          "path": "bm_ws.py",
+          "role": "module"
+        },
+        {
+          "path": "bmdrt.py",
+          "role": "entry",
+          "reason": "真实进程入口：解析命令行 + 合并 config.json 后再调 fit；在 AST 闭包‘上方’，闭包看不到它，但它决定传给 fit 的实参"
+        },
+        {
+          "path": "config.json",
+          "role": "config",
+          "reason": "显式清单：数值默认值的来源（fit/kk/diag 段）；非 Python 文件，静态导入闭包必然漏掉"
+        },
+        {
+          "path": "drt.py",
+          "role": "module"
+        },
+        {
+          "path": "fit_store.py",
+          "role": "module"
+        }
+      ],
+      "digest_preview": {
+        "note": "审阅快照，不是身份；身份由 runner 在运行点重算（§3.1.1）",
+        "declared": "2fdbd9df943bf8de8b678c6eaceff18a21e5a7b35226b82192fcec684407a338",
+        "numeric": "8388216953f2218d333bc2e77059cd80cd3ae10ac0468d82a71bfb73afb82741",
+        "workflow": "689284d24b9c054c52cf0868d881604dc3346170c8953ba77f789ff0350a720c"
+      }
+    }
+  },
+  "pending_demotions": [
+    {
+      "paths": [
+        "bm_circuit.py"
+      ],
+      "profiles": [
+        "A",
+        "B"
+      ],
+      "proposed_compute_role": "plot_only",
+      "hypothesis": "只画图；`plot=False` 时 `bm_real` 不会在函数体内导入它",
+      "applied": false,
+      "required_test": "一次 `plot=False` 的真实运行：`runtime_loaded_modules` 不含 `bm_circuit.py`，且产物数值字段与 `plot=True` 逐位相同"
+    },
+    {
+      "paths": [
+        "bm_ref_rwp.py"
+      ],
+      "profiles": [
+        "A"
+      ],
+      "proposed_compute_role": "reference_only",
+      "hypothesis": "只加 `Rwp_ref` 对照指标，不改参数推断",
+      "applied": false,
+      "required_test": "一次 `ref_rwp=False` 的真实运行：不加载该模块，且 `params`/`metrics`/`elpd` 与开启时逐位相同"
+    },
+    {
+      "paths": [
+        "bm_grade.py",
+        "bm_experiments.py"
+      ],
+      "profiles": [
+        "A",
+        "B"
+      ],
+      "proposed_compute_role": "decision",
+      "hypothesis": "事后诊断/评分/报告，不改后验",
+      "applied": false,
+      "required_test": "改一个不相关常量后重跑：`params`/`metrics`/`elpd` 逐位相同"
+    },
+    {
+      "paths": [
+        "bm_select.py"
+      ],
+      "profiles": [
+        "B"
+      ],
+      "proposed_compute_role": "budget_source",
+      "hypothesis": "Profile B 里只读 `BUDGETS` 常量，数值效应已由 `budget_params` 捕获",
+      "applied": false,
+      "required_test": "改 `select_across_families` 一行后重跑 nested：`params`/`metrics`/`elpd` 逐位相同（且 `budget_params` 不变）"
+    },
+    {
+      "paths": [
+        "bm_kk.py"
+      ],
+      "profiles": [
+        "A",
+        "B"
+      ],
+      "proposed_compute_role": "decision",
+      "hypothesis": "只产 KK 门禁状态；`kk_opts.auto_L` 不回写 `include_L`",
+      "applied": false,
+      "required_test": "`kk_mode=off/warn` 两次真实运行的 `params`/`metrics` 逐位相同，且不加载该模块"
+    },
+    {
+      "paths": [
+        "config.json"
+      ],
+      "profiles": [
+        "A",
+        "B",
+        "C"
+      ],
+      "proposed_compute_role": "decision",
+      "hypothesis": "只有 fit/kk/diag 段影响数值，paths 段只影响产物落点",
+      "applied": false,
+      "required_test": "拆分需按**段**降级，而 `compute_role` 是**文件**粒度 ⇒ 在文件级身份里无法拆；若要拆，须先把 config 段拆成独立文件"
+    }
+  ],
+  "excluded": [
+    {
+      "pattern": "requirements.txt",
+      "reason": "环境意图，属 `env` 块（`lock_digest`），不是被执行的代码"
+    },
+    {
+      "pattern": "out/ evidence/ archive/ __pycache__/ docs/",
+      "reason": "产物、证据、存档、缓存、文档；改它们不改数字"
+    },
+    {
+      "pattern": "数据文件（.csv/.txt/.z 等）",
+      "reason": "属 `data` 块；重复计算会让‘改数据’和‘改代码’混成同一种变化"
+    },
+    {
+      "pattern": "已安装的第三方包",
+      "reason": "进 `env_sha256`（包名+版本），不进 declared 集"
+    }
+  ]
+}

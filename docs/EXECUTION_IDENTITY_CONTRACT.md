@@ -1,17 +1,22 @@
-# 执行身份契约 v1（草案，未实现，待审查）
+# 执行身份契约 v1.2（部分冻结；`exec_identity.py` 已实现，runner 未授权）
 
-状态：**草案 `v1.2-draft`，2026-11-14。只定义，不实现。** 本轮仍零代码改动：
-registry `0.7.0`（`b2675c8255bea716`）、`records.jsonl` 未动、快照未重冻结、
-`R-` 仍 0 条、独立数 239 / 严格 237。
+状态：**`v1.2`，2026-11-14。声明集已落盘、反例矩阵已跑通；runner 仍未实现。**
+registry `0.7.0`（`b2675c8255bea716`）、`records.jsonl`、快照、`R-` 计数（0 条）、
+独立数（239 / 严格 237）**全部未动**——本轮只新增四个文件（`exec_identity.py`、
+`source_manifest.json`、`round_2026-11-13/build_source_manifest.py`、
+`test_exec_identity.py`），没有一行生产拟合代码被改。
 
-`v1.2` 只做审查要求的两件事：**把参数表和字段委托规则从实际签名反推出来**，再据此给
-三个入口各定一份源码 Profile。新增 §3.3.3（委托表）、§3.3.4（三入口键表）、
-§3.3.5（`sigma` 复合键）、§3.3.6（归一化）、§3.3.7（`workflow` 块）、§3.1.3（三份
-声明集，数字由 `audit_source_profiles.py` 从源码算出）、§6.2（反例矩阵）。
-**D-1～D-4 已裁决**（§13.1），`v1.2` 又提出 **D-5～D-8 待裁**（§13.4）——它们是在
-反推参数时暴露的结构问题，不是新功能。**实现仍未授权**：键表与 Profile 需要先被认下来。
+本轮按审查裁决（§13.4）**停止审规格、开始动工**，顺序正是审查给的五步：
+① 写 `source_manifest.json`（三份 Profile，全部 `numeric` 默认值，零降级）；
+② 同批补 `workflow_source_tree_sha256`（第三层摘要，D-5 的附加条件）；
+③ 边写边跑反例矩阵（T1–T24 + 新增 W/S/Y/M/X 共 **54/54**）；
+④ 只冻结**跑过反例**的字段与规则（§18 冻结台账）；
+⑤ runner 仍待单独授权。
 
-为什么先写契约，而不是先去改 runner：`run_id` 是 `RUN_ID_BASIS` 六个字段的哈希，
+**本轮没有做的事**：没有为了让测试变绿而降低任何真实模块的 `compute_role`（M2 钉住
+"降级零条"）；没有把"同号"说成"结果相同"（T7/T8/W4 三格专测这条边界）。
+
+为什么先写契约再改 runner：`run_id` 是 `RUN_ID_BASIS` 六个字段的哈希，
 **加一个字段就等于换一次号**（0.5.0 → 0.7.0 已经把 239 行全换过一遍）。字段定义错一次，
 判重结果和独立数就跟着错一次，而且是**静默**错——没有任何报错。这一条是
 `HISTORICAL_EXEC_IDENTITY_GAP.md` §6 的直接结论：缺口只能向前关，而向前关的门必须先画好。
@@ -97,9 +102,10 @@ execution
 | 字段 | 类型 | 来源 | 必填 | 校验 | 缺失后果 | 进 `run_id` |
 |---|---|---|---|---|---|---|
 | `git_commit` | str | 运行时 `git rev-parse HEAD` | ✓ | 40 位十六进制；**不许短哈希** | `derived` / `code_commit_missing` | ✓ |
-| `declared_source_set` | list[{path, sha256, role, compute_role, why_not_numeric?}] | 声明清单（§3.1.1） | ✓ | `role ∈ {entry, module, config, asset}`；`compute_role ∈ {numeric, decision, plot_only, cli_only, reference_only, budget_source}`，**省略即 `numeric`**；非 numeric 必须给 `why_not_numeric`；path 为 POSIX 相对路径；按路径码位排序；无重复 | `derived` / `declared_set_missing` | ✗（摘要由它算） |
-| `declared_source_tree_sha256` | str | 对**整份**声明集求摘要 | ✓ | 64 位十六进制，可按 `declared_source_set` 复算 | `derived` / `declared_set_missing` | ✗（完整性证据，见 D-5） |
+| `declared_source_set` | list[{path, sha256, role, compute_role, workflow_scope, why_not_numeric?, evidence?, why_not_workflow?}] | 声明清单（§3.1.1） | ✓ | `role ∈ {entry, module, config, asset}`；`compute_role ∈ {numeric, decision, plot_only, cli_only, reference_only, budget_source}`，**省略即 `numeric`**；非 numeric 必须给 `why_not_numeric` **且** `evidence`；`workflow_scope` **省略即 `true`**，写 `false` 必须给 `why_not_workflow`；`role=entry` 不许 `workflow_scope=false`；path 为 POSIX 相对路径；按路径码位排序；无重复 | `derived` / `declared_set_missing` | ✗（三层摘要由它算） |
+| `declared_source_tree_sha256` | str | 对**整份**声明集求摘要 | ✓ | 64 位十六进制，可按 `declared_source_set` 复算 | `derived` / `declared_set_missing` | ✗（完整性证据） |
 | `numeric_source_tree_sha256` | str | 对 `compute_role == numeric` 的子集求摘要 | ✓ | 64 位；子集为空表 ⇒ 报错（不许"什么都不算"） | `derived` / `declared_set_missing` | ✓ |
+| `workflow_source_tree_sha256` | str | 对 `workflow_scope != false` 的子集求摘要 | ✓ | 64 位；同上；（D-5 追加层，进 `workflow_id` 不进 `run_id`） | `derived` / `declared_set_missing` | ✗（进 `workflow_id`，§6.3） |
 | `declared_not_loaded` | list[str] | 声明集 − 运行时集 | ✓（可为空表） | 子集关系必须成立 | —（只记录） | ✗ |
 | `runtime_loaded_modules` | list[{path, role}] | 三个时点的 `sys.modules` 快照并集（§3.1.2） | ✓ | 只含项目代码；realpath 记录 | `derived` / `runtime_snapshot_missing` | ✗ |
 | `runtime_snapshot_taken` | bool | runner | ✓ 且必须 `true` | 静态扫描得出的集合**不算** | `derived` / `runtime_snapshot_missing` | ✗ |
@@ -123,12 +129,17 @@ execution
 2. **显式补充**：`source_manifest.json`（入库文件）里手工列出的项——动态
    `importlib.import_module(<计算出的名字>)`、模板/配置/先验表等无法静态求出的依赖，
    每项必须写 `reason`；
-3. **角色标注**（两个维度，别混）：
+3. **角色标注**（三个维度，别混）：
    - `role`（文件是什么）：`entry` / `module` / `config` / `asset`；
-   - `compute_role`（改不改数字）：`numeric`/`decision`/`plot_only`/`cli_only`/`reference_only`/`budget_source`，
-     **省略即 `numeric`**，见 §3.1.3；
-4. **摘要**：`sha256("v1\n" + 逐行 "<posix_path>\0<content_sha256>\n" 按路径码位排序)`；
-   行尾按 `\n` 归一（`*.py`/`*.toml`/`*.json`/`*.yaml`/`*.cfg`），其余按字节；
+   - `compute_role`（改不改**单次拟合**的数字）：`numeric`/`decision`/`plot_only`/`cli_only`/
+     `reference_only`/`budget_source`，**省略即 `numeric`**，见 §3.1.3；
+   - `workflow_scope`（改不改**整个流程**的门禁/筛选/选择/重跑）：bool，**省略即 `true`**。
+     它与 `compute_role` **独立**：入口脚本既 `numeric` 又 `workflow_scope=true`
+     ——不然"改了 `bm_select` 的重跑逻辑，`run_id` 变了而工作流身份没变"（D-5 的缺口）；
+4. **摘要（三层，同一份声明集算三次）**：`sha256("v1\n" + <layer> + "\n" + 逐行
+   "<posix_path>\0<content_sha256>\n" 按路径码位排序)`；`<layer> ∈ {declared, numeric, workflow}`
+   是**域分隔**——三层永不撞值，即使成员完全相同（当前就是这种情况，见 M5）。
+   行尾按 `\n` 归一（`*.py`/`*.toml`/`*.json`/`*.yaml`/`*.cfg`/`*.ini`），其余按字节；
    归一规则写进 `config.normalize`。
 
 **排除**：`.git/`、`out/`、`evidence/`、`__pycache__/`、`*.pyc`、`docs/`、`archive/`、
@@ -175,7 +186,25 @@ execution
 3. **`nested_fit → bm_select` 只为 `BUDGETS` 常量**（`nested_fit.py:73`）。它的数值效应
    已经由 `budget_params`（`standard` 档 2000/1000/2/0.98/10）捕获，不需要再进 numeric 集。
 
-**所以 `role` 拆成两个字段**：`role` 说"这是什么文件"，`compute_role` 说"它改不改数字"。
+**所以 `role` 之外，一个文件要回答两个独立问题**，各有自己的摘要与落点（D-5 裁决：
+"三层"，不是"两份"）：
+
+| 摘要 | 包含内容 | 进哪里 | 判据 |
+|---|---|---|---|
+| `declared_source_tree_sha256` | 完整声明集 | **只记录**，做完整性核对 | 本次执行覆盖了哪些文件 |
+| `numeric_source_tree_sha256` | `compute_role == numeric` 的子集 | **单次 `run_id`** | 改完，这一次拟合的数会变 |
+| `workflow_source_tree_sha256` | `workflow_scope != false` 的子集 | **`workflow_id`**（§6.3） | 改完，门禁/候选筛选/选择/重跑会变 |
+
+**三层不是一个划分，允许重叠——入口脚本必须重叠。** 这是审查 D-5 指出的缺口：
+`bm_grade` 的判定逻辑、`bm_select` 的选择与重跑逻辑、`bm_real` 里的 KK 门禁，都不会改
+单次拟合的 `run_id`，但会改"哪个候选被保留、最后推荐谁、某次拟合被拦还是放行、要不要多
+跑一轮"。若它们被排除在 numeric 之外、而 `workflow_id` 又只由搜索空间和子运行列表生成，
+就会出现**工作流逻辑变了、工作流身份没变**。W1/W2 两格专测这条。
+
+`budget_source`（`bm_select` 对 Profile B 只贡献 `BUDGETS`）**不进第三层**：它的数值效应
+已经由 `budget_params` 捕获，进 `workflow_id` 只会让"改一个预算常量"变成换工作流号。
+`plot_only` / `reference_only` 也不进前三层里的后两层——它们只影响附加产物，
+**明确不影响拟合条件**，但仍在 `declared` 层里被记录（改了要看得见）。
 
 | `compute_role` | 含义 | 进 `numeric` 摘要 | 允许的模块（举例，最终以 `source_manifest.json` 为准） |
 |---|---|---|---|
@@ -186,21 +215,39 @@ execution
 | `plot_only` | 只画图 | ✗ | `bm_circuit` |
 | `cli_only` | 只解析命令行 / 打印 | ✗ | 入口脚本本身（`role=entry` 时可同时 `cli_only`？**不行**，见下） |
 
-**入口脚本必须是 `numeric`**：它决定调用哪个函数、传什么值。把入口降成 `cli_only`
-等于让"改了一行默认参数"不换号——正好是 F4。所以 `bm_real`/`nested_fit`/`bm_select`
-作为 Profile 入口一律 `numeric`（`bm_select` 在 Profile B 里是 `budget_source`，
-因为对 B 而言它不是入口、只贡献一个常量）。
+**入口脚本必须是 `numeric` 且 `workflow_scope=true`**：它决定调用哪个函数、传什么值，
+也含门禁与重跑逻辑。把入口降成 `cli_only` 等于让"改了一行默认参数"不换号——正好是 F4；
+把入口移出 workflow 层，等于让"改了重跑逻辑"不换工作流号。`check_declared_set()`
+对这两条**直接报错**（M7）。
 
-**降级不是声明就算数**，必须过验证（D-5 待裁）：
+#### 3.1.4 降级要什么证据（本轮实测结论：零降级）
 
-- `plot_only` / `reference_only`：关掉该功能的那次运行里，模块**不出现在** `runtime_loaded_modules`；
-- `decision` / `budget_source`：**改动该模块里一个不相关的常量或注释**后重跑，产物数值字段
-  （`params`/`metrics`/`elpd`）逐位相同；
-- 两条都不过 ⇒ `compute_role` 判错，退回 `numeric`，`numeric_source_tree_sha256` 变、
-  该运行降 `derived`。
+审查给了定性判断："改无关常量后数值逐位相同"**只能证明某个改动没影响，不能证明整个模块
+都不影响数值**，它应当作**回归验证**，不是 `compute_role` 分类正确的充分证据。据此，
+`v1.2` 对降级采用**双条件**（缺一条就退回 `numeric`）：
 
-**默认值的保守方向只有一个**：不写 `compute_role` 就是 `numeric`。宁可多换号，
-不能让一次真实的代码改动悄悄沿用旧号——后者会把两次不同代码的执行判成重复（F6 那类反向错误）。
+- `plot_only` / `reference_only`：**关掉该功能的那次运行里，模块不出现在
+  `runtime_loaded_modules`**（这是唯一能证明"这次没用它"的证据）；
+- `decision` / `budget_source`：**改动该模块里一个不相关的常量或注释**后重跑，
+  产物数值字段（`params`/`metrics`/`elpd`）逐位相同 **且** 声明集与 `runtime` 集合未变；
+- 两条都要在一次**真实运行**里做——静态审查做不到，所以本轮一条也没降。
+
+当前 `source_manifest.json` 里 **`compute_role` 全部 `numeric`、`workflow_scope` 全部
+`true`**（M2 断言"降级零条"）。候选降级写在 `pending_demotions` 里、`applied: false`，
+每条都写了要什么实测（M4）：
+
+| 候选 | 拟降为 | 需要的实测 |
+|---|---|---|
+| `bm_circuit.py`（A/B） | `plot_only` | `plot=False` 的运行不加载它，且产物数值逐位相同 |
+| `bm_ref_rwp.py`（A） | `reference_only` | `ref_rwp=False` 的运行不加载它，指标逐位相同 |
+| `bm_grade.py`/`bm_experiments.py` | `decision` | 改无关常量后 `params`/`metrics`/`elpd` 逐位相同 |
+| `bm_select.py`（B） | `budget_source` | 改选择器一行后 nested 数值逐位相同、`budget_params` 不变 |
+| `bm_kk.py`（A/B） | `decision` | `kk_mode=off/warn` 两次数值相同且不加载 |
+| `config.json` | 按段 | **文件粒度拆不开**（fit/kk/diag 段影响数值、paths 段不影响）⇒ 要么不降，要么先把段拆成独立文件 |
+
+**默认值的保守方向只有一个**：不写 `compute_role` 就是 `numeric`，不写 `workflow_scope`
+就是 `true`。宁可多换号，不能让一次真实的代码改动悄悄沿用旧号——后者会把两次不同代码的
+执行判成重复（F6 那类反向错误）。**多换号是可见的噪音，少换号是不可见的错判。**
 
 ### 3.2 `env` —— 环境身份（v1.1 修 F10）
 
@@ -250,7 +297,7 @@ v1.0 把 `python`/`python_impl` 写成"被 `env_sha256` 覆盖"，但当时的�
 #### 3.3.1 判据：改变"算什么/怎么算"，不是"是不是数字"
 
 这是 P0-3 的修法。`v1.0` 的 `NUMERIC_CONFIG_KEYS` 会漏掉布尔与枚举开关，而后者的影响往往
-更大。`v1.2` 按审查给的分类把 `effect` 从三值扩到**六值闭集**（D-6 待裁）：
+更大。`v1.2` 按审查给的分类把 `effect` 从三值扩到**六值闭集**（D-6 已定）：
 
 | `effect` | 进 `run_id` | 含义 | 判据一句话 |
 |---|---|---|---|
@@ -439,15 +486,43 @@ unclassified  = { k ∈ effective : effect(k) 未登记 }          （非空 ⇒
 | `kind` | enum(`none`/`scalar_pair`/`perpoint`) | ✓ | ✗（由 `array_sha256` 承担） | `fit_top` 的三种形态（`_check_sigma`，`bm_top.py:645`） |
 | `mode` | enum(`free`/`scalar`/`perpoint`) | ✓ | ✗ | `make_sigma` 的**来源**口径（`nested_fit.py:121`） |
 | `pct` / `abs` | float? | 对应 mode | ✗ | 参数值；`abs=None` 会被物化成 `0.01·max\|Z\|` |
-| `array_sha256` | str? | `kind≠none` 时 ✓ | **✓** | 对**实际**传入的 `(2,n)` 数组求摘要 |
+| `array_sha256` | str? | `kind≠none` 时 ✓ | **✓** | 对**实际**传入的数组求摘要 |
 | `floor` | float | ✓ | **✓** | `sigma_floor`，与 `sigma` 互斥 |
 | `from_data` | bool | ✓ | ✗ | 决定 `elpd` 有没有留一解释（`fit_top` 的 `elpd_valid_*`） |
 | `elpd_valid` | bool | ✓ | ✗ | 派生自 `from_data`，进产物供读者判断 |
 
-`array_sha256` 的口径：`sha256(b"v1\n2xN\n" + np.asarray(sigma, "<f8").tobytes(order="C"))`。
-**`kind`/`mode` 不进哈希**是故意的：两次运行的 `mode` 不同、但实际 σ 数组逐位相同
-⇒ 似然完全一样 ⇒ 是同一组条件（T19）。而 `from_data` 只改 `elpd` 的**解释**，
-不改后验 ⇒ 归 `workflow`（`decision` 层），不进 `run_id`。
+**进哈希的是投影，不是整个块**：`sigma_run_id_value()` 只取
+`{array_sha256, floor}` 两个子字段，其余六个**留记录、不进哈希**。
+这一条是本轮实现时补的——`v1.2-draft` 写"`kind`/`mode` 不进哈希"，但代码只要直接
+`canonical_json(整个块)`，`pct`/`abs` 就会跟着进去，于是 T19 立刻失败。**"某字段不进哈希"
+必须落成一次显式投影**，不能靠"我没把它写进去"。
+
+`array_sha256` 的口径（D-8 裁决后的完整规则）：
+
+```
+sha256( b"v1\n" + f"{a.shape[0]}x{a.shape[1]}\n" + np.ascontiguousarray(a, "<f8").tobytes(order="C") )
+```
+
+| 规则 | 处理 | 为什么 |
+|---|---|---|
+| dtype | 一律转 `<f8` 小端 | 只看数；`>f8` 与 `<f8` 是同一个数组（S5） |
+| 顺序 | `np.ascontiguousarray` + `order="C"` | 内存布局不是数值，F 数组不该换号（S6） |
+| 形状 | **进头部载荷** | `(2,3)` 与 `(3,2)` 不该靠字节长度区分（S2） |
+| NaN/Inf | **报错**（`ValueError`） | 非法噪声不该有身份；静默哈希会把 bug 变成号 |
+| 空数组 | **报错** | 空数组 ≠ `kind=none`：前者是"忘了填"，后者是"噪声被采样"（S4） |
+| `None` | `kind=none` 时合法且 `array_sha256=null`；`kind≠none` 时**报错** | 同上 |
+| 复算 | S1 用 `b"v1\n2x2\n" + bytes` 独立重算并对拍 | 摘要必须能被第三方从数组复现 |
+| **dtype 差异** | `float32(0.1)` 与 `float64(0.1)` **不同号** | 它们真的是两个数（0.10000000149… vs 0.1）；"dtype 无关"是错的 |
+
+**`kind`/`mode` 不进哈希**是故意的：两次运行的来源口径不同、但实际 σ 数组逐位相同
+⇒ 似然完全一样 ⇒ 是同一组条件。而 `from_data` 只改 `elpd` 的**解释**，不改后验
+⇒ 归 `workflow`（`decision` 层），不进 `run_id`。
+
+**T19 的原措辞已订正**：原写"`mode=perpoint,pct=2` → `scalar,abs=` 使实际 σ 数组逐位相同"，
+这是**做不到的**——`_check_sigma` 里 `scalar` 是 `(2,)`、`perpoint` 是 `(2,n)`，形状不同
+就不可能是"同一个数组"。改为两格：
+**T19a 同一数组、不同 `mode` ⇒ 同号**（测"来源不进哈希"）；
+**T19b 同一 `mode`、数组差 0.01% ⇒ 换号**（测"实际数组进哈希"，这才是 D-8 的落点）。
 
 #### 3.3.6 归一化规则（F12 的对策）
 
@@ -478,14 +553,20 @@ unclassified  = { k ∈ effective : effect(k) 未登记 }          （非空 ⇒
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `workflow_id` | str | 由**父运行的搜索空间 + 子运行列表**算出；**不反馈**进任何子 `run_id` |
+| `workflow_id` | str | `W1-` + 32 位；由**工作流源码摘要 + 搜索空间 + 门禁设定 + 子运行列表**算出（§6.3）；**不反馈**进任何子 `run_id` |
 | `role` | enum(`parent`/`child`) | 子运行里 `parent_workflow_id` 指回父 |
 | `search` | {krange, kmax, wide, fixed_K, layers, branches, n_seeds} | 搜索空间 |
 | `extras` | {auto_mechanism, auto_mechanism_full, auto_adsorption, with_voigt, ref_rwp} | 触发了哪些附加运行 |
-| `gate` | {kk_mode, kk_status, kk_performed, strict} | 门禁设定**与实测结果** |
+| `gate` | {kk_mode, kk_opts, strict, **kk_status, kk_performed**} | 门禁设定**与实测结果**——设定进 `workflow_id`，结果**不进** |
 | `guards` | {strict, gate_b, diag, drt_opts} | 事后判定阈值 |
 | `pair_mode` / `retry` / `retry_kw` | 见 Profile C | 比较与重跑口径 |
 | `children` | list[run_id] | 子运行清单（每个都是独立条件身份） |
+
+**`gate` 里同时有设定和结果，必须分开处理**：`kk_mode`/`kk_opts`/`strict` 是条件，
+`kk_status`/`kk_performed` 是观测。把观测也塞进 `workflow_id`，工作流身份就变成了
+**结果身份**——同一套设定、因为数据噪声不同得到 `pass`/`fail`，会被判成两个工作流。
+门禁真的起作用时，它改变的是 `children`（那个子运行没跑），结果通过"跑没跑"
+进来，而不是通过一个状态字符串（W4 专测这条）。
 
 ### 3.4 `data` —— 数据身份（已有，扩两点）
 
@@ -608,8 +689,9 @@ v1 只做一件事：把 `recorded` 的**必填集**写清楚。
 | `identity_contract_version` | ✓ | 世代标签，防"语义变了但载荷没变"撞号（D-4） |
 | `code.git_describe` / `git_dirty` / `dirty_paths` / `dirty_scope` / `patch_bundle_*` | ✗ | 展示、范围判据或重建；由 commit+摘要或其自身派生 |
 | `code.runtime_loaded_modules` / `source_coverage` / `undeclared_modules` | ✗ | 覆盖性核对，不区分条件（用作降级判据） |
-| `code.declared_source_tree_sha256` / `compute_role` / `why_not_numeric` | ✗ | 完整性证据与角色声明；进哈希的是它的 numeric 子集（D-5） |
-| `workflow.*`（含 `kk_mode`/`kk_opts`/`diag`/`drt_opts`/`with_voigt`/`ref_rwp`/`krange`/`n_seeds`） | ✗ | 描述"跑几次、选哪个"，不描述"哪一次"；`admission_condition`/`decision_condition`/`workflow_scope` 三类都在这里 |
+| `code.declared_source_tree_sha256` / `compute_role` / `why_not_numeric` / `workflow_scope` | ✗ | 完整性证据与角色声明；进 `run_id` 的是它的 numeric 子集（D-5） |
+| `code.workflow_source_tree_sha256` | ✗ | 进 **`workflow_id`**（§6.3）：它管门禁/筛选/选择/重跑，不管这一次拟合 |
+| `workflow.*`（含 `kk_mode`/`kk_opts`/`diag`/`drt_opts`/`with_voigt`/`ref_rwp`/`krange`/`n_seeds`） | ✗ | 描述"跑几次、选哪个"，不描述"哪一次"；`admission_condition`/`decision_condition`/`workflow_scope` 三类都在这里。**但它们全部进 `workflow_id`** |
 | `config.unknown_keys` / `unclassified_keys` / `capture_interface` / `normalize` | ✗ | 校验与溯源 |
 | `rng.actual.*` / `instance.*` | ✗ | **实例**——进来会让同条件两次跑换号，判重失效（F6） |
 | `software.registry_version` | ✗（D-1 已定） | 它是**映射工具**版本，不是被拟合的代码；移入 `provenance` |
@@ -617,10 +699,50 @@ v1 只做一件事：把 `recorded` 的**必填集**写清楚。
 `RUN_ID_CONFIG_KEYS` 必须是**闭集 + 显式版本化**（`run_id_config_keys_version`），
 否则 `run_id` 会随任何无害开关抖动，样本量被无意义地切碎。
 
-### 6.2 反例矩阵（定稿前必须先跑这 24 条）
+### 6.3 `workflow_id`：第二个号，回答"整个流程是哪一次"
+
+审查 D-5 的附加条件：**单次拟合的身份和工作流的身份不能混为一谈**。所以有两个号：
+
+| 号 | 前缀 | 回答 | 载荷 |
+|---|---|---|---|
+| `run_id` | `R1-`/`D1-` | 这一次拟合的条件 | §6 表（含 `numeric_source_tree_sha256`） |
+| `workflow_id` | `W1-` | 这一套"搜索 + 门禁 + 选择 + 重跑"是哪一次 | 下式 |
+
+```
+workflow_id = "W1-" + sha256(
+    "v1\nworkflow_id\n" + canonical_json({
+      v:                    identity_contract_version,
+      workflow_source_tree_sha256:  ...,
+      search:               {krange, kmax, wide, fixed_K, layers, branches, n_seeds},
+      extras:               {auto_mechanism*, auto_adsorption, with_voigt, ref_rwp},
+      gate:                 {kk_mode, kk_opts, strict},        # 设定，不含 kk_status
+      guards:               {strict, gate_b, diag, drt_opts},
+      pair_mode, retry, retry_kw,
+      children:             sorted([子运行的 run_id …])
+    }))[:32]
+```
+
+四条口径，每条都有反例护着：
+
+1. **工作流源码在里面**（`workflow_source_tree_sha256`）。没有它，改 `bm_grade` 的判定、
+   改 `bm_select` 的选择/重跑、改 KK 门禁，`workflow_id` 一律不动——这正是审查指出的洞（W1/W2）。
+2. **结果不在里面**。`kk_status`/`kk_performed`/`Rwp`/`elpd` 是观测，不是条件（W4）。
+   门禁真的拦住一次运行，体现为 `children` 少一项。
+3. **子运行的 `run_id` 在，父的 `workflow_id` 不回流**。子运行不带
+   `parent_workflow_id` 进自己的 `run_id`，否则父子互为输入、无法收敛（T16）。
+4. **`with_voigt` 只改 `extras`+`children`**，不改 nested 子运行自己的 `run_id`（T16）。
+
+**同号的含义（三条硬边界，与 §0 一致）**：
+`run_id` 相同 ⇒ 拟合条件相同；**不**表示初值/采样实例相同（`rng.actual.*` 不进哈希，T8）；
+**不**表示产物相同（`instance.*` 不进哈希，T7）；**不**表示工作流相同（那是 `workflow_id`）。
+
+### 6.2 反例矩阵（T1–T24 + W/S/M 三组）
 
 这组用例比再加十几个字段有用：它直接检验 `run_id` 的语义是否成立。左列是改动，
 右两列是**必须**出现的差异。任一格不符，键表或委托规则就是错的。
+
+**本轮已实现并跑通 54/54**（`test_exec_identity.py`）。表里"实测"列写的是这条
+**现在由哪个用例守着**；`v1.2-draft` 时这一列全是"待跑"。
 
 | # | 改动 | `run_id` | 该变什么 | 防的失败模式 |
 |---|---|---|---|---|
@@ -642,7 +764,8 @@ v1 只做一件事：把 `recorded` 的**必填集**写清楚。
 | T16 | `with_voigt=True` → `False` | nested 子运行**同**；父 `workflow_id` 不同 | `workflow.children` 变 | 附加对照污染主身份 |
 | T17 | `kk_mode="gate"` → `"warn"` | 同 | `workflow.gate` 变 | 门禁进哈希 |
 | T18 | `diag` 阈值改 | 同 | `workflow.guards` 变 | 事后阈值进哈希 |
-| T19 | `sigma_mode=perpoint,pct=2` → `scalar,abs=`使实际 σ 数组逐位相同 | **同** | `sigma.mode` 变 | 复合键要认"实际数组"，不是"枚举" |
+| T19a | 实际 σ 数组逐位相同、`sigma.mode` 不同（`perpoint`→`scalar` 标签） | **同** | `sigma.mode` 变 | 复合键要认"实际数组"，不是"来源枚举" |
+| T19b | 同一 `mode`、实际 σ 数组差 0.01% | **必须不同** | `sigma.array_sha256` 变 | D-8 的落点：数组才是噪声条件 |
 | T20 | `adsorption=_UNSET` → 显式 `None`（等价） | **同** | `origin` 变 | 哨兵未解析（F12） |
 | T21 | `zeta="1.0"` → `1.0` | **同** | 归一化后同值 | 字符串/数字未归一（F12） |
 | T22 | 声明了 `numeric` 模块但这次没加载 | 同 | `declared_not_loaded` 非空 | 覆盖规则误判（应无害） |
@@ -652,6 +775,37 @@ v1 只做一件事：把 `recorded` 的**必填集**写清楚。
 T10/T19/T20/T21 是 `v1.2` 的核心主张，也是最容易被"改回去"的四格：
 它们都要求**同号**，而直觉上"改了配置"应该换号。理由在 §3.3.5–§3.3.6——
 `run_id` 认的是"进似然的东西"，不是"写下来的字符串"。
+
+**逐条实测状态（`test_exec_identity.py`，54/54）**：T1–T24 全部有对应用例，名字就是
+`case_T1_branch` … `case_T24_bundle_gap`。三处**在写测试时才发现的措辞错误**已订正，
+这正是"边写边测"的价值：
+
+| 原措辞 | 问题 | 订正 |
+|---|---|---|
+| T19「`perpoint,pct=2` → `scalar,abs=` 使 σ 数组逐位相同」 | **做不到**：`_check_sigma` 里 `scalar` 是 `(2,)`、`perpoint` 是 `(2,n)`，形状不同 | 拆成 T19a（同数组不同 `mode`）+ T19b（同 `mode` 数组差 0.01%） |
+| T1「`branch` 变，`candidate_id` 也变」 | 真跑时 `candidate_id` 当然也变，于是这条用例即使配置通道漏了也会"通过" | 测试里**固定 `candidate_id`** 只改 `branch`：漏哈希立刻暴露 |
+| T10「改 `bm_circuit` 一行，`run_id` 同」 | 真实清单里 `bm_circuit` 仍是 `numeric`（未过运行验证），拿真实清单测必然失败 | 用**夹具**里已写 `why_not_numeric`+`evidence` 的 `plots.py` 测机制；真实模块等实测（M2 钉住零降级） |
+
+### 6.2.1 新增两组：`workflow_id` 与 `sigma` 数组（本轮实现时补）
+
+审查要求"不能只测 `run_id`"。W 组测第二个号，S 组测 D-8 的规范化，M 组测清单本身。
+
+| # | 改动 | 期望 | 防的失败模式 |
+|---|---|---|---|
+| W1 | `decision` 模块（夹具 `grade.py`）内容变 | `run_id` 同、**`workflow_id` 变** | 工作流逻辑变了身份不变（D-5 的洞） |
+| W2 | 入口脚本内容变（含重跑/选择逻辑） | 两个号**都变** | 入口退出 workflow 层 |
+| W3 | `workflow_scope=false` 的模块内容变 | 两个号都同、`declared` 仍变 | 把画图模块算进工作流身份 |
+| W4 | `kk_status` `pass`→`fail`、`kk_performed` 翻转 | 两个号**都同** | 结果混进身份（结果不是条件） |
+| W5 | `children` 多一个子运行 | `workflow_id` 变、`run_id` 同 | 附加对照污染父身份 |
+| W6 | `search.kmax` 5→6 | `workflow_id` 变、`run_id` 同 | 搜索空间混进单次条件 |
+| S1 | 用 `b"v1\n2x2\n" + bytes` 独立重算 | 与实现一致 | 摘要不可被第三方复现 |
+| S2 | `(2,3)` vs `(3,2)` | 不同 | 形状没进载荷 |
+| S3 | 含 NaN / Inf | 报错 | 非法噪声静默获得身份 |
+| S4 | 空数组 / `sigma=None`（kind≠none）/ `kind=none` 带数组 | 全部报错；`kind=none` ⇒ `array_sha256=null` | 空数组当成"没有噪声" |
+| S5 | `<f8` vs `>f8`；`float32(0.1)` vs `float64(0.1)` | 前两者同摘要；后者**必须不同** | 把"字节序"和"数值"混为一谈（原措辞写反） |
+| S6 | C/F 内存布局；转置 | 布局无关；转置**不同** | 把"归一化"写成"敏感性"（原措辞写反） |
+| S7 | σ ≤ 0 | 报错 | `Normal.scale` 不接受 0，写进身份才发现就晚了 |
+| M1–M7 | 三份 Profile 齐全 / **降级零条** / 路径存在 / 降级候选未应用 / 声明集可复算 / 清单与源码同步 / 降级缺证据被拒 | 见测试输出 | 为了让测试变绿而降低源码角色 |
 
 ---
 
@@ -773,7 +927,7 @@ run_id_prefix: "R1-"/"D1-"           # D-4 已定；前缀只是辅助标识
 | 2 | 可恢复的证据有明确来源（文件 + 字段 + 复算方式） | ✅ 数据内容哈希 239/239；6 条 seed 有产物来源 |
 | 3 | 不可恢复的明确标为不可恢复（原因 + 为什么不可恢复） | ✅ 9 份产物零身份字段、mtime 只给上界、库模块无副本 |
 | 4 | 判重与独立性可复算（双口径同报、三套测试、`--check`） | ✅ 契约 76/76、快照 9/9、`--check` rc=0 |
-| 5 | 后续 runner 有一套**经过实跑验证**的身份契约 | ❌ 本文件是草案，未实现、未实跑 |
+| 5 | 后续 runner 有一套**经过实跑验证**的身份契约 | ⚠️ 契约与声明集已实现并跑通 52/52，**但没有一次真实运行**（runner 未授权）⇒ 本条仍不成立 |
 
 **冻结判据**：1–4 成立 + 5 的契约被审查通过并至少经一次真实运行验证（P1）。
 不由 `R-` 数量决定——233 条永远 `derived` 也可以是可信的历史基线；把"重跑补齐"当冻结条件，
@@ -781,7 +935,7 @@ run_id_prefix: "R1-"/"D1-"           # D-4 已定；前缀只是辅助标识
 
 ---
 
-## 13. 裁决记录（v1.1 已定 / v1.2 待裁）
+## 13. 裁决记录（D-1～D-8 全部已定）
 
 ### 13.1 D-1～D-4：已定
 
@@ -814,34 +968,48 @@ D-4 的实现影响已核对：前缀的**写入**只有 `_run_id_from()`（`cir
 | §3.2 | 说 `python` 被 `env_sha256` 覆盖，而摘要只由包名版本拼成 | `env_sha256` 定义改为含 `python`/`impl`/`platform`/`packages`（§3.2 公式） |
 | §5 / §3.5 | "`rng.plan` 四项齐" vs 实际五项 | 统一为**五项** |
 
-### 13.4 `v1.2` 新提的四项（待裁）
+### 13.4 D-5～D-8：已定（2026-11-14 裁决）
 
-| # | 问题 | 我的建议 | 风险 / 代价 |
-|---|---|---|---|
-| **D-5** | 静态闭包 ⊋ 参与计算的代码（Profile B 的 17 个模块里有一半 `fit_top` 不调用）。要不要把 `declared_source_tree_sha256` 直接哈希进 `run_id`？ | **拆成两个摘要**：`declared`（完整性，只记录）+ `numeric`（进哈希，由 `compute_role` 声明）；`compute_role` 省略即 `numeric`，降级须过 §3.1.3 的两条验证 | 代价：`compute_role` 是一处**人的判断**，判错的方向只能是"把 numeric 误降"（会合并本该分开的运行）。对策：默认 numeric + 两条可执行验证 + 判错即降 `derived`。**若不采纳**：保留单摘要，接受"改画图脚本换号"，样本被无谓切碎 |
-| **D-6** | `effect` 从三值扩到六值（补 `admission_condition`/`decision_condition`/`workflow_scope`） | **采纳**。这是审查给的三类（门禁/诊断/工作流）的直接落地；不扩就得把它们硬塞进 `display_only`，而后者会被读成"无关紧要" | 代价：`effect` 闭集变长，`unclassified_keys` 的判定要按新闭集重算 |
-| **D-7** | `data.transform`（`fscale`/`zscale`/掩码）进哈希 | **采纳**。当前三个入口都传默认值，但 `bm_real.load_spectrum` 支持缩放；不记就会静默共用号 | 代价：现值恒等（`1.0`/`null`），对历史与现有运行零影响 |
-| **D-8** | `sigma` 用 `array_sha256` 进哈希、`kind`/`mode`/`from_data` 不进 | **采纳**。判据是"进似然的东西"，而 `kind`/`mode` 只是来源描述；`from_data` 只改 `elpd` 的解释 | 代价：两个 `mode` 不同但数组相同的运行会同号——这是**故意**的（T19），需在产物里保留 `mode` 供人读 |
+| # | 裁决 | 落地方式（本轮已实现） |
+|---|---|---|
+| **D-5** | **有条件采纳**：拆摘要，但**必须补第三层** `workflow_source_tree_sha256` | 三层各自落点：`declared`=只记录、`numeric`=`run_id`、`workflow`=`workflow_id`（§3.1.3、§6.3）。`compute_role` 与 `workflow_scope` 是**两个独立维度**，不是划分；入口两处都必须在。审查的原话"改无关常量后数值逐位相同只能作回归验证"写进 §3.1.4，与"必须不出现在运行时集"合为**双条件** |
+| **D-6** | **采纳**六值 `effect` | `EFFECTS` 闭集 + `RUN_ID_EFFECTS` 子集；每键的类型与 `effect` 在 `RUN_ID_CONFIG_KEYS` 里一处登记（`run_id_config_keys_version: 1`）。三条原则写进 §3.3.1：不进 `run_id` ≠ 不记录；不改后验 ≠ 不改结论；workflow 身份必须覆盖筛选与选择逻辑 |
+| **D-7** | **采纳** `data.transform` 进哈希 | `{fscale, zscale, mask}` 进 `_data_payload`；**职责分离**：`transform` 记**处理规则**，`subset_sha256` 记**处理后的实际子集**（两者都进哈希，改哪个都换号；规则相同而子集不同时只有 `subset_sha256` 变）。T13/T14 各测一半 |
+| **D-8** | **采纳**实际数组摘要 | `sigma_run_id_value()` 只投影 `{array_sha256, floor}`；规范化补齐五项：`<f8` 小端、C 顺序、形状进载荷、拒 NaN/Inf、空数组 ≠ `None` ≠ `kind=none`；S1 用独立字节串复算对拍。`mode`/`kind`/`from_data` 留记录、不作替代身份 |
+
+**D-5 的附加条件为什么必要**（审查给的四个例子，逐个对上用例）：`bm_grade` 判定变 →
+W1；`bm_select` 选择/重跑变 → W2（入口）；`kk_mode` 门禁变 → T17/W4（设定进 `workflow_id`、
+结果不进）；`bm_select` 重跑导致额外子运行 → W5（`children` 变）。
+**若只有两层**，这四种改动里 W1 会"身份不动"——这就是原方案的洞，现已堵上。
 
 ---
 
-## 14. 实现仍未授权（下一步顺序）
+## 14. 实现进度：契约层已完成，runner 待授权
 
-契约文本冻结前不写 runner。P0/P1/P2 的顺序按审查意见：
+审查明确要求**改串行为并行迭代**（写→测→修，不攒到最后）。按此执行的进度：
 
-| 优先级 | 工作 | 是否动生产代码 |
-|---|---|---|
-| P0 | 裁 D-5～D-8（§13.4） | 否 |
-| P0 | 冻结本契约（字段表 / 哈希纳入表 / `recorded` 判据 / 全部裁决） | 否 |
-| P0 | 认下 §3.3.4 的三张键表（按实际签名逐参数核对一遍） | 否 |
-| P1 | 落 `source_manifest.json`（三份 Profile，含 `compute_role` + `why_not_numeric`）并跑 §6.2 的 T1–T24 | 否（只写清单） |
-| P1 | 写 runner 落字段 + **1 次真实运行**验证字段确实来自实际执行（含补丁包重建校验） | 是，限 runner |
-| P1 | 重跑对应 4 次历史条件，建 6 条新记录（`purpose=baseline_rebuild`） | 是，跑实验 |
-| P2 | 233 条的实验单位与优先级 | 否 |
+| 优先级 | 工作 | 状态 | 动生产代码 |
+|---|---|---|---|
+| P0 | 裁 D-5～D-8（§13.4） | ✅ 已定（D-5 有条件：补第三层） | 否 |
+| P0 | 认下 §3.3.4 三张键表 | ✅ 已落成 `RUN_ID_CONFIG_KEYS`（38 键 × 类型 × `effect`） | 否 |
+| P1 | 落 `source_manifest.json`（三份 Profile） | ✅ 15/19/18 个文件，**降级零条** | 否 |
+| P1 | 实现身份计算（纯函数） | ✅ `exec_identity.py`：三层摘要、`run_id`、`workflow_id`、status | 否 |
+| P1 | 跑 §6.2 反例矩阵 | ✅ **54/54**（T×25、W×6、S×7、Y×4、M×8、X×4） | 否 |
+| P0 | 冻结契约（**只冻结验过的**） | ✅ §18 冻结台账；未验证项标 `draft` | 否 |
+| **P1** | **写 runner 落字段 + 1 次真实运行**（含补丁包重建校验） | ⛔ **仍待单独授权** | 是，限 runner |
+| P1 | 重跑 4 次历史条件建 6 条新记录（`purpose=baseline_rebuild`） | ⛔ 依赖上一行 | 是，跑实验 |
+| P2 | 233 条的实验单位与优先级 | ⛔ 未开始（`STAGE2_SPEC.md`） | 否 |
+
+**授权 runner 前的唯一阻塞项**不是设计，而是这轮测试**证明不了**的两件事：
+① 声明集是否覆盖了**真实加载**的模块（要一次运行的 `runtime_loaded_modules`，T23 只用夹具）；
+② 补丁包能否**重建**工作树（要 dirty 状态下的真实产物，T24 只用夹具）。
+其余字段与规则都已有反例护着（§18）。
 
 ## 15. 本契约**不**做的事
 
 - 不改任何生产拟合模块（`bm_core`/`bm_top`/`bm_select`/`bmdrt`/`bm_result`）。
+  本轮新增的 `exec_identity.py` 是**只读纯函数层**：没有 I/O、没有时间戳、没有环境读取，
+  它不参与拟合，也不被任何生产模块 import。
 - 不写 runner、不加字段到 registry、不升 `REGISTRY_VERSION`、不重冻结快照。
 - 不新增状态枚举、不改 `duplicate_verdict` 三态、不改 `DATA_ID_KINDS`。
 - 不触碰准入判定：§13 `0/3`、§14 `4/14`、§17 `0/10` 与本文件无关。
@@ -856,6 +1024,9 @@ D-4 的实现影响已核对：前缀的**写入**只有 `_run_id_from()`（`cir
 | `round_2026-11-13/STAGE0_RECORDS_MAP.md` | 239 条记录如何由 v0 规则产出；§3.1 的"跨版本比号无意义"在 v1 继续成立 |
 | `CIRCUIT_TOPOLOGY_ADMISSION.md` §8.1 | 登记合法 ≠ 准入通过；同理 **身份齐备 ≠ 结果可信** |
 | `round_2026-11-13/STAGE2_SPEC.md` | §11 的五个问题在这里回答；233 条重跑属该文件 |
+| `exec_identity.py`（根） | 本契约**已实现的部分**：三层摘要、`run_id`、`workflow_id`、状态阶梯 |
+| `source_manifest.json`（根） | §3.1.3 三份 Profile 的声明集；由 `round_2026-11-13/build_source_manifest.py` 生成 |
+| `test_exec_identity.py`（根） | §6.2 / §6.2.1 的反例矩阵（52 条），§18 的证据来源 |
 
 ## 17. 修订记录
 
@@ -864,3 +1035,45 @@ D-4 的实现影响已核对：前缀的**写入**只有 `_run_id_from()`（`cir
 | `v1.0-draft` | 2026-11-14 | 首版：五个块、`run_id` 纳入口径、降级规则、6 条/233 条处置、Stage 0 判据、D-1～D-4 待裁 |
 | `v1.1-draft` | 2026-11-14 | 修 P0-1（声明集/运行时集分离 + 覆盖规则）、P0-2（补丁包含未跟踪内容）、P0-3（`RUN_ID_CONFIG_KEYS` 类型无关 + 捕获接口 + `unclassified_keys`）；修四处内部不一致；D-1～D-4 记为已定并附约束 |
 | `v1.2-draft` | 2026-11-14 | **从实际签名反推参数表**：三入口键表（§3.3.4）、字段委托表（§3.3.3）、`sigma` 复合键（§3.3.5）、归一化规则（§3.3.6）、`workflow` 块（§3.3.7）；`effect` 三值 → 六值；新增 F11/F12、§3.1.3（三份 Profile，数字由 `audit_source_profiles.py` 算出）、§6.2 反例矩阵；新提 D-5～D-8 待裁；`data.transform`（D-7） |
+| **`v1.2`** | 2026-11-14 | **动工**：D-5 有条件采纳（补第三层 `workflow_source_tree_sha256`）、D-6/D-7/D-8 采纳；新增 `exec_identity.py`（三层摘要 / `run_id` / `workflow_id` / 状态阶梯，纯函数）、`source_manifest.json`（三 Profile，15/19/18 文件，降级零条）、`build_source_manifest.py`、`test_exec_identity.py`（**54/54**）；新增 §3.1.4（降级证据）、§6.3（`workflow_id`）、§6.2.1（W/S 组）、§18（冻结台账）；**订正三处原措辞**（T19、T1、T10，见 §6.2）；`sigma` 改为显式投影（只 `array_sha256`+`floor` 进哈希） |
+
+---
+
+## 18. 冻结台账（只冻结跑过的）
+
+审查的第四条要求：**只冻结已经经过反例验证的字段和规则**，不提前冻结没验过的角色分类。
+所以"冻结"在这里有明确含义：
+
+> 本文件这几行不再改措辞、不再改口径；要改必须**升 `identity_contract_version`**
+> 并给出对应的反例（`test_exec_identity.py` 里加一格，或说明为什么原来那格是错的）。
+
+### 18.1 已冻结（有可执行反例）
+
+| 项 | 证据 | 口径 |
+|---|---|---|
+| 三层摘要 + 两个独立维度（`compute_role` / `workflow_scope`） | T9 T10 W1 W2 W3 M2 M5 | `declared` 只记录、`numeric` 进 `run_id`、`workflow` 进 `workflow_id`；层名域分隔 |
+| `run_id` 载荷构成（§6 表） | T1–T4 T11–T15 T19–T21 X2 X3 | 六块：`candidate_id` / `data` / `rng.plan` / `budget` / `config(effect∈两值)` / `code+env` + 版本 |
+| 展示与实例字段不进哈希 | T5 T6 T7 T8 W4 | `progress`/`plot`/`elapsed_s`/`init_values_sha256`/`kk_status` |
+| `workflow_id` 载荷（§6.3） | T16 T17 T18 W1 W2 W3 W5 W6 | 源码 + 搜索 + 门禁设定 + guards + children；**结果不进** |
+| `sigma` 显式投影与数组摘要 | T19a T19b S1–S7 | 只 `{array_sha256, floor}`；`<f8`/C/形状/拒 NaN/空数组拒收 |
+| `data.transform` 与 `subset_sha256` 分工 | T13 T14 | 规则 vs 实际子集，两者都进哈希 |
+| `effect` 六值闭集 + 键表（38 键，含 `voigt_K` 父子双效） | Y2 M2 X4 | 未登记键 ⇒ `config_unclassified` ⇒ `derived` |
+| 状态阶梯（六块 → 三档） | Y1 Y2 Y3 Y4 T22 T23 | `data`/`rng`/`budget` 缺 ⇒ `unconfirmed` 且**无号**；`code`/`env`/`config` 缺 ⇒ `derived` |
+| `sha256` 语义与 registry 一致 | X1（+ registry D12） | 64 位十六进制；无效**抛错**不退化 |
+| 声明集合法性与清单同步（含预览可复算） | M1–M8 | 降级须 `why_not_numeric`+`evidence`；入口两处都在；`--check` rc=0 |
+
+### 18.2 未冻结（**没有真实运行**，所以不许当结论用）
+
+| 项 | 为什么还不行 | 需要什么 |
+|---|---|---|
+| `runtime_loaded_modules` / `source_coverage` 的判定 | T23 用夹具，未读过真 `sys.modules`；闭包与运行时的差集还没实测 | 一次真实运行的三个时点快照 |
+| 补丁包**重建**工作树 | T24 只测"缺包 ⇒ 降级"，没测过"解包后复算摘要一致" | dirty 状态下的一次真实运行 |
+| 降级双条件（`plot_only`/`decision` 等） | 本轮**零降级**（M2）；`pending_demotions` 全部 `applied:false` | 关功能运行 / 改常量重跑 |
+| `capture_interface` / `unknown_keys` 的真实值 | 夹具里是手写的；真实调用点的 `**kwargs` 还没被枚举 | runner 捕获 |
+| `env` 五项的真实采集 | `platform`/`packages` 在夹具里是常量 | runner 采集 |
+| D-3「线程数不进哈希」的量化前提 | 没有线程敏感性实验 | `sampler_sensitive` 那条线的实测 |
+| §12 判据 5（经过实跑验证的契约） | 现在就停在这一条 | 上面两行 |
+
+**这张表不是待办清单，是免责边界**：18.1 的每一项都有反例护着，18.2 的每一项都只是
+设计合理。把 18.2 说成"已验证"，等于重犯 `HISTORICAL_EXEC_IDENTITY_GAP.md` 里那类错——
+**没有证据的地方，措辞必须软。**
