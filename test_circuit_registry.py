@@ -1143,9 +1143,21 @@ def case_d12_sha256_must_be_hex64():
     msg = _expect_raise(_art, {"path": "result.json", "sha256": "same"},
                         {"path": "result.json", "sha256": "same"}, summary_equal=True)
     assert "sha256" in msg, msg
-    # 空串仍然只是"缺字段"（返回 None，走 possible_duplicate），不是格式错误
+    # 空串在**产物定位**里算缺失：返回 None，走 possible_duplicate，不是格式错误
     assert R._artifact_key({"path": "r.json", "sha256": "   "}) is None
-    return "sha256 必须是 64 位十六进制；伪哈希/截断/非十六进制一律报错，空串算缺失"
+    # 空串在**执行数据**里是错误——两处故意不同，这里把它钉住，免得将来被"统一"掉。
+    # 「没算哈希」在 execution.data 里有专门写法：不给键 / 给 None ⇒ ref_only ⇒ derived。
+    for blank in ("", "   "):
+        msg = _expect_raise(R.execution_identity, candidate_id=_nested().candidate_id,
+                            data={"ref": "spectrum.csv", "sha256": blank}, seed=0,
+                            seed_source="artifact:x", budget_params=dict(_BP))
+        assert "64 位十六进制" in msg, (blank, msg)
+    for dat in ({"ref": "spectrum.csv"}, {"ref": "spectrum.csv", "sha256": None}):
+        e = _exec(data=dat)
+        assert e["data_id_kind"] == "ref_only", (dat, e)
+        assert e["run_id_status"] == "derived", (dat, e)
+    return ("sha256 必须是 64 位十六进制；伪哈希/截断/非十六进制一律报错；"
+            "空串在 source 算缺失、在 execution.data 算错误")
 
 
 CASES = [

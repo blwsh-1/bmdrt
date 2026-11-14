@@ -1157,6 +1157,10 @@ def _check_data(v, *, candidate_id: str) -> dict | None:
         raise ValueError(f"候选 {candidate_id}：execution.data.ref 必须是非空字符串")
     sha = v.get("sha256")
     if sha is not None:
+        # 与 `_artifact_key()` 的**唯一一处故意不同**：这里 `sha256=""` 报错，那边返回 `None`。
+        # 不是抄漏了。"没算哈希"在 `execution.data` 里已有明确的写法——不给这个键，或给 `None`，
+        # 得到 `ref_only` 并如实降级到 `derived`；再写一个空串只会让"忘了算"和"算出来是空"
+        # 混成同一种状态，而这层身份的全部意义就是不让降级**静默**发生。
         if not isinstance(sha, str):
             raise ValueError(
                 f"候选 {candidate_id}：execution.data.sha256 必须是 64 位十六进制字符串")
@@ -1164,7 +1168,8 @@ def _check_data(v, *, candidate_id: str) -> dict | None:
         if not _valid_sha256(sha):
             raise ValueError(
                 f"候选 {candidate_id}：execution.data.sha256={sha!r} 不是 64 位十六进制。"
-                "别把文件名当哈希填进来——那会让两条不同数据拿到同一个身份")
+                "别把文件名当哈希填进来——那会让两条不同数据拿到同一个身份；"
+                "**没有哈希就不要给这个键**（空串不算缺失）")
     out = {"ref": ref.strip(), "sha256": sha, "f_min": None, "f_max": None,
            "id_kind": "content_sha256" if sha else "ref_only"}
     for k in ("f_min", "f_max"):
@@ -1362,6 +1367,11 @@ def _valid_sha256(v) -> bool:
     `"same"` 显然是两个字的字符串，两条 `{"path": "x", "sha256": "same"}` 会因此
     被判成同一产物——0.5.0 把"缺失值相等"当证据，0.6.0 又留下"无效值相等"当证据，
     同一个毛病换了一件外衣。字段存在 ≠ 字段内容有效。
+
+    **这叫外形校验，不是真实性校验。** 64 位十六进制只说明"长得像 SHA256"，不说明
+    这个值是对某份文件内容真算出来的。后者靠证据链：映射脚本对原始文件重算
+    （`MANIFEST.data_sha256_files` 可逐份复核）、`source_sha256` 对证据文件重算、
+    `--check` 四层比对。谁要是把本函数当"哈希可信"用，就把外形当成了事实。
     """
     v = v.strip().lower() if isinstance(v, str) else v
     return (isinstance(v, str) and len(v) == SHA256_HEX_LEN
@@ -1381,6 +1391,10 @@ def _artifact_key(src: Mapping) -> tuple | None:
        ——那会把调用方的错误静默降级成"证据不足"，看似安全实则把 bug 藏起来；
        也不许直接用来比相等——`"same"` 相等不证明任何事。所以**报错**，
        这是"调用方提供了违反字段定义的数据"，不是"来源信息缺失"。
+       **空串/全空白算缺失**（返回 `None`），只限 `source.sha256` 这一处：产物定位是
+       映射脚本事后补的描述字段，老产物本来就可能没算哈希，缺了就是缺了；
+       `execution.data.sha256` 的空串则**报错**（见 `_check_data`）——那里"没哈希"
+       已有专门写法（不给键 / 给 `None`），空串只会把"忘了算"伪装成"没算过"。
     3. **`row` 决定层级**：有 `row` ⇒ 行级键 `("row", path, sha256, row, section)`；
        无 `row` ⇒ 文件级键 `("file", path, sha256)`。键前缀不同，
        所以"一条文件级、一条行级"永不相等——它们本来就不是同一个定位。
