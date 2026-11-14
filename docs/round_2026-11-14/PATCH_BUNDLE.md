@@ -127,6 +127,10 @@ roundtrip.complete =  verify == complete  AND  rebuild == matched
 B 声明集（`source_manifest.json` 的 19 个文件）+ 3 个 harness 项。脏状态在
 `git clone --no-local` 出来的**克隆**里造，不碰用户的工作树。
 
+下表的数字在 `a526fe5` 上测得；随后在 `ee744ee`（只加了本文档与契约段）重跑一次，
+四个场景判定与三个 `tree_digest` **逐位相同**，耗 23.7 s——`base` 变了而摘要没变，
+正说明摘要跟的是源码字节，不是 commit 号。
+
 | 场景 | 声明 | 归属 | bundle | 重建 | 三层摘要 |
 |---|---|---|---|---|---|
 | **A** 干净工作树 | 19 | 19 `base` | 6 461 B | 398 文件，19 项全等 | `96094464…` / `d99bcdd0…` / `180f29e2…` 全等 |
