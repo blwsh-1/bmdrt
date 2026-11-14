@@ -1028,6 +1028,91 @@ def case_d7_ref_only_cannot_be_recorded():
     return "文件名不是身份：ref_only 不能升 recorded；自报等级与实际不符被拒"
 
 
+def _art(a: dict, b: dict, **kw):
+    """两份**同一候选同一执行**的记录，只有 `source` 不同 ⇒ 判重只剩产物定位维度。"""
+    c = _nested()
+    e = _exec(candidate_id=c.candidate_id)
+    ra = {"candidate_id": c.candidate_id, "source": a, "execution": e}
+    rb = {"candidate_id": c.candidate_id, "source": b, "execution": e}
+    return R.duplicate_verdict(ra, rb, **kw)
+
+
+def case_d8_same_artifact_needs_sha256():
+    """D8：`path` 相同、两边 `sha256` 都缺 ⇒ **不是**同一产物（0.5.0 的错）。"""
+    a = {"path": "result.json"}
+    b = {"path": "result.json"}
+    v = _art(a, b, summary_equal=True)
+    assert v["duplicate_status"] == "possible_duplicate", v
+    assert v["independent"] is True, v
+    assert v["evidence"]["artifact_equal"] is False, v
+    assert "sha256" in (v["evidence"]["artifact_gap"] or ""), v["evidence"]
+    # 一边有 sha256、一边没有：同样不是证据
+    v2 = _art({"path": "result.json", "sha256": "s1"}, {"path": "result.json"},
+              summary_equal=True)
+    assert v2["duplicate_status"] == "possible_duplicate", v2
+    assert v2["evidence"]["artifact_scope"] == ["file", None], v2["evidence"]
+    # 没有 path 但有 sha256：也不算
+    v3 = _art({"sha256": "s1"}, {"sha256": "s1"}, summary_equal=True)
+    assert v3["duplicate_status"] == "possible_duplicate", v3
+    return "缺字段不充当来源证据：path/sha256 任一缺失都不能确认同一产物"
+
+
+def case_d9_same_path_diff_sha256():
+    """D9：`path` 相同、`sha256` 不同 ⇒ 同名不同内容，不能确认同一产物。"""
+    v = _art({"path": "result.json", "sha256": "s1"},
+             {"path": "result.json", "sha256": "s2"}, summary_equal=True)
+    assert v["duplicate_status"] == "possible_duplicate", v
+    assert v["evidence"]["artifact_equal"] is False, v
+    assert "sha256 不同" in (v["evidence"]["artifact_gap"] or ""), v["evidence"]
+    # 路径不同但内容相同：也不是同一产物（同一个文件在另一处的副本是另一条来源）
+    v2 = _art({"path": "a/result.json", "sha256": "s1"},
+              {"path": "b/result.json", "sha256": "s1"}, summary_equal=True)
+    assert v2["duplicate_status"] == "possible_duplicate", v2
+    return "同名不同内容、同内容不同路径，都不能确认是同一产物"
+
+
+def case_d10_artifact_scope_file_vs_row():
+    """D10：文件级与行级定位互不相认；行号/分段不同 ⇒ 两条记录。"""
+    sha = "s1"
+    # 同 path 同 sha、row 不同 ⇒ 是同一文件的两条不同记录
+    v = _art({"path": "r.jsonl", "sha256": sha, "row": 1, "section": "nested"},
+             {"path": "r.jsonl", "sha256": sha, "row": 2, "section": "nested"},
+             summary_equal=True)
+    assert v["duplicate_status"] == "possible_duplicate", v
+    assert "不同行" in (v["evidence"]["artifact_gap"] or ""), v["evidence"]
+    # 同 path 同 sha 同 row、section 不同 ⇒ 也是两条
+    v2 = _art({"path": "r.jsonl", "sha256": sha, "row": 1, "section": "nested"},
+              {"path": "r.jsonl", "sha256": sha, "row": 1, "section": "sensitivity"},
+              summary_equal=True)
+    assert v2["duplicate_status"] == "possible_duplicate", v2
+    # 一条文件级、一条行级 ⇒ 层级不同，永不相等
+    v3 = _art({"path": "r.jsonl", "sha256": sha},
+              {"path": "r.jsonl", "sha256": sha, "row": 1}, summary_equal=True)
+    assert v3["duplicate_status"] == "possible_duplicate", v3
+    assert v3["evidence"]["artifact_scope"] == ["file", "row"], v3["evidence"]
+    assert "层级不同" in (v3["evidence"]["artifact_gap"] or ""), v3["evidence"]
+    # 全同 ⇒ 确认同一产物；文件级全同也确认，但 reason 写明是整份文件
+    v4 = _art({"path": "r.jsonl", "sha256": sha, "row": 1, "section": "nested"},
+              {"path": "r.jsonl", "sha256": sha, "row": 1, "section": "nested"},
+              summary_equal=True)
+    assert v4["duplicate_kind"] == "same_artifact", v4
+    v5 = _art({"path": "r.jsonl", "sha256": sha}, {"path": "r.jsonl", "sha256": sha},
+              summary_equal=True)
+    assert v5["duplicate_kind"] == "same_artifact", v5
+    assert "整份文件" in v5["reason"], v5
+    return "文件级/行级分层；行号或分段不同即两条记录；全同才确认同一产物"
+
+
+def case_d11_section_requires_row():
+    """D11：`section` 脱离 `row` ⇒ 报错（不能靠"忽略分段"凑出同一行）。"""
+    msg = _expect_raise(R._artifact_key, {"path": "r.jsonl", "sha256": "s1",
+                                          "section": "nested"})
+    assert "section" in msg and "row" in msg, msg
+    msg2 = _expect_raise(R._artifact_key, {"path": "r.jsonl", "sha256": "s1", "row": True})
+    assert "row" in msg2, msg2
+    return "section 必须有 row；row 必须是整数（布尔不算）"
+
+
 CASES = [
     ("A1 定义完整性", case_definitions),    ("A2 未接线须给原因", case_unwired_needs_reason),
     ("A3 正演引用白名单", case_ref_whitelist),
@@ -1099,6 +1184,10 @@ CASES = [
     ("D3 数据按内容识别", case_d3_data_identity_by_content),
     ("D6 执行态整块复算", case_d6_execution_status_must_match_elements),
     ("D7 文件名不是身份", case_d7_ref_only_cannot_be_recorded),
+    ("D8 同一产物需 sha256", case_d8_same_artifact_needs_sha256),
+    ("D9 同名不同内容不算同一产物", case_d9_same_path_diff_sha256),
+    ("D10 文件级/行级定位分层", case_d10_artifact_scope_file_vs_row),
+    ("D11 section 必须有 row", case_d11_section_requires_row),
 ]
 
 

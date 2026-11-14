@@ -114,6 +114,17 @@ nested 名下。所以 0.3.0 规定：
 `distinct` / `possible_duplicate`（标记但**不扣**）/ `confirmed_duplicate`；
 "同条件但结果不同"记为 `distinct` + `contradiction`，是**可复现性问题**，不靠合并记录消掉。
 
+数据身份与产物定位（0.5.0 / 0.6.0）
+-----------------------------------
+"确认重复"必须整体按 `recorded` 判（seed 来自产物 + 预算 `recorded` + 代码版本已知
++ 数据有内容哈希），只挑两项自查就是绕过自己定的门槛。数据身份认**内容**不认文件名：
+`execution.data.sha256` 进 `run_id`，`ref` 只作标签；只有文件名时 `data_id_kind="ref_only"`，
+最高到 `derived`、不能参与确认重复。
+
+另一支 `same_artifact` 要求 `path` 与 `sha256` **均非空**，且文件级/行级定位
+（`("file", ...)` vs `("row", ..., row, section)`）**互不相认**——"两个 `None` 相等"
+不是来源证据。缺字段时原因写进 `duplicate_evidence["artifact_gap"]`。
+
 边界
 ----
 - 拓扑只登记 `voigt` / `nested` 两个；Warburg 与吸附登记为**未接线元件**
@@ -129,7 +140,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
-REGISTRY_VERSION = "0.5.0"        # 0.5：数据内容哈希 + 确认重复要求 recorded 执行身份 + 执行态整块复算
+REGISTRY_VERSION = "0.6.0"        # 0.6：产物定位缺字段不再算证据（same_artifact 要求 sha256 非空 + 层级一致）
 PRECHECK_VERSION = "0.1.0"
 
 PRECHECK_STATES = ("excluded", "not_excluded", "unknown")
@@ -204,6 +215,11 @@ RUN_ID_MISSING = ("not_provided", "data_not_recorded", "seed_not_recorded",
 #:   同摘要仍可能出自不同版本的拟合代码。
 DUPLICATE_STATES = ("distinct", "possible_duplicate", "confirmed_duplicate")
 DUPLICATE_KINDS = ("same_artifact", "rerun_same_conditions")
+#: 产物定位的层级。**文件级与行级不能互相顶替**：`row` 缺失只说明这份产物一条记录
+#: 对应整份文件，不说明"两个缺失值相等 ⇒ 同一行"。
+ARTIFACT_SCOPES = ("file", "row")
+#: 产物定位必须非空的字段。少一个就只能到 `possible_duplicate`，不能确认同一产物。
+ARTIFACT_KEY_FIELDS = ("path", "sha256")
 EVIDENCE_STATES = ("identified", "weak_preference", "non_identifiable",
                    "model_inadequate", "insufficient_evidence")
 PRECHECK_LEVELS = ("L0", "L1", "L2")
@@ -1323,6 +1339,64 @@ def _conditions_recorded(e: Mapping) -> bool:
             and e.get("data_id_kind") == "content_sha256")
 
 
+def _nonempty_str(v) -> bool:
+    return isinstance(v, str) and bool(v.strip())
+
+
+def _artifact_key(src: Mapping) -> tuple | None:
+    """把 `source` 归一成「同一个产物」的可比键；定位字段不足时返回 `None`。
+
+    三道门槛，都是"缺失值不能当证据"的直接对策：
+
+    1. **`path` 与 `sha256` 都必须非空**。0.5.0 只查 `path is not None`，于是
+       `{"path": "result.json", "sha256": None}` 两条会被判成同一产物——
+       `same_artifact` 因此能把两条"什么都不知道"的记录合并掉，
+       与"确认重复必须靠来源证据"的原则直接冲突。
+    2. **`row` 决定层级**：有 `row` ⇒ 行级键 `("row", path, sha256, row, section)`；
+       无 `row` ⇒ 文件级键 `("file", path, sha256)`。键前缀不同，
+       所以"一条文件级、一条行级"永不相等——它们本来就不是同一个定位。
+    3. **`section` 不能脱离 `row`**：section 是文件内的行内分段定位，缺行号就无从
+       定位；静默忽略它等于把同一 `path` 下两个不同分段的记录当成同一行。
+    """
+    if not isinstance(src, Mapping):
+        raise ValueError(f"source 必须是 Mapping，收到 {type(src).__name__}")
+    path, sha = src.get("path"), src.get("sha256")
+    if not _nonempty_str(path) or not _nonempty_str(sha):
+        return None
+    row, sec = src.get("row"), src.get("section")
+    if row is None:
+        if sec is not None:
+            raise ValueError(
+                f"source 给了 section={sec!r} 却没有 row：section 是文件内的行内定位，"
+                "缺行号时它不能充当定位证据（要么补 row，要么文件级别就不记 section）")
+        return ("file", path.strip(), sha.strip())
+    if isinstance(row, bool) or not isinstance(row, int):
+        raise ValueError(f"source.row 必须是整数，收到 {row!r}")
+    return ("row", path.strip(), sha.strip(), row, sec)
+
+
+def _artifact_gap(sa: Mapping, sb: Mapping, ka, kb) -> str | None:
+    """两条记录**没**被判成同一产物的具体原因（判成了就返回 `None`）。
+
+    写事实，不写结论：调用方拿它填 `duplicate_evidence`，避免"artifact_equal=False"
+    这种只说结果不说理由的证据——上一轮的错误正是靠这种含糊才活下来。
+    """
+    if ka is not None and ka == kb:
+        return None
+    if ka is None or kb is None:
+        miss = [f"{t}.{f}" for t, s in (("a", sa), ("b", sb))
+                for f in ("path", "sha256") if not _nonempty_str(s.get(f))]
+        return "定位字段不足（缺 " + "、".join(miss) + "）⇒ 不能据此确认同一产物"
+    if ka[0] != kb[0]:
+        return (f"定位层级不同（{ka[0]} vs {kb[0]}）：文件级定位与行级定位"
+                "不是同一个产物")
+    if ka[1] != kb[1]:
+        return "path 不同"
+    if ka[2] != kb[2]:
+        return "path 相同但 sha256 不同：同名不同内容，不是同一份产物"
+    return "同一文件的不同行/分段（row 或 section 不同）⇒ 是两条记录，不是重复导出"
+
+
 def duplicate_verdict(a: Mapping, b: Mapping, *, summary_equal: bool) -> dict:
     """两条记录是否算**两次独立观测**。只看来源，不看指标摘要。
 
@@ -1335,11 +1409,15 @@ def duplicate_verdict(a: Mapping, b: Mapping, *, summary_equal: bool) -> dict:
     | 情形 | 判定 | 独立计数 |
     |---|---|---|
     | 候选定义不同 | `distinct` | 算 |
-    | 同一产物（path+sha 相同） | `confirmed_duplicate` / `same_artifact` | 不算 |
+    | 同一产物（`path` 与 `sha256` **均非空**且相同，`row`/`section` 同层相同） | `confirmed_duplicate` / `same_artifact` | 不算 |
     | 同 `run_id` + 摘要相同 + 两侧执行身份均 `recorded` | `confirmed_duplicate` / `rerun_same_conditions` | 不算 |
     | 同 `run_id` + 摘要相同 + 执行身份未达 `recorded` | `possible_duplicate` | **算**（只标记） |
     | 同 `run_id` + 摘要不同 | `distinct` + `contradiction` | 算（这是可复现性问题） |
     | `run_id` 不同/缺失 + 摘要相同 | `possible_duplicate` | **算**（只标记） |
+
+    产物定位的"缺字段"一律不算证据（0.5.0 的错）：`path` 相同但 `sha256` 两边都
+    没有、或一边没有、或 `sha256` 不同，都不能确认同一产物；文件级定位与行级定位
+    互不相认。理由逐条写进 `evidence["artifact_gap"]`。
 
     最后一行是关键：来源不同的两份摘要相同的记录，可能是两个不同实验的巧合，
     也可能是同一次运行的两次导出而产物没记来源。扣掉是**猜**，不扣也是猜——
@@ -1359,9 +1437,10 @@ def duplicate_verdict(a: Mapping, b: Mapping, *, summary_equal: bool) -> dict:
     same_run = ra is not None and ra == rb
     # 产物定位要比 row/section：pilot 的 `nested` 与 `sensitivity` 两段来自**同一行**，
     # 只比 (path, sha256, row) 会把两份不同模型的记录当成"同一产物"。
-    loc = ("path", "sha256", "row", "section")
-    same_art = (sa.get("path") is not None
-                and all(sa.get(k) == sb.get(k) for k in loc))
+    # 但"两侧字段都缺失"**不是**匹配证据：0.5.0 用 `path is not None` 当门槛，
+    # 于是 `{path: "result.json", sha256: None}` 两条会被判成同一产物（见 §10）。
+    ka, kb = _artifact_key(sa), _artifact_key(sb)
+    same_art = ka is not None and ka == kb
     # "同条件被产物记录"必须按 `recorded` 的定义整体判，而不是挑两项自查：
     # seed 来自产物 + 预算 `recorded` + **代码版本已知** + **数据有内容哈希**。
     # 0.4.0 只查了前两项，于是本批 239 条全是 `D-` 的情况下仍把两对判成
@@ -1381,6 +1460,11 @@ def duplicate_verdict(a: Mapping, b: Mapping, *, summary_equal: bool) -> dict:
         "data_id_kind": [ea.get("data_id_kind"), eb.get("data_id_kind")],
         "conditions_observed": bool(observed),
         "artifact_equal": bool(same_art),
+        "artifact_scope": [None if ka is None else ka[0],
+                           None if kb is None else kb[0]],
+        "artifact_key": [None if ka is None else list(ka),
+                         None if kb is None else list(kb)],
+        "artifact_gap": _artifact_gap(sa, sb, ka, kb),
         "summary_equal": bool(summary_equal),
         "paths": [sa.get("path"), sb.get("path")],
     }
@@ -1389,8 +1473,9 @@ def duplicate_verdict(a: Mapping, b: Mapping, *, summary_equal: bool) -> dict:
         return _verdict("distinct", None, ev,
                         "候选定义不同：摘要即使相同也不是同一实验")
     if same_art:
+        where = "整份文件" if ka[0] == "file" else f"第 {ka[3]} 行"
         return _verdict("confirmed_duplicate", "same_artifact", ev,
-                        "同一产物被登记了两次（path+sha256+row+section 全同）")
+                        f"同一产物被登记了两次（path+sha256 均非空且相同，{where}）")
     if same_run:
         if not summary_equal:
             ev["contradiction"] = True
@@ -1771,6 +1856,10 @@ def registry_digest() -> str:
             "confirm_duplicate_requires_recorded": True,
             "duplicate_states": list(DUPLICATE_STATES),
             "duplicate_kinds": list(DUPLICATE_KINDS),
+            # 0.6.0：产物定位的门槛（缺字段不算证据、文件级/行级不互认）也进指纹。
+            "artifact_scopes": list(ARTIFACT_SCOPES),
+            "artifact_key_fields": list(ARTIFACT_KEY_FIELDS),
+            "confirm_same_artifact_requires_nonempty_sha256": True,
         },
         "registry_version": REGISTRY_VERSION,
         "precheck_version": PRECHECK_VERSION,
@@ -1938,6 +2027,12 @@ register_topology(TopologySpec(
         "§13 留出 0/3、§14 全量 4/14，卡 M-b acf≤0.50；不接 bmdrt.py 主流程",
         "骨架与 测试数据/涂层、钝化 对到 1e-15；这两族只是同构，不构成通用证据",
         "未登记确定性预检：unknown 不等于 not_excluded",
+        # 登记合法 ≠ 准入通过：`circuit_registry` 只回答"这个候选能不能被表达与比较"，
+        # 不回答"该不该用它"。容性支路准入状态仍是 CIRCUIT_TOPOLOGY_ADMISSION.md
+        # §4.1.3/§4.1.4「参数层未验收」，生产中默认关。
+        "branch='capacitive' 是研究接口（admission §4.1.3/§4.1.4 参数层未验收；"
+        "nested_fit.py 默认 branch='parallel'；不在 bm_select 候选池）——"
+        "config 层可表达，不等于准入通过",
     ),
 ))
 
