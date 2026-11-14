@@ -76,6 +76,22 @@ AZ31 上 voigt 被结构排除、只剩 nested，只说明候选集剩一个，�
 用一个布尔要么丢掉真实残差，要么把它伪装成收敛。0.1.0 的 E3 约束
 （未收敛不得报 rms/acf）就是被这一条推翻的——它只适用于"根本没跑完"。
 
+候选身份为什么单列一档（0.3.0）
+--------------------------------
+`candidate_id` 是六个字段的哈希，哈希本身不携带"凭什么认为它指向那一次运行"。
+0.2.0 的映射脚本在目录名没命中时把 `init_profile` 回落成 `"uniform"`，
+于是 13 条记录拿到了**看起来合法、实际无依据**的身份键；更糟的是 AZ31 的
+2 条 voigt 行被算成 nested 的 id，与真实 nested 行撞车——voigt 的残差记到了
+nested 名下。所以 0.3.0 规定：
+
+- 查不到初始化就传 `INIT_UNKNOWN`，id 前缀变 `U-`，`identity_status=unconfirmed`；
+- `unconfirmed` 的候选**不能进** `candidate_set_manifest`；
+- 默认值只能是"不可用"，不能是"常见值"。
+
+六个描述块（0.3.0）各回答一个不能互相替代的问题，见 `observation_block`。
+其中 `budget_params`（实际数值）与 `budget_profile`（档名）必须分开：
+同一档名下 `target_accept` 可以是 0.98 也可以是 0.9。
+
 边界
 ----
 - 拓扑只登记 `voigt` / `nested` 两个；Warburg 与吸附登记为**未接线元件**
@@ -91,7 +107,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
-REGISTRY_VERSION = "0.2.0"        # 0.2：拆 run/sampling、预检绑候选、manifest 可校验
+REGISTRY_VERSION = "0.3.0"        # 0.3：身份等级 + param_estimate/ratio/noise_floor/predictive/budget_params
 PRECHECK_VERSION = "0.1.0"
 
 PRECHECK_STATES = ("excluded", "not_excluded", "unknown")
@@ -105,7 +121,28 @@ INTERPRETATIONS = ("reliable", "descriptive_only")
 #: 不适用（该配置没有这个量）/ 没算（能算但没跑）/ 算了但失败。
 NULL_REASONS = ("not_applicable", "not_computed", "failed")
 #: 单个候选的观测记录里允许出现、也允许缺席的指标名。
-OBSERVATION_METRICS = ("rms_rel", "acf", "rhat_max", "ess_min", "divergences")
+OBSERVATION_METRICS = ("rms_rel", "acf", "rhat_max", "ess_min", "divergences",
+                       "budget_params")
+#: 候选身份的**证据等级**。不是"完整度打分"，而是"凭什么认为这个 id 指向那一次运行"：
+#: - `recorded`  产物自身写明了全部六项（拓扑/元件/配置/初始化/预算/似然）；
+#: - `derived`   产物缺字段，但生成脚本唯一且代码路径可读（如 `nested_fit.py`
+#:               从不传 `init_values` ⇒ numpyro `init_to_uniform`）；
+#: - `unconfirmed` 生成者不可确定，或同一产物可能由多个脚本产出。
+#: 只有 `recorded`/`derived` 能进 manifest；`unconfirmed` 不许当身份键用。
+IDENTITY_STATES = ("recorded", "derived", "unconfirmed")
+#: 初始化档不可确认时的占位值。**不能**用 `uniform` 之类真实档名冒充——
+#: 默认回落成真实档名，正是 0.2.0 映射里 13 条记录身份错认的成因。
+INIT_UNKNOWN = "unknown"
+#: 噪声底的来源。三者不可互换：
+#: - `truth_forward`：数据与**真值拓扑正演**的差（只有合成谱能给）；
+#: - `same_data_estimate`：从残差自身估出来的底（与拟合共享数据，会低估）；
+#: - `not_available`：没有噪声底（真实谱无真值时的常态）。
+NOISE_FLOOR_SOURCES = ("truth_forward", "same_data_estimate", "not_available")
+#: 一次拟合**实际使用**的计算预算参数名。`budget_profile` 只是档名（`"standard"`），
+#: 两者不能互相顶替——`target_accept` 在档名相同的情况下可以差 0.98 vs 0.9。
+BUDGET_PARAM_KEYS = ("n_warmup", "n_samples", "num_chains",
+                     "target_accept", "max_tree_depth")
+BUDGET_PARAM_SOURCES = ("recorded", "derived_from_tier", "unavailable")
 EVIDENCE_STATES = ("identified", "weak_preference", "non_identifiable",
                    "model_inadequate", "insufficient_evidence")
 PRECHECK_LEVELS = ("L0", "L1", "L2")
@@ -225,6 +262,19 @@ class Candidate:
 
     `candidate_id` 覆盖全部这些字段，所以"同一拓扑换初始化"是**不同候选**，
     不会在 manifest 里被合并掉——钝化谱的默认初值与数据驱动初值，结论完全不同。
+
+    `identity_status`
+    ----------------
+    id 是哈希，哈希本身不告诉你"凭什么认为它指向那一次运行"。所以另带一列：
+
+    - `recorded`：产物写明了全部六项；
+    - `derived`：产物缺项，但生成脚本唯一且代码路径可读；
+    - `unconfirmed`：初始化不可确认 → **id 前缀改成 `U-`**，且不许进 manifest。
+
+    为什么要这条：0.2.0 的映射脚本在目录名没命中时把 `init_profile` 回落成
+    `"uniform"`，于是 13 条记录拿到了一个**看起来合法、实际无依据**的身份键，
+    其中 2 条 AZ31 的 voigt 行甚至被算成了 nested 的 id，与真实 nested 行撞车。
+    默认值必须是"不可用"，不能是"常见值"。
     """
     candidate_id: str
     topology_id: str
@@ -233,10 +283,17 @@ class Candidate:
     init_profile: str
     budget_profile: str
     likelihood_profile: str
+    identity_status: str = "recorded"
+    init_source: str = "recorded"
 
     @property
     def config_dict(self) -> dict:
         return dict(self.config)
+
+    @property
+    def comparable(self) -> bool:
+        """身份可复现才允许进候选集比较。`unconfirmed` 只能作文档性记录。"""
+        return self.identity_status in ("recorded", "derived")
 
     def describe(self) -> dict:
         return {
@@ -249,6 +306,9 @@ class Candidate:
             "init_profile": self.init_profile,
             "budget_profile": self.budget_profile,
             "likelihood_profile": self.likelihood_profile,
+            "identity_status": self.identity_status,
+            "init_source": self.init_source,
+            "comparable": self.comparable,
         }
 
 
@@ -274,7 +334,8 @@ def compute_candidate_id(topology_id: str, elements, config: Mapping,
         "likelihood": likelihood_profile,
     }
     blob = json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
-    return "C-" + hashlib.sha256(blob).hexdigest()[:10]
+    prefix = "U-" if init_profile == INIT_UNKNOWN else "C-"
+    return prefix + hashlib.sha256(blob).hexdigest()[:10]
 
 
 # --------------------------------------------------------------------------
@@ -334,20 +395,40 @@ def resolve_forward(ref: str):
 # --------------------------------------------------------------------------
 def make_candidate(topology_id: str, elements, config: Mapping | None = None,
                    *, init_profile: str, budget_profile: str = "standard",
-                   likelihood_profile: str = "perpoint-2pct") -> Candidate:
+                   likelihood_profile: str = "perpoint-2pct",
+                   identity_status: str | None = None,
+                   init_source: str = "recorded") -> Candidate:
     """构造并校验一个候选。
 
     `elements` 形如 `[("relaxation_unit", "hn"), ("relaxation_unit", "hn")]`
     或 `[("branch", "cpe")]`，同一槽位可以出现多次（voigt 的 K 个单元）。
+
+    `init_profile=INIT_UNKNOWN`（`"unknown"`）是合法输入，表示"这次运行的初始化
+    查不到"。它会把 `identity_status` 强制为 `unconfirmed`、id 前缀改成 `U-`，
+    并且**拒绝**被写进 manifest。不要为了让记录看起来完整而填一个真实档名。
     """
     topo = get_topology(topology_id)
     el = tuple((str(a), str(b)) for a, b in elements)
     cfg = dict(config or {})
 
-    if init_profile not in topo.init_profiles:
+    if init_profile == INIT_UNKNOWN:
+        if identity_status not in (None, "unconfirmed"):
+            raise ValueError(
+                f"init_profile={INIT_UNKNOWN!r} 与 identity_status={identity_status!r} "
+                "矛盾：初始化没查到时身份只能是 unconfirmed")
+        identity_status = "unconfirmed"
+    else:
+        if init_profile not in topo.init_profiles:
+            raise ValueError(
+                f"拓扑 {topology_id} 未登记 init_profile {init_profile!r}；"
+                f"已有 {sorted(topo.init_profiles)}。"
+                "查不到就传 INIT_UNKNOWN（会强制 U- 前缀），不要用近似档名顶替")
+        if identity_status is None:
+            identity_status = "recorded"
+
+    if identity_status not in IDENTITY_STATES:
         raise ValueError(
-            f"拓扑 {topology_id} 未登记 init_profile {init_profile!r}；"
-            f"已有 {sorted(topo.init_profiles)}")
+            f"identity_status={identity_status!r} 不在 {IDENTITY_STATES}")
 
     cand = Candidate(
         candidate_id=compute_candidate_id(topology_id, el, cfg, init_profile,
@@ -358,6 +439,8 @@ def make_candidate(topology_id: str, elements, config: Mapping | None = None,
         init_profile=init_profile,
         budget_profile=budget_profile,
         likelihood_profile=likelihood_profile,
+        identity_status=identity_status,
+        init_source=init_source,
     )
     validate_candidate(cand)
     return cand
@@ -530,6 +613,12 @@ def observation_block(*, candidate_id: str, run_status: str,
                       rhat_max: float | None = None, ess_min: float | None = None,
                       divergences: int | None = None,
                       param_stability: Mapping | None = None,
+                      param_estimate: Mapping | None = None,
+                      ratio: Mapping | None = None,
+                      noise_floor: Mapping | None = None,
+                      predictive: Mapping | None = None,
+                      budget_params: Mapping | None = None,
+                      truth_known: bool = False,
                       interpretation: str | None = None,
                       unavailable: Mapping | None = None,
                       notes: tuple = ()) -> dict:
@@ -565,6 +654,33 @@ def observation_block(*, candidate_id: str, run_status: str,
 
     `param_stability` 必须是"参数名 → 描述块"，每块含 `ci90` 或 `flag`，
     **不允许**传单个标量分数：把参数可信度压成一个数，等于又做了一次隐式判决。
+
+    六个描述块各回答一个**互不替代**的问题
+    ----------------------------------------
+    | 字段 | 回答的问题 | 不许做的事 |
+    |---|---|---|
+    | `param_estimate` | 点估计算到多少、离真值多远 | 真实谱伪造真值列 |
+    | `param_stability` | 后验区间稳不稳、参数可辨识吗 | 压成单一分数 |
+    | `ratio` | 残差相对噪声底几倍 | 不报 `n_used`/`n_total` |
+    | `noise_floor` | 噪声底从哪来 | 拿同数据估计冒充真值正演 |
+    | `predictive` | ELPD 能不能当样本外证据 | 不可用却不写原因 |
+    | `budget_params` | 这次实际用多少算力 | 拿档名（`"standard"`）顶替数值 |
+
+    `param_estimate`：`{参数名: {"estimate":..., "truth":..., "rel_err":...}}`。
+    给了 `truth` 才算 `rel_err`；`truth_known=False` 时出现 `truth` 直接报错——
+    真实谱没有真值，伪造这一列会让"参数恢复"变成自证。
+
+    `ratio`：`{"value":..., "n_used":..., "n_total":..., "noise_floor_source":...}`。
+    `n_used`/`n_total` 是**必填**：中位数依赖分母，历史上出现过收敛子集口径
+    3.36 与全样本口径 6.47 被混报。`n_used < n_total` 时自动标 `denominator_scope`。
+
+    `predictive`：`{"elpd":..., "se":..., "valid_for_comparison":bool, "reason":...}`。
+    `valid_for_comparison=False` 时 `reason` 非空——`sigma_from_data=True` 下
+    `elpd_loo` 不是 `p(Z_j|Z_{-j})`，这个事实必须跟着数字走。
+
+    `budget_params`：实际数值 + `source`。`"recorded"` 要求五个核心参数齐全；
+    `"derived_from_tier"` 表示产物只记档名、数值由代码推出（可复现性弱一档）；
+    `"unavailable"` 要写 `reason`。
     """
     if not isinstance(candidate_id, str) or not candidate_id:
         raise ValueError("observation.candidate_id 必须是非空字符串")
@@ -642,6 +758,13 @@ def observation_block(*, candidate_id: str, run_status: str,
                 raise ValueError(f"param_stability[{k!r}] 至少要给 ci90 或 flag")
             stab[str(k)] = {str(a): _jsonable(b) for a, b in v.items()}
 
+    est = _check_param_estimate(param_estimate, truth_known=truth_known,
+                                candidate_id=candidate_id)
+    floor = _check_noise_floor(noise_floor, candidate_id=candidate_id)
+    rat = _check_ratio(ratio, floor, candidate_id=candidate_id)
+    pred = _check_predictive(predictive, candidate_id=candidate_id)
+    bud = _check_budget_params(budget_params, candidate_id=candidate_id)
+
     return {
         "candidate_id": candidate_id,
         "run_status": run_status,
@@ -657,9 +780,172 @@ def observation_block(*, candidate_id: str, run_status: str,
             "interpretation": interp,
             "unavailable": unavail,
         },
+        "param_estimate": est,
         "param_stability": stab,
+        "ratio": rat,
+        "noise_floor": floor,
+        "predictive": pred,
+        "budget_params": bud,
         "notes": list(notes),
     }
+
+
+def _check_param_estimate(v, *, truth_known: bool, candidate_id: str):
+    """点估计 vs 真值。**真实谱不许有真值列**——没有真值就没有"偏差"。"""
+    if v is None:
+        return None
+    if not isinstance(v, Mapping):
+        raise ValueError("param_estimate 必须是 参数名→{estimate,truth?,rel_err?} 的映射")
+    out = {}
+    for k, blk in v.items():
+        if not isinstance(blk, Mapping):
+            raise ValueError(f"param_estimate[{k!r}] 必须是描述块，不能是标量")
+        item = {"estimate": _jsonable(blk.get("estimate"))}
+        has_truth = blk.get("truth") is not None
+        has_err = blk.get("rel_err") is not None
+        if (has_truth or has_err) and not truth_known:
+            raise ValueError(
+                f"候选 {candidate_id}：param_estimate[{k!r}] 带 "
+                f"{'truth' if has_truth else 'rel_err'}，但 truth_known=False。"
+                "真实谱没有真值，不能伪造这一列——参数恢复只在有真值的合成谱上成立")
+        if has_truth:
+            item["truth"] = _jsonable(blk["truth"])
+            if not has_err:
+                raise ValueError(
+                    f"候选 {candidate_id}：param_estimate[{k!r}] 给了 truth 却没给 rel_err")
+        if has_err:
+            # 只记了误差、没记真值也合法：产物常常只存 |fit/truth − 1|。
+            item["rel_err"] = float(blk["rel_err"])
+        if blk.get("flag") is not None:
+            item["flag"] = str(blk["flag"])
+        out[str(k)] = item
+    return out
+
+
+def _check_noise_floor(v, *, candidate_id: str):
+    if v is None:
+        return None
+    if not isinstance(v, Mapping):
+        raise ValueError("noise_floor 必须是 {value, source, note?} 的映射")
+    src = v.get("source")
+    if src not in NOISE_FLOOR_SOURCES:
+        raise ValueError(
+            f"候选 {candidate_id}：noise_floor.source={src!r} 不在 {NOISE_FLOOR_SOURCES}")
+    val = v.get("value")
+    if src == "not_available" and val is not None:
+        raise ValueError(f"候选 {candidate_id}：source=not_available 却给了 value")
+    if src != "not_available" and val is None:
+        raise ValueError(
+            f"候选 {candidate_id}：noise_floor.source={src!r} 却没有 value")
+    return {"value": None if val is None else float(val),
+            "source": str(src),
+            "note": str(v.get("note") or "")}
+
+
+def _check_ratio(v, floor, *, candidate_id: str):
+    """残差 / 噪声底。分母口径必须随数走，否则中位数无法复核。"""
+    if v is None:
+        return None
+    if not isinstance(v, Mapping):
+        raise ValueError("ratio 必须是 {value,n_used,n_total,noise_floor_source} 的映射")
+    val = v.get("value")
+    if val is None:
+        why = v.get("unavailable_reason")
+        if why not in NULL_REASONS:
+            raise ValueError(
+                f"候选 {candidate_id}：ratio 没有值时必须给 "
+                f"unavailable_reason ∈ {NULL_REASONS}")
+        return {"value": None, "unavailable_reason": str(why),
+                "n_used": None, "n_total": None, "denominator_scope": None}
+    n_used, n_total = v.get("n_used"), v.get("n_total")
+    if not isinstance(n_used, int) or not isinstance(n_total, int):
+        raise ValueError(
+            f"候选 {candidate_id}：ratio 报了值就必须给整数 n_used/n_total。"
+            "历史上出现过收敛子集 3.36 与全样本 6.47 被混报")
+    if not 0 <= n_used <= n_total:
+        raise ValueError(f"候选 {candidate_id}：ratio 的 n_used={n_used} 越界（n_total={n_total}）")
+    # `n_usable`：其中**后验诊断通过**的条数。文献/报告里的中位数常只在这部分上算
+    # （pilot 的 voigt 自由 σ：60 条都有比值，但只有 14 条收敛）。
+    # 不写它就等于默认"比值有定义 = 可以拿来做统计"，那正是被混报的地方。
+    n_usable = v.get("n_usable", n_used)
+    if not isinstance(n_usable, int) or not 0 <= n_usable <= n_used:
+        raise ValueError(
+            f"候选 {candidate_id}：ratio.n_usable={n_usable!r} 必须在 [0, {n_used}]")
+    src = v.get("noise_floor_source")
+    if src not in NOISE_FLOOR_SOURCES or src == "not_available":
+        raise ValueError(
+            f"候选 {candidate_id}：ratio 的 noise_floor_source={src!r} 无效——"
+            "没有噪声底就算不出比值")
+    if floor is not None and floor.get("source") != src:
+        raise ValueError(
+            f"候选 {candidate_id}：ratio 声明的底来源 {src!r} 与 "
+            f"noise_floor.source={floor.get('source')!r} 不一致")
+    return {"value": float(val), "n_used": n_used, "n_total": n_total,
+            "n_usable": n_usable,
+            "usable_rule": str(v.get("usable_rule") or "sampling_status==passed"),
+            "denominator_scope": ("all_runs" if n_usable == n_total
+                                  else "converged_subset"),
+            "noise_floor_source": str(src)}
+
+
+def _check_predictive(v, *, candidate_id: str):
+    """ELPD 的可用性必须和数值绑在一起走。"""
+    if v is None:
+        return None
+    if not isinstance(v, Mapping):
+        raise ValueError("predictive 必须是 {elpd,se,valid_for_comparison,reason} 的映射")
+    valid = v.get("valid_for_comparison")
+    if not isinstance(valid, bool):
+        raise ValueError(
+            f"候选 {candidate_id}：predictive.valid_for_comparison 必须显式布尔，"
+            "不能留空——'算了但不可用'与'可用'必须能区分")
+    reason = (v.get("reason") or "").strip()
+    if not valid and not reason:
+        raise ValueError(
+            f"候选 {candidate_id}：predictive.valid_for_comparison=False 必须给 reason"
+            "（逐点 σ 下 elpd_loo 不是 p(Z_j|Z_{-j})，这条要跟着数字走）")
+    return {"elpd": None if v.get("elpd") is None else float(v["elpd"]),
+            "se": None if v.get("se") is None else float(v["se"]),
+            "valid_for_comparison": valid,
+            "reason": reason}
+
+
+def _check_budget_params(v, *, candidate_id: str):
+    """实际预算数值。**档名不是数值**——`target_accept` 同档可差 0.98 vs 0.9。"""
+    if v is None:
+        return None
+    if isinstance(v, str):
+        raise ValueError(
+            f"候选 {candidate_id}：budget_params 收到字符串 {v!r}。"
+            "那是 budget_profile（档名），不是实际数值；两者不能互相顶替")
+    if not isinstance(v, Mapping):
+        raise ValueError("budget_params 必须是 {source, n_warmup?, ...} 的映射")
+    src = v.get("source")
+    if src not in BUDGET_PARAM_SOURCES:
+        raise ValueError(
+            f"候选 {candidate_id}：budget_params.source={src!r} 不在 {BUDGET_PARAM_SOURCES}")
+    if src == "unavailable":
+        why = v.get("reason")
+        if why not in NULL_REASONS:
+            raise ValueError(
+                f"候选 {candidate_id}：budget_params 不可用时 reason 必须在 {NULL_REASONS}")
+        return {"source": src, "reason": str(why)}
+    out = {"source": str(src)}
+    for k in BUDGET_PARAM_KEYS:
+        if v.get(k) is None:
+            continue
+        val = v[k]
+        if isinstance(val, bool) or not isinstance(val, (int, float)):
+            raise ValueError(
+                f"候选 {candidate_id}：budget_params[{k!r}]={val!r} 不是数值")
+        out[k] = float(val) if isinstance(val, float) else int(val)
+    if src == "recorded":
+        missing = [k for k in BUDGET_PARAM_KEYS if k not in out]
+        if missing:
+            raise ValueError(
+                f"候选 {candidate_id}：source=recorded 时预算参数必须齐全，缺 {missing}。"
+                "只记档名请用 derived_from_tier")
+    return out
 
 
 def sampling_status_from(*, run_status: str, rhat_max: float | None,
@@ -726,8 +1012,9 @@ def l1_outcome(*, converged: bool, init_explored: bool,
                budget_sufficient: bool = True) -> str:
     """L1 快速拟合的三种结局。
 
-    **永远不返回 `excluded`。** 单次快速拟合失败可能是初始化问题（钝化谱：
-    默认初值塌陷、数据驱动初值 13.1s 收敛），把它当结构排除会把整库的判定带偏。
+    **永远不返回 `excluded`。** 单次快速拟合失败可能是初始化问题（钝化 P1：
+    默认初值塌陷成 `n1=n_b=0.661` 的两个相同 CPE、R̂ 197.8；换成**真值初值**
+    能到 6.65%，但那是 oracle，不是生产可达的解法），把它当结构排除会把整库的判定带偏。
     只有 L0 的确定性判据能出 `excluded`。
     """
     if not budget_sufficient:
@@ -831,6 +1118,12 @@ def candidate_set_manifest(*, candidate_set_id: str, candidates,
     cands = list(candidates)
     if not cands:
         raise ValueError("候选集不能为空")
+    unconfirmed = [c.candidate_id for c in cands if not c.comparable]
+    if unconfirmed:
+        raise ValueError(
+            f"候选集里有身份不可复现的候选：{unconfirmed}。"
+            "`identity_status=unconfirmed`（或 init_profile=unknown）只能作文档性记录，"
+            "不能进冻结候选集——身份错了，后面的'谁更好'全部无意义")
     ids = [c.candidate_id for c in cands]
     if len(set(ids)) != len(ids):
         dup = [i for i in set(ids) if ids.count(i) > 1]
@@ -982,6 +1275,13 @@ def registry_digest() -> str:
             "interpretations": list(INTERPRETATIONS),
             "null_reasons": list(NULL_REASONS),
             "metrics": list(OBSERVATION_METRICS),
+            # 0.3.0：身份与四项描述块的枚举也进指纹。改了"什么算可复现身份"、
+            # 或加了新的缺失语义，manifest 必须失效——否则旧候选集会悄悄继承新语义。
+            "identity_states": list(IDENTITY_STATES),
+            "init_unknown": INIT_UNKNOWN,
+            "noise_floor_sources": list(NOISE_FLOOR_SOURCES),
+            "budget_param_keys": list(BUDGET_PARAM_KEYS),
+            "budget_param_sources": list(BUDGET_PARAM_SOURCES),
         },
         "registry_version": REGISTRY_VERSION,
         "precheck_version": PRECHECK_VERSION,
@@ -1085,7 +1385,9 @@ register_topology(TopologySpec(
         "L": "仅在 include_L=True 时采样",
     },
     init_profiles={
-        "uniform": "init_to_uniform（生产默认）",
+        "uniform": "init_to_uniform（生产默认；`bm_core.fit` 未给 init_values 时）",
+        "data_driven": "由 f/|Z| 统计量算出（pilot 的 `voigt_init`：min|Z|、"
+                       "τ 窗内均铺、φ=0.8），不读真值",
         "value": "init_to_value，需要调用方给约束空间初值",
     },
     slots=(

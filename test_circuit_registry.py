@@ -590,6 +590,156 @@ def case_l0_binds_candidate_config():
     return "预检绑定候选；旧签名（拓扑名+关键字）被拒"
 
 
+# ---------------------------------------------------------------- J 身份等级
+def case_init_unknown_is_not_a_real_profile():
+    c = _voigt(2, init_profile=R.INIT_UNKNOWN)
+    assert c.candidate_id.startswith("U-"), c.candidate_id
+    assert c.identity_status == "unconfirmed"
+    assert c.comparable is False
+    assert c.describe()["comparable"] is False
+    msg = _expect_raise(R.candidate_set_manifest, candidate_set_id="x",
+                        candidates=[c], likelihood_profile="p",
+                        budget_profile="b", seed_policy="s", created_before_fit=True)
+    assert "身份不可复现" in msg, msg
+    return "init 未知 → U- 前缀 + unconfirmed + 不可进 manifest"
+
+
+def case_unknown_init_cannot_claim_recorded():
+    msg = _expect_raise(_voigt, 2, init_profile=R.INIT_UNKNOWN,
+                        identity_status="recorded")
+    assert "矛盾" in msg, msg
+    return "init=unknown 却声称 recorded 被拒"
+
+
+def case_unregistered_init_rejected():
+    msg = _expect_raise(_voigt, 2, init_profile="nested_fit_default")
+    assert "未登记 init_profile" in msg, msg
+    return "没登记的档名（含近似名）被拒，只能传 INIT_UNKNOWN"
+
+
+def case_identity_levels():
+    c = _voigt(2, identity_status="derived", init_source="producer_code:x")
+    d = c.describe()
+    assert d["identity_status"] == "derived" and d["comparable"] is True
+    assert d["init_source"] == "producer_code:x"
+    msg = _expect_raise(_voigt, 2, identity_status="guessed")
+    assert "identity_status" in msg, msg
+    return "describe 带 identity_status/init_source/comparable；非法等级被拒"
+
+
+def case_voigt_has_data_driven_profile():
+    topo = R.get_topology("voigt")
+    assert "data_driven" in topo.init_profiles, list(topo.init_profiles)
+    c = _voigt(2, init_profile="data_driven")
+    assert c.candidate_id != _voigt(2, init_profile="uniform").candidate_id
+    return "voigt 登记 data_driven（pilot 的 voigt_init），与 uniform 是不同 id"
+
+
+# ------------------------------------------------------- K 六个描述块
+def case_budget_profile_is_not_params():
+    msg = _expect_raise(R.observation_block, candidate_id="C-1",
+                        run_status="completed", sampling_status="passed",
+                        rms_rel=1.0, acf=0.1, budget_params="standard")
+    assert "档名" in msg, msg
+    return "budget_params 收到档名字符串被拒（档名≠数值）"
+
+
+def case_budget_params_recorded_needs_all():
+    msg = _expect_raise(R.observation_block, candidate_id="C-1",
+                        run_status="completed", sampling_status="passed",
+                        rms_rel=1.0, acf=0.1,
+                        budget_params={"source": "recorded", "n_warmup": 2000})
+    assert "齐全" in msg, msg
+    ok = R.observation_block(candidate_id="C-1", run_status="completed",
+                             sampling_status="passed", rms_rel=1.0, acf=0.1,
+                             budget_params={"source": "derived_from_tier",
+                                            "tier": "quick", "n_warmup": 800,
+                                            "target_accept": 0.9})
+    assert ok["budget_params"]["target_accept"] == 0.9
+    return "recorded 缺项被拒；derived_from_tier 可部分，且保留实际 0.9"
+
+
+def case_ratio_needs_denominator():
+    msg = _expect_raise(R.observation_block, candidate_id="C-1",
+                        run_status="completed", sampling_status="passed",
+                        rms_rel=1.0, acf=0.1,
+                        ratio={"value": 3.36, "n_total": 60,
+                               "noise_floor_source": "truth_forward"})
+    assert "n_used" in msg, msg
+    b = R.observation_block(candidate_id="C-1", run_status="completed",
+                            sampling_status="passed", rms_rel=1.0, acf=0.1,
+                            ratio={"value": 3.36, "n_used": 60, "n_total": 60,
+                                   "n_usable": 14,
+                                   "noise_floor_source": "truth_forward"})
+    r = b["ratio"]
+    assert r["denominator_scope"] == "converged_subset" and r["n_usable"] == 14
+    return "ratio 缺 n_used 被拒；n_usable<n_total → converged_subset"
+
+
+def case_ratio_scope_all_runs():
+    b = R.observation_block(candidate_id="C-1", run_status="completed",
+                            sampling_status="passed", rms_rel=1.0, acf=0.1,
+                            ratio={"value": 0.94, "n_used": 60, "n_total": 60,
+                                   "noise_floor_source": "truth_forward"})
+    assert b["ratio"]["denominator_scope"] == "all_runs"
+    assert b["ratio"]["n_usable"] == 60
+    return "n_usable 缺省=n_used；60/60 → all_runs"
+
+
+def case_noise_floor_cannot_fake_source():
+    msg = _expect_raise(R.observation_block, candidate_id="C-1",
+                        run_status="completed", sampling_status="passed",
+                        rms_rel=1.0, acf=0.1,
+                        noise_floor={"value": 6.7, "source": "guess"})
+    assert "NOISE_FLOOR_SOURCES" in msg or "source" in msg, msg
+    msg = _expect_raise(R.observation_block, candidate_id="C-1",
+                        run_status="completed", sampling_status="passed",
+                        rms_rel=1.0, acf=0.1,
+                        noise_floor={"value": 6.7, "source": "not_available"})
+    assert "value" in msg, msg
+    b = R.observation_block(candidate_id="C-1", run_status="completed",
+                            sampling_status="passed", rms_rel=1.0, acf=0.1,
+                            noise_floor={"value": None, "source": "not_available"})
+    assert b["noise_floor"]["value"] is None
+    return "底来源非法/自相矛盾被拒；真实谱 not_available 合法"
+
+
+def case_param_estimate_truth_gate():
+    msg = _expect_raise(R.observation_block, candidate_id="C-1",
+                        run_status="completed", sampling_status="passed",
+                        rms_rel=1.0, acf=0.1, truth_known=False,
+                        param_estimate={"Rs": {"estimate": 267.0, "truth": 150.0,
+                                               "rel_err": 0.78}})
+    assert "真实谱没有真值" in msg, msg
+    b = R.observation_block(candidate_id="C-1", run_status="completed",
+                            sampling_status="passed", rms_rel=1.0, acf=0.1,
+                            truth_known=True,
+                            param_estimate={"Rs": {"rel_err": 2.65}})
+    assert b["param_estimate"]["Rs"]["rel_err"] == 2.65
+    assert "truth" not in b["param_estimate"]["Rs"]
+    return "真实谱带真值被拒；真有真值时只记 rel_err 也合法"
+
+
+def case_predictive_validity_must_be_explicit():
+    msg = _expect_raise(R.observation_block, candidate_id="C-1",
+                        run_status="completed", sampling_status="passed",
+                        rms_rel=1.0, acf=0.1,
+                        predictive={"elpd": -1898.5, "se": 3.0})
+    assert "布尔" in msg, msg
+    msg = _expect_raise(R.observation_block, candidate_id="C-1",
+                        run_status="completed", sampling_status="passed",
+                        rms_rel=1.0, acf=0.1,
+                        predictive={"elpd": -1898.5, "valid_for_comparison": False})
+    assert "reason" in msg, msg
+    b = R.observation_block(candidate_id="C-1", run_status="completed",
+                            sampling_status="passed", rms_rel=1.0, acf=0.1,
+                            predictive={"elpd": -1898.5, "valid_for_comparison": False,
+                                        "reason": "逐点 σ 不是留一预测"})
+    assert b["predictive"]["valid_for_comparison"] is False
+    assert b["predictive"]["reason"]
+    return "可用性必须显式；False 必须带原因"
+
+
 CASES = [
     ("A1 定义完整性", case_definitions),
     ("A2 未接线须给原因", case_unwired_needs_reason),
@@ -636,6 +786,18 @@ CASES = [
     ("I2 容性谱 not_excluded", case_l0_capacitive_not_excluded),
     ("I3 nested unknown", case_l0_nested_unknown),
     ("I4 预检绑定候选配置", case_l0_binds_candidate_config),
+    ("J1 init 未知不是档名", case_init_unknown_is_not_a_real_profile),
+    ("J2 unknown 不能自称 recorded", case_unknown_init_cannot_claim_recorded),
+    ("J3 近似档名被拒", case_unregistered_init_rejected),
+    ("J4 身份等级", case_identity_levels),
+    ("J5 voigt 的 data_driven", case_voigt_has_data_driven_profile),
+    ("K1 档名≠预算数值", case_budget_profile_is_not_params),
+    ("K2 预算参数齐全性", case_budget_params_recorded_needs_all),
+    ("K3 ratio 分母必填", case_ratio_needs_denominator),
+    ("K4 ratio 全样本口径", case_ratio_scope_all_runs),
+    ("K5 噪声底来源不可伪造", case_noise_floor_cannot_fake_source),
+    ("K6 真值列只许合成谱", case_param_estimate_truth_gate),
+    ("K7 ELPD 可用性显式", case_predictive_validity_must_be_explicit),
 ]
 
 
