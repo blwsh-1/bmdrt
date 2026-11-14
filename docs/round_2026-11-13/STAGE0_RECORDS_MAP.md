@@ -1,13 +1,19 @@
 # 阶段 0：历史产物的结构化映射（机器可读，v4）
 
-状态：**映射已按第三轮审计返工**。本轮只做三件事——确认重复的门槛提到 `recorded`、
-数据身份改用内容哈希、`--check` 校验整个快照。不跑拟合、不改生产、不进入阶段 1。
+状态：**映射已按第三轮审计返工；第五轮（registry 0.6.0）复核零影响**。v4 只做三件事——
+确认重复的门槛提到 `recorded`、数据身份改用内容哈希、`--check` 校验整个快照。
+不跑拟合、不改生产、不进入阶段 1。
+
+> 0.6.0 复核（第五轮审计）：`same_artifact` 原来只要求 `path is not None`，
+> 两条 `{"path": ..., "sha256": None}` 会被判成同一产物。修法与影响见 §3.1——
+> **本批 239 条一条都不受影响**（没有缺 `sha256` 的 `source`），
+> `--check` 在 0.6.0 下重跑仍 rc=0。
 
 产物：
 - `map_stage0_records.py`（v4，只读 `evidence/` 与原始谱，含身份完整性断言）
 - `out/stage0_records/{records.jsonl, coverage.json}` → 字节级副本在 `evidence/stage0_records/`
 - `evidence/stage0_records/MANIFEST.json`（含三份文件索引、注册表指纹、9 份原始证据与 63 份原始谱的 sha256）
-- `test_stage0_freeze.py`（8 条用例：快照完整性，实跑 **8/8**）
+- `test_stage0_freeze.py`（9 条用例：快照完整性 + 清单删字段，实跑 **9/9**）
 - 记录数 **239**，**独立 239**（严格口径 **237**），`confirmed_duplicate` **0**、
   `possible_duplicate` **2**
 
@@ -116,8 +122,8 @@ v4 的 `verify_frozen()` 分四层，任意一层不一致就返回非零：
 
 | 记录 | `duplicate_of` | 状态 | 依据 | 缺什么 |
 |---|---|---|---|---|
-| coating `standard_1113` | coating `standard` | `possible_duplicate` | 同候选、同 `run_id`（`D-d0be735882`）、`summary_equal=true`、`config.seed=0` 与 `budget_kw` 五项都由产物记录、数据同内容哈希 | **代码版本未记录** |
-| passivation `default_init` | passivation `1113` | `possible_duplicate` | 同上（`D-0b65245282`）；20.1 vs 31.4 s | **代码版本未记录** |
+| coating `standard_1113` | coating `standard` | `possible_duplicate` | 同候选、同 `run_id`（`D-f953bba8d3`）、`summary_equal=true`、`config.seed=0` 与 `budget_kw` 五项都由产物记录、数据同内容哈希 | **代码版本未记录** |
+| passivation `default_init` | passivation `1113` | `possible_duplicate` | 同上（`D-21214e4025`）；20.1 vs 31.4 s | **代码版本未记录** |
 
 这两对的人工核查结论没有变：`elapsed` 不同（57.9 vs 110.1）、指标逐位相同、输出目录不同、
 `with_voigt` 只影响参照不影响本候选后验 ⇒ 很可能是同条件重跑。**"很可能"不是"确认"。**
@@ -129,6 +135,37 @@ v4 的 `verify_frozen()` 分四层，任意一层不一致就返回非零：
   seed_source / budget_source / summary_equal / paths`，复核时不用翻代码。
 
 规则在 `duplicate_verdict()` 里，不在文档里。
+
+### 3.1 第五轮补的边界：`same_artifact` 的缺字段碰撞
+
+`same_artifact` 是判重里**唯一不经过 `recorded` 门槛**的一支（它有自己的依据：
+两条记录指向同一份产物）。0.5.0 给它写的条件是
+`sa.get("path") is not None and 四个定位字段全等`，于是：
+
+```python
+{"path": "result.json", "sha256": None}  vs  {"path": "result.json", "sha256": None}
+```
+
+被判成同一产物。两个 `None` 相等**不是**来源证据，这跟 0.4.0 拿摘要哈希当证据是
+同一个毛病。0.6.0 的 `_artifact_key()` 改成：
+
+| 条件 | 键 | 结论 |
+|---|---|---|
+| `path` 与 `sha256` 均非空、无 `row` | `("file", path, sha256)` | 文件级定位 |
+| `path` 与 `sha256` 均非空、有 `row` | `("row", path, sha256, row, section)` | 行级定位 |
+| 任一为空 | `None` | 不可参与确认 |
+
+前缀不同 ⇒ 文件级与行级永不相等；`section` 脱离 `row` 直接报错；不确认时
+`duplicate_evidence["artifact_gap"]` 写明缺哪个字段/哪里不同。
+
+**对判重结论的影响：零。** 239 条的 `source` 全部带 64 位 `sha256`，6 条 `*.nested.json`
+与 oracle 用文件级键、pilot 60 行与 AZ31 6 行用行级键，两对重跑仍是
+`possible_duplicate`（它们的 `path` 本来就不同，靠 `run_id` 配对）。
+`n_independent` 239 / `n_independent_strict` 237 / 唯一 `run_id` 237 都不变。
+
+但**239 行的 `run_id` 数值全部变了**：`software.registry_version` 在 `RUN_ID_BASIS` 里，
+0.5.0 → 0.6.0 改变了执行指纹（本批唯一改动就是这一个字段 + 派生出的 `run_id`）。
+这是设计后果：`run_id` 只在**同一 registry 版本内**可比，跨版本比号没有意义。
 
 ---
 
@@ -196,7 +233,7 @@ v2 那句"6 个 nested.json 只有 4 次唯一运行"当时只有 C 类依据（
 | 比值与噪声底 | ✅ | 226 条带完整分母与底来源 |
 | ELPD 可用性 | ✅ | 12 条带 `valid_for_comparison` + 原因 |
 | **独立观测计数** | ⚠️ 区间 | 239（上限）/ 237（严格）；0 条可确认重复 |
-| 快照可校验 | ✅ | `--check` 四层校验，`test_stage0_freeze.py` 8/8 |
+| 快照可校验 | ✅ | `--check` 四层校验，`test_stage0_freeze.py` 9/9 |
 
 **阶段 1 仍不进。** 硬缺口两条：233/239 条的预算数值由档名/脚本推出，
 **0 条记录代码版本**。做历史对照时"同档名"不等于"同预算"，更不等于"同代码"。

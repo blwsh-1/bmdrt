@@ -1,8 +1,8 @@
 {
   "note": "本目录的冻结副本清单。`records.jsonl` 由 map_stage0_records.py 从 evidence/ 的原始产物映射而来，不跑拟合。",
   "generated_by": "docs/round_2026-11-13/map_stage0_records.py",
-  "registry_version": "0.5.0",
-  "registry_digest": "9e7051c9b4cd720b",
+  "registry_version": "0.6.0",
+  "registry_digest": "43f2d2ac08f84c38",
   "n_records": 239,
   "n_independent": 239,
   "n_independent_strict": 237,
@@ -164,8 +164,8 @@
       "bytes": 3003
     },
     "records.jsonl": {
-      "sha256": "97c8e362e5d0efaf67645fdda059c6e05594b25732cbb36cdf64a1814b0b850d",
-      "bytes": 933925
+      "sha256": "ebd8f8a08f1ed071d16d595f76879fc53b06b67f359656b8395a468959604038",
+      "bytes": 934762
     }
   }
 }

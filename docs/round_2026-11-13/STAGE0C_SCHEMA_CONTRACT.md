@@ -2,6 +2,10 @@
 
 状态：**schema 层通过，判定逻辑未实现**。本轮不跑拟合、不接生产、不改任何门禁。
 
+> 0.6.0 修订（2026-11-14 第五轮审计后）：**`same_artifact` 不再把"缺失字段相等"
+> 当来源证据**——`path` 与 `sha256` 必须均非空，文件级与行级定位显式分层、互不相认。
+> 用例 71 → **75**，快照用例 8 → **9**。见 §10。
+>
 > 0.5.0 修订（2026-11-14 第四轮审计后）：**确认重复的门槛提到 `recorded`**（不再只用
 > seed+预算两项自查）、**数据身份改用内容哈希**（`DATA_ID_KINDS`）、**执行状态整块复算**
 > （不再只信 `run_id_status` 字符串）、`--check` 校验整个证据快照。用例 66 → **71**，
@@ -22,10 +26,10 @@
 
 产物：
 - `circuit_registry.py`（注册表 + 三个输出块 + 执行身份 + 重复判定 + 冻结契约，导入 0.05s，不加载 jax/numpyro）
-- `test_circuit_registry.py`（71 条用例，实跑 **71/71 通过**）
-- `test_stage0_freeze.py`（8 条快照完整性用例：篡改副本/清单/原始证据，实跑 **8/8**）
+- `test_circuit_registry.py`（75 条用例，实跑 **75/75 通过**）
+- `test_stage0_freeze.py`（9 条快照完整性用例：篡改副本/清单/原始证据/删字段，实跑 **9/9**）
 - `docs/round_2026-11-13/STAGE0A_SCHEMA_PRESSURE.md`（三谱压测，只读既有产物）
-- `docs/round_2026-11-13/STAGE0_RECORDS_MAP.md`（239 条历史记录映射，v4）
+- `docs/round_2026-11-13/STAGE0_RECORDS_MAP.md`（239 条历史记录映射，v4，0.6.0 下重跑 `--check` 通过）
 
 ## 1. 六类验收情形 → 用例对照
 
@@ -43,6 +47,7 @@
 | **重复判定的证据门槛** | `L6`–`L8` / `D1`–`D2` | 摘要相同 ≠ 重复；**确认重复要求两侧执行身份都是 `recorded`**；证据不足只标 `possible_duplicate` 且**不扣**独立数 |
 | **数据身份不是文件名** | `D3` / `D7` | 同名不同内容 ⇒ 两个 `run_id`；`ref_only` 不能升 `recorded`；自报等级与实际不符被拒 |
 | **执行状态不可自述** | `D6` | 有数据/seed/预算却标 `unconfirmed`、或原因指向错的要素，都被拒 |
+| **同一产物必须来源可定位** | `D8`–`D11` | 缺 `sha256`、同名不同内容、文件级/行级混比、行号不同，都**不能**确认同一产物；`section` 脱离 `row` 报错 |
 
 ## 2. schema 已强制的硬约束（可执行，不是注释）
 
@@ -106,6 +111,10 @@
     `_expected_status()` 复算 `run_id_status` 与 `unavailable_reason`（优先序
     `data` → `seed` → `budget`）。"要素齐全却自称缺失""缺 A 却报 B"都报错，
     `data_id_kind` 自报与实际不符也报错。
+24. **同一产物必须来源可定位**（0.6.0）：`_artifact_key()` 要求 `path` 与 `sha256`
+    **均非空**；有 `row` 走行级键 `("row", path, sha256, row, section)`，无 `row`
+    走文件级键 `("file", path, sha256)`，两类键**不互比**；`section` 脱离 `row`
+    直接报错。缺字段不构成证据——"两个 `None` 相等"不能推出同一产物。
 
 ## 3. 注册内容
 
@@ -120,7 +129,7 @@
 未接线不是"没测"，是"没有接点"。AZ31 那次失败正是接点问题（`R∥L` 必须在第二并联节点内，
 挂到 voigt 最外层串联只能把 noise=0 残差从 44.0% 降到 40.7%），所以这一档必须显式区分。
 
-`registry_digest = 9e7051c9b4cd720b`（本版，`0.5.0`）。manifest 会记录它，注册表被改可被发现；
+`registry_digest = 43f2d2ac08f84c38`（本版，`0.6.0`）。manifest 会记录它，注册表被改可被发现；
 `consistency_id`、观测 schema 常量（含身份枚举、缺失语义、预算参数名）、
 **执行身份的哈希口径（`RUN_ID_BASIS`/`RUN_ID_SCOPE`/`RUN_ID_MISSING`）与重复判定三态**、
 **数据身份等级（`DATA_ID_KINDS`）与"确认重复必须 `recorded`"这条口径**
@@ -292,3 +301,65 @@ v3 报的"237 独立"其实是严格口径，却写成了主口径。**现在两
 - runner（阶段 1）：未写，**Stage 0 不冻结**。
 - 阈值（`acf` 上限、区间宽度、`n_viable`）：仍一个没定。
 
+## 10. 0.6.0 修订（针对第五轮审计：`same_artifact` 的缺字段碰撞）
+
+### 10.1 确实是仍在的边界，而且与 0.5.0 同源
+
+0.5.0 把"确认重复"整体收紧到 `recorded`，但 `same_artifact` 这一支**绕过了那道门**：
+
+```python
+loc = ("path", "sha256", "row", "section")
+same_art = (sa.get("path") is not None and all(sa.get(k) == sb.get(k) for k in loc))
+```
+
+两条 `{"path": "result.json", "sha256": None}` 会因为"两个缺失值相等"被判成同一产物，
+直接进 `confirmed_duplicate`、从独立数里扣掉。这和 0.4.0 的错**是同一个毛病**：
+拿"字段相等"当"证据存在"。0.5.0 只在 `rerun_same_conditions` 那一支修了，这一支漏了。
+
+### 10.2 修法：定位键显式分层，缺字段不构成证据
+
+`_artifact_key(source)` 归一成两类**不可互比**的键：
+
+| 输入 | 键 | 何时可得 |
+|---|---|---|
+| `path` 与 `sha256` 均非空、无 `row` | `("file", path, sha256)` | 整份产物一条记录 |
+| `path` 与 `sha256` 均非空、有 `row` | `("row", path, sha256, row, section)` | 产物内多条记录 |
+| `path` 或 `sha256` 缺失 | `None` | **不能参与确认** |
+
+- 前缀不同 ⇒ 文件级与行级永不相等。"一条文件级、一条行级"不是同一个定位。
+- `section` 脱离 `row` 直接报错：分段定位没有行号就无从定位，静默忽略它等于
+  把同一 `path` 下两个不同分段的记录当成同一行。
+- 不确认时把原因逐条写进 `duplicate_evidence["artifact_gap"]`
+  （缺哪个字段 / sha256 不同 / 层级不同 / 行不同），不留 `artifact_equal=False` 这种只说结果的话。
+
+### 10.3 七种情形现在是分开的
+
+| `path` | `sha256` | `row`/`section` | 判定 |
+|---|---|---|---|
+| 同 | 两边都缺 | — | `possible_duplicate`（缺字段不算证据） |
+| 同 | 一边缺 | — | `possible_duplicate` |
+| 同 | 不同 | — | `possible_duplicate`（同名不同内容） |
+| 不同 | 同 | — | `possible_duplicate`（同内容不同路径是另一条来源） |
+| 同 | 同 | 行不同 / 分段不同 | `possible_duplicate`（是两条记录） |
+| 同 | 同 | 一条文件级、一条行级 | `possible_duplicate`（层级不同） |
+| 同 | 同 | 同层且相同 | `confirmed_duplicate` / `same_artifact` |
+
+### 10.4 用例与计数
+
+- `test_circuit_registry.py`：71 → **75**（`D8` 缺 sha256、`D9` 同名不同内容、
+  `D10` 文件级/行级分层、`D11` section 必须有 row）
+- `test_stage0_freeze.py`：8 → **9**（新增 `D5f`：清单删掉一个 `files` 条目必须失败
+  ——`verify_frozen` 第 2 层遍历的是清单自己的 `files`，少一条就少查一条，
+  真正抓住它的是第 1 层"重新生成的 MANIFEST 文本 vs 冻结字节"）
+- 239 条记录的**判重结论**没有一条受影响：本批没有缺 `sha256` 的 `source`，两对仍是
+  `possible_duplicate`，`n_independent` 239 / 严格 237 不变
+- 但 239 行的 `run_id` **全部变号**（`D-xxxxxxxxxx`）：`software.registry_version`
+  在 `RUN_ID_BASIS` 里，0.5.0 → 0.6.0 会改变执行指纹。这是设计后果，不是漂移——
+  唯一 `run_id` 仍是 237 个，去重关系不变。代价是"跨 registry 版本比较 run_id"
+  这件事本身不成立：版本不同即不同指纹。
+- `registry_digest`：`9e7051c9b4cd720b` → `43f2d2ac08f84c38`（`ARTIFACT_SCOPES` /
+  `ARTIFACT_KEY_FIELDS` / `confirm_same_artifact_requires_nonempty_sha256` 进指纹）
+
+### 10.5 仍未做的
+
+- `R-` 仍 0 条（卡代码版本）、runner 未写、阈值未定——与前两轮一致，**Stage 0 不冻结**。
