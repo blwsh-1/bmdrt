@@ -1,0 +1,38 @@
+{
+  "note": "本目录的冻结副本清单。`records.jsonl` 由 map_stage0_records.py 从 evidence/ 的原始产物映射而来，不跑拟合。",
+  "generated_by": "docs/round_2026-11-13/map_stage0_records.py",
+  "registry_version": "0.4.0",
+  "registry_digest": "0f59a5686c2d0c5b",
+  "n_records": 239,
+  "n_independent": 237,
+  "n_independent_strict": 237,
+  "duplicate_status": {
+    "distinct": 237,
+    "confirmed_duplicate": 2
+  },
+  "run_id_status": {
+    "derived": 239
+  },
+  "n_unique_run_id": 237,
+  "source_sha256": {
+    "evidence/stage0_three_spectra/coating__nested_capacitive_quick.nested.json": "08595c6636f9f8b32dd0fae48db14039cf910cacce71df63f301dc19b7a5261c",
+    "evidence/stage0_three_spectra/coating__nested_capacitive_standard.nested.json": "81b4a6b11a622fe4e2d28243d3de074dab3dada355ffe4b0b82e34ef83f71843",
+    "evidence/stage0_three_spectra/coating__nested_capacitive_standard_1113.nested.json": "7d6867525e1d9941196f0cc80e8064428c74d09e000dadb78d1451ffdf31928e",
+    "evidence/stage0_three_spectra/coating__nested_parallel_standard.nested.json": "60250c710799a272070d7c51dd886f9672f0edaac31f2eebde0ed473d2bce6b0",
+    "evidence/stage0_three_spectra/passivation__nested_capacitive_standard_1113.nested.json": "475c6b86058393e6ccc1dca770824e9861357b1089abf5a451897910e87bffb0",
+    "evidence/stage0_three_spectra/passivation__nested_capacitive_standard_default_init.nested.json": "f68098b87149d967f8c56bbba27ed087d5107ec657191b4940167dbfccfca0de",
+    "evidence/stage0_three_spectra/passivation__diag_truth_init.json": "7b1dc618af299b267346def2adf1bcaef7007b5697cc06ac84f69d6e834c6781",
+    "evidence/coating_voigt_pilot/results.jsonl": "a42c4efd5e02d0850233699333d5e5c169c3f209305c246e977ce73745537f1e",
+    "evidence/stage0_three_spectra/az31__m4_real_nested_az31.json": "994c7a2ed9bbd2b27fe894a6910aa3beedb2d887e15e32f99fc713c88533e991"
+  },
+  "files": {
+    "records.jsonl": {
+      "sha256": "f59fc861182b61838116928a1b951b376dc823a1095ef1c6c9ce9a568b0696c0",
+      "bytes": 899874
+    },
+    "coverage.json": {
+      "sha256": "0bcfa146577255147bcec7a78f5e3547f75ae6bd26ed83fef606046bfbfa7105",
+      "bytes": 2969
+    }
+  }
+}

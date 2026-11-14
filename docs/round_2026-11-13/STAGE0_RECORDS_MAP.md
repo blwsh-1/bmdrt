@@ -1,199 +1,236 @@
-# 阶段 0：历史产物的结构化映射（机器可读，v2）
+# 阶段 0：历史产物的结构化映射（机器可读，v3）
 
-状态：**映射已返工，身份层重做**。本轮不跑拟合、不改生产、不进入阶段 1。
+状态：**映射已按第二轮审计返工**。本轮只做两件事——去重判定改按来源、候选/执行两层身份分开。
+不跑拟合、不改生产、不进入阶段 1。
 
 产物：
-- `map_stage0_records.py`（v2，只读 `evidence/`，含身份完整性断言）
-- `out/stage0_records/{records.jsonl, coverage.json}` → 副本在 `evidence/stage0_records/`
-- 记录数 **239**（独立 **237**，重复 **2**）
+- `map_stage0_records.py`（v3，只读 `evidence/`，含身份完整性断言）
+- `out/stage0_records/{records.jsonl, coverage.json}` → 字节级副本在 `evidence/stage0_records/`
+- `evidence/stage0_records/MANIFEST.json`（**上一轮并不存在**，见 §8）
+- 记录数 **239**，独立 **237**（2 条确认重复），`possible_duplicate` **0**
 
 ---
 
-## 0. v2 修的是三个真实缺陷，不是措辞
+## 0. v3 改的两件事 + 顺带查出的两处身份错误
 
-上一版（v1）声称"13 条身份靠目录名推断"。核查后，那套推断**一次都没有命中**，
-而且掩盖了两个更严重的问题。三条都影响身份，不是文档笔误。
+### 0.1 去重不能拿"摘要哈希相同"当证据（审计 P0，成立）
 
-### 0.1 `_INIT_HINT` 从未命中，13 条记录的回落值是个真实档名
+v2 的 `_fingerprint()` 只哈希 `candidate_id + fit_observation + param_estimate`，
+`mark_duplicates()` 见指纹相同就直接写 `independent=false`。问题不是"这两条不该合并"，
+而是**这个函数证明不了它声称的事**：摘要相同只能说明几个字段相同，
+既可能是同一次运行的两次导出，也可能同种子重跑，还可能只是四舍五入后撞车。
 
-v1 写 `hint = _INIT_HINT.get(p.parent.name)`，但归档文件是平铺的
-`evidence/stage0_three_spectra/*.nested.json`，父目录恒为该目录名，
-`_INIT_HINT` 的键（`nested_fit_cap_standard` 等）一个都不匹配。
+v3 把判定移进 `circuit_registry.duplicate_verdict()`，输入是**来源**：
+产物 `path/sha256/row/section`、`run_id`、seed 及其证据等级（`artifact` /
+`producer_code` / `tier` / `absent`）、预算数值及其来源（`recorded` /
+`derived_from_tier`）。`summary_equal` 只是其中一个输入事实，不是结论。
 
-于是 `init_profile` 走 `hint or "uniform"` → **回落成 `"uniform"`**，
-标记 `default_assumed`。问题不在"没推断出来"，而在**回落值是一个合法档名**：
-`candidate_id` 照常算出一个 `C-…`，看起来是可复现身份，实际毫无依据。
+三态（`DUPLICATE_STATES`）：
 
-v2 的处理：查不到就 `INIT_UNKNOWN`，id 前缀变 `U-`，`identity_status=unconfirmed`，
-并且**禁止进 manifest**（用例 J1）。默认值只能是"不可用"，不能是"常见值"。
-
-### 0.2 AZ31 的 2 条 voigt 行被算成了 nested，id 与真实 nested 行撞车
-
-v1 写 `branch = r.get("branch") or "parallel"`。AZ31 的 voigt 行 `branch` 是 `None`
-（`voigt_row()` 返回 `branch=None, layers=K`），于是被当成 `nested/parallel/L=K`：
-
-| AZ31 行 | v1 记录成 | 后果 |
+| 状态 | 条件 | 计数 |
 |---|---|---|
-| `parallel/L=1` | nested parallel L1 | — |
-| `voigt K=1` | **nested parallel L1** | `candidate_id` 与上一行**完全相同** |
-| `parallel/L=2` | nested parallel L2 | — |
-| `voigt K=2` | **nested parallel L2** | 同上 |
+| `distinct` | 候选不同；或来源与摘要均不同；或**同条件但结果不同**（`contradiction`） | 算 |
+| `possible_duplicate` | 摘要相同但 seed/预算证据不足，或执行身份不同/不可判 | **算**（只标记） |
+| `confirmed_duplicate` | 同一产物；或同 `run_id` + 摘要相同 + seed 与预算都由产物记录 | 不算 |
 
-6 行只剩 4 个 id，`record_id` 也重复两条 ⇒ **voigt 的残差被记在 nested 名下**。
-这正是"名称统一了、模型却没法公平比较"的最坏形态。
+`independent` 是 `duplicate_status != "confirmed_duplicate"` 的**派生值**。
+证据不足时只标 `possible_duplicate`，`coverage.json` 另给 `n_independent_strict`
+（把 possible 也扣掉的对照口径）——本批两者都是 237，因为 0 条 possible。
 
-v2：按 `label` 分流，voigt 行走 `voigt` 拓扑；并加断言
-——`record_id` 唯一、同一 `candidate_id` 必须对应同一份六字段定义。现为 6 行 6 id。
+### 0.2 `candidate_id` 与执行身份是两层（审计 P1，成立）
 
-### 0.3 pilot 的 voigt 初始化标错
+`compute_candidate_id()` 哈希的是 `budget_profile`（档名 `"standard"`），
+**不含** `target_accept=0.98` 这类实际数值。同一次历史对照里
+`VALIDATION_STANDARD` 的 `standard` 是 0.98、`bm_select.BUDGETS["standard"]` 是 0.90——
+两个 `standard` 可以拿到同一个 `candidate_id`。
 
-`coating_voigt_pilot.py:118` 的 `voigt_init` 文档明写"**数据驱动**初值（只看 f、|Z|）"，
-v1 标成 `uniform`。v2 标 `data_driven`，并把该档补进注册表的 voigt（用例 J5）——
-否则 schema 连"这次用的是哪种初值"都写不下来。
+处置：**`candidate_id` 不动**，新增 `execution_identity()` → `run_id`：
 
-### 0.4 顺带查清的来源矛盾（曾经两边说法不一致）
+| 层 | 表示什么 | 进不进哈希 |
+|---|---|---|
+| `candidate_id`（`C-`） | 电路结构 + 配置 + 初始化 + 似然 + 预算**档名** | 模型定义 |
+| `run_id`（`R-`/`D-`） | 候选 + **数据** + seed + **实际预算数值** + 软件 | 执行条件 |
 
-- `fit_family_compare.py` **只写** `family_fit_results.json`，**不写** `.nested.json`。
-  所以 `out/_user_fit_nested/*.nested.json` **不是**它的产物，不能因为目录名叫
-  `_user_fit_nested` 就认定用了 `data_init`。
-- 每个 `nested.json` 的 `files.json` 记录它**自己写到哪**，`input` 记录
-  `f_min/f_max` 与含真值参数的文件名 ⇒ 原始目录与真值都能从**产物自身**复原。
-  实测：`*_1113.nested.json` 的 `files.json` 指向 `out/_user_fit_nested/`，
-  且 `elapsed_s` 不同（110.1s vs 57.9s）、指标逐位相同 ⇒ 是**同配置同 seed 的重跑**，
-  不是拷贝。这是可复现性证据，但**不是独立观测**（见 §2.2）。
-- 因此 `STAGE0_EVIDENCE_MAP.md` 里把 1113 归入"默认初值"列是**对的**，
-  而 v1 的 `_INIT_HINT["_user_fit_nested"]="data_driven"` 是**错的**。
+`R-` = 三者都来自产物；`D-` = 至少一项靠代码/档名推出；`None` = 缺要素，
+**不发号**（写 `unavailable_reason`，属 `RUN_ID_MISSING`）。
+
+`data` 必须进哈希：同一候选、同 seed、同预算下跑 60 条不同谱是 60 次执行，
+不写数据就会共享一个 `run_id`，去重时全被读成"同条件不同结果"（假告警，用例 L9）。
+
+`observation_block` 会**重算** `run_id` 并与观测里的 `budget_params` 对拍，
+预算事后被改动、或 id 从别处抄来，当场报错（用例 L5）。
+
+### 0.3 pilot 的 `sensitivity` 段不是 nested（v2 遗留，同类身份错误）
+
+代码是 `voigt_fit(f, Z, None, seed=0, init=voigt_init(f, Z))`
+（`coating_voigt_pilot.py:268`）——**voigt K=2、自由 σ、数据驱动初值**，
+只对 `verdict=unusable_sampling` 的 46 条重跑。v2 把它映射成 `nested/capacitive/L2`，
+于是这 46 条与真正的 `nested` 段**共享 `candidate_id`**，残差被记到了另一个模型名下。
+v3 按调用点分流，`sensitivity` 现在是 `voigt / data_driven / free-sigma`。
+
+### 0.4 voigt 初值：v2 把 v1 对的改错了
+
+`voigt_init` 的 docstring 写着"数据驱动初值"。但 `voigt_prod` / `voigt_fix2` 调的是
+`voigt_fit(f, Z, ...)`，**不传 `init`** ⇒ `voigt_fit:160` 把 `None` 传给
+`C.fit(init_values=None)` ⇒ `bm_core.fit:603` 只在 `if init_values:` 时设
+`init_to_value`，None 走 numpyro `init_to_uniform`。
+
+v1 标 `uniform` 是**对的**，v2 因为读 docstring 改成了 `data_driven`，把 120 行标反。
+v3 改回，并把规则键拆成 `voigt_default` / `voigt_data_init` 两条：
+**函数文档描述的是它自己，不是谁在调用它。**
+
+### 0.5 v2 修对的部分（保留）
+
+- `_INIT_HINT` 用 `p.parent.name` 从未命中（归档是平铺的），回落成真实档名 `"uniform"`
+  → 改为按代码路径判定，查不到就 `INIT_UNKNOWN`、`U-` 前缀、禁进 manifest。
+- AZ31 的 2 条 voigt 行被 `branch = r.get("branch") or "parallel"` 算成 nested，
+  与真实 nested 行 `candidate_id` 撞车 → 按 `label` 分流 + 断言 id 唯一。
 
 ---
 
-## 1. 初始化是怎么判定的（不再是猜档名）
+## 1. 初始化判定表（v3 更正后）
 
-判定依据是**生成脚本的代码路径**，逐条可引：
-
-| 产物 | 生成者 | 判定 | 依据 |
+| 产物 | 条数 | 生成者 / 调用点 | 判定 |
 |---|---|---|---|
-| `*.nested.json`（6 条） | `nested_fit.py` | `uniform` | `nested_fit.py:339` 调 `T.fit_top(...)` **不传 `init_values`**；`bm_top.fit_top:1006` 当 `init_params=None` ⇒ numpyro 默认 `init_to_uniform` |
-| AZ31 6 行 | `m4_real_nested_fit.py` | `uniform` | `S.fit_nested` / `S.fit_voigt` 均不传 `init_values` |
-| pilot voigt（120 条） | `coating_voigt_pilot.py:voigt_init` | `data_driven` | `R_inf=min\|Z\|`、`W=(zmax−zmin)/2`、τ 窗内均铺、`φ=0.8` |
-| pilot nested（106 条） | `coating_voigt_pilot.py:data_init` | `data_driven` | 由 `min\|Z\|`/`zmax`/中心频点算出 |
-| oracle（1 条） | `diag_passivation_init.py` | `value` | 直接读文件名里的真值参数 |
+| `*.nested.json` | 6 | `nested_fit.py:339` 不传 `init_values` | `uniform` |
+| AZ31 6 行 | 6 | `fit_nested:161` / `fit_voigt:105` 都不传 | `uniform` |
+| pilot `voigt_prod` / `voigt_fix2` | 120 | `voigt_fit(init=None)` | `uniform`（v3 改回） |
+| pilot `nested` | 60 | `voigt_fit`→`data_init`（:219） | `data_driven` |
+| pilot `sensitivity` | 46 | `voigt_fit(init=voigt_init)`（:268） | `data_driven`（v3 换拓扑） |
+| oracle | 1 | 读文件名里的真值参数 | `value` |
 
-全部 239 条 `identity_status = derived`（**没有一条是 `recorded`**：产物里确实没有 init 字段），
-`init_source` 逐条写明到函数级。`production_reachable=false` 的只有 1 条（oracle）。
+核对：`uniform 132 + data_driven 106 + value 1 = 239`。全部 `identity_status=derived`。
 
 ---
 
-## 2. 记录构成与两个易错点
-
-### 2.1 构成（239 条）
+## 2. 记录构成（239 条 / 15 个唯一候选）
 
 | 来源 | 条数 | 说明 |
 |---|---|---|
 | `*.nested.json` | 6 | 涂层 4（parallel/capacitive/quick/1113）、钝化 2（default/1113） |
-| oracle 诊断 | 1 | `truth_init`，初值用真值构造 |
-| pilot `results.jsonl` | 180 | 60 条 ×（voigt 自由 σ / voigt 固定 2% / nested） |
-| pilot 敏感性 | 46 | 46 条 unusable 换数据驱动初值后的复跑 |
-| AZ31 | 6 | 4 条 nested + 2 条 voigt |
-
-### 2.2 6 个 `nested.json` 只有 4 次唯一运行
-
-按（指标 + 参数 + 采样诊断）指纹比对：
-
-| 指纹 | 文件 | 结论 |
-|---|---|---|
-| 唯一 | coating quick | 独立 |
-| **成对** | coating standard = coating standard_1113 | 同配置同 seed 重跑 |
-| 唯一 | coating parallel | 独立 |
-| **成对** | passivation default = passivation 1113 | 同配置同 seed 重跑 |
-
-v2 把后两份标成 `independent=false` + `duplicate_of`。**计数时不能重复算**：
-若当成 6 次独立观测，等于把同一次运行的两份导出算两遍。
-
-### 2.3 `status` 撞名（v1 踩过）
-
-`nested.json` 的 `status` 恒为 `"exploratory"`，是**成熟度标签**，不是执行状态。
-v1 首跑直接把它映射成 `run_status`，6 条全判 `failed`，被 `observation_block` 拦住。
-v2 的执行状态只由"有没有 `metrics.rms_rel`"判断。
+| oracle 诊断 | 1 | `truth_init`，初值用真值构造，`production_reachable=false` |
+| pilot `voigt_prod` | 60 | voigt / 自由 σ / 默认初值 |
+| pilot `voigt_fix2` | 60 | voigt / 固定 2% / 默认初值 |
+| pilot `nested` | 60 | nested capacitive L2 / 逐点 2% / 数据驱动初值 |
+| pilot `sensitivity` | 46 | **voigt / 自由 σ / 数据驱动初值**，仅 unusable 行 |
+| AZ31 | 6 | 4 条 nested + 2 条 voigt，真实谱无真值 |
 
 ---
 
-## 3. 六项字段现在能装下了
+## 3. 重复判定：本批的两个确认案例
 
-0.3.0 把审计指出的六项纳入 schema，**语义各自独立**，不能互相顶替：
-
-| 字段 | 回答的问题 | 本批落地情况 |
-|---|---|---|
-| `param_estimate` | 估到多少、离真值多远 | **67 条**有值（估计 + 真值 + `rel_err`）；其余 172 条为 `null`（pilot 的 voigt/敏感性未存逐参数误差 166 条 + AZ31 6 条，真实谱无真值） |
-| `param_stability` | 后验区间稳不稳 | 仅 **6 条** `nested.json` 有 `ci90`；pilot 未存区间 |
-| `ratio` | 残差 / 噪声底 | **180 条**有值，全部带 `n_used`/`n_total`/`n_usable` |
-| `noise_floor` | 底从哪来 | 226 条 `truth_forward`、13 条 `not_available` |
-| `predictive` | ELPD 能否当样本外证据 | **12 条**有 `elpd`（6 条 `nested.json` 标 `False` 并给原因；6 条 AZ31 标 `True`，自由 σ）；其余 227 条为"未计算"并写明理由 |
-| `budget_params` | 实际用了多少算力 | 6 条 `recorded`（含 `target_accept=0.98`）、232 条 `derived_from_tier`、1 条 `unavailable` |
-
-### 3.1 `budget_profile` 与 `budget_params` 必须分开
-
-同一个档名 `standard`，`target_accept` 可以是 0.98（`VALIDATION_STANDARD` 硬编码）
-也可以是 0.9（`bm_select.BUDGETS`）。只记档名 ⇒ 事后无法复现。
-0.3.0 里传档名字符串给 `budget_params` 直接报错（用例 K1）。
-
-### 3.2 `ratio` 的分母：三种口径必须写明
-
-| 口径 | 定义 | 本批数 |
-|---|---|---|
-| `n_total` | 该批总条数 | 60 |
-| `n_used` | 比值有定义的条数 | 60（产物对全部 60 条都算了比值） |
-| `n_usable` | 其中**后验诊断通过**的条数 | voigt 自由 σ **15**、voigt 固定 σ **40**、nested **59** |
-
-`n_usable < n_total` 时自动标 `denominator_scope=converged_subset`。
-这一步是必要的：文档里 `ratio` 中位 3.36 是在**收敛子集**上算的，
-不写分母就会与全样本的 6.468 混报。
-
----
-
-## 4. 本轮发现的一处成文错误（已改）
-
-`COATING_VOIGT_PILOT_FINDINGS.md` §2 表里，nested 行写"收敛 **60/60**"，
-但同表 voigt 行的 14/60、40/60 用的是 `plot_pilot.py:18` 的口径
-（`R̂≤1.05` **且** `div==0`）。按同一口径，nested 是 **57/60**，不是 60/60。
-
-两种分母下的数（都已重算）：
-
-| 口径 | nested `ratio` 中位 | `acf` 中位 | `acf>0.5` |
+| 记录 | `duplicate_of` | `kind` | 证据 |
 |---|---|---|---|
-| 全 60 条 | 0.936 | 0.319 | 2/60 |
-| 收敛 57 条 | 0.935 | 0.322 | 2/57 |
+| coating `standard_1113` | coating `standard` | `rerun_same_conditions` | 同候选、`config.seed=0`**产物记录**、`budget_kw` 五项逐项相等、`metrics/diagnostics/params.median` 逐位相同、输出目录不同（`out/_user_fit_nested` vs `out/nested_fit_cap_standard`）、`elapsed` 57.9 vs 110.1、`with_voigt` 不同（只多跑一次参照，不改本候选后验） |
+| passivation `default_init` | passivation `1113` | `rerun_same_conditions` | 同上；20.1 vs 31.4 s |
 
-结论不受影响（差 0.001），但"60/60"这个数错了，已在 FINDINGS 更正。
-另注：registry 的 `sampling_status` 用 `R̂≤1.05 且 ESS≥100`（nested 59/59），
-与出图脚本的 `R̂+div` 是**两条规则**，两个数都要写明出处，不能混用。
+`with_voigt` 不同不影响本候选身份：它只是额外跑一次 voigt 参照，
+`candidate_id` 与 `run_id` 都不含它。两条因此 `run_id` 相同、`summary_equal=true`。
+
+**为什么这次可以扣，v2 不行**：v2 只有"摘要相同"；v3 有 `config.seed`（产物自己写的）
+和 `budget_kw` 五项（产物自己写的）——`conditions_observed=true`。
+若 seed 只是从代码推出的（`producer_code`），同条件同摘要也只标 `possible_duplicate`，
+不从分母里扣。规则在 `duplicate_verdict()` 里，不在文档里。
 
 ---
 
-## 5. 承载力判定
+## 4. 三类事实必须分开写（审计要求）
+
+同一句话可能来自三种强度完全不同的依据。本文件与 README 都按此标注：
+
+| 类别 | 含义 | 本批例子 |
+|---|---|---|
+| **A 产物核对** | 直接读产物字段，可逐位复核 | `config.seed=0`、`budget_kw` 数值、`metrics`、`elapsed_s`、`files.json`、`input.path` |
+| **B 代码路径推导** | 产物没写，但生成脚本唯一且调用点可读 | 初始化档（`init_values` 未传）、pilot/AZ31 的 seed（调用点写死 0）、预算数值（`BUDGETS` 档名 + 脚本覆盖） |
+| **C 脚本自动判定** | 映射脚本按 A/B 组合算出来的结论 | `candidate_id`、`run_id`、`duplicate_status`、`ratio` 的 `denominator_scope` |
+
+**C 类不能倒推 A 类。** 例如 `duplicate_status=confirmed_duplicate` 是 C 类结论，
+它的依据（A 类的 seed 与预算、`summary_equal`）逐项写在 `provenance.duplicate_evidence` 里，
+可以复核；而 `run_id` 是 C 类指纹，`run_id_status=derived` 明确说明它不是产物记录的。
+
+v2 文档里"6 个 nested.json 只有 4 次唯一运行，两对是同配置同 seed 重跑"这句，
+当时只有 C 类依据（摘要指纹）却写成了 A 类事实。**现在它才是 A 类**：seed 就在
+`config.seed` 里。v3 的措辞按此重写。
+
+---
+
+## 5. 六项字段的落地情况（v3 计数）
+
+| 字段 | 回答的问题 | 本批 |
+|---|---|---|
+| `param_estimate` | 估到多少、离真值多远 | **67 条**（pilot nested 60 + nested.json 6 + oracle 1）；172 条 `null`（pilot voigt/敏感性未存逐参数误差 166 + AZ31 6 条真实谱无真值） |
+| `param_stability` | 后验区间稳不稳 | **6 条**（只有 `nested.json` 存了 `ci90`） |
+| `ratio` | 残差 / 噪声底 | **226 条**，全部带 `n_used`/`n_total`/`n_usable`（v2 是 180：`sensitivity` 段原本漏了，v3 补上） |
+| `noise_floor` | 底从哪来 | 226 `truth_forward`、13 `not_available` |
+| `predictive` | ELPD 能否当样本外证据 | 12 条有 `elpd`（6 条 `nested.json` 标 `False` + 原因；6 条 AZ31 标 `True`，自由 σ） |
+| `budget_params` | 实际用了多少算力 | 6 `recorded`、**233** `derived_from_tier`（v2 是 232 + 1 `unavailable`；oracle 的预算其实写在 `diag_passivation_init.py:57-60`，v3 按代码推出，并带 `tier=standard` 与 `target_accept=0.98` 覆盖） |
+
+`sensitivity` 的 `ratio` 分母：`n_total=60`（全表行数）、`n_used=46`（实际重跑的行）、
+`n_usable=46`，`usable_rule` 里写明"只在 unusable 行上重跑"，不要读成收敛子集。
+
+---
+
+## 6. 执行身份落地情况
+
+| 项 | 本批 |
+|---|---|
+| 唯一 `run_id` | **237**（239 条记录，2 条确认重复共享） |
+| `run_id_status` | `derived` **239**、`recorded` **0** |
+| seed 来源 | `artifact` **6**（`nested.json` 的 `config.seed`）、`producer_code` **233** |
+| 预算来源（身份内） | `recorded` **6**、`derived_from_tier` **233** |
+| 代码版本已知 | **0** |
+
+**`recorded` 目前不可达**，原因具体：`nested.json` 记了 seed 与预算，但**没有一份产物
+记代码版本**（git sha / 包版本）。这是待补字段，不是把门槛降低的理由。
+`R-` 前缀因此一条都没发出去——这本身就是结论：历史记录的"执行身份"最高只能到"推出来的"。
+
+---
+
+## 7. 承载力判定
 
 | 能力 | 结论 | 依据 |
 |---|---|---|
-| 残差 / 采样状态 / 解释限定 | ✅ | 70 条"跑完但采样未过"全部入库且标 `descriptive_only` |
-| 候选身份 | ✅ 有条件 | 239 条全 `derived`（脚本级依据）；**没有一条 `recorded`** |
-| 参数估计 vs 真值 | ⚠️ 部分 | 67 条带 `rel_err`；172 条为 `null`（其中 166 条是产物没存逐参数误差，6 条是真实谱无真值） |
-| 比值与噪声底 | ✅ | 180 条带完整分母与底来源 |
+| 残差 / 采样状态 / 解释限定 | ✅ | 70 条"跑完但采样未过"入库且标 `descriptive_only` |
+| 候选身份（模型层） | ✅ 有条件 | 239 条全 `derived`；0 条 `recorded` |
+| 执行身份（条件层） | ⚠️ 部分 | 239 条 `derived`；seed 只有 6 条是产物记录；代码版本 0 条 |
+| 参数估计 vs 真值 | ⚠️ 部分 | 67 条带 `rel_err` |
+| 比值与噪声底 | ✅ | 226 条带完整分母与底来源 |
 | ELPD 可用性 | ✅ | 12 条带 `valid_for_comparison` + 原因 |
-| 预算可复现 | ⚠️ 部分 | 仅 6 条 `recorded`；232 条靠档名推数值，**重跑未必一致** |
-| 独立观测计数 | ✅ | 2 条重复已标 `independent=false` |
+| **独立观测计数** | ✅ | 三态判定；本批 2 条 `confirmed_duplicate`（证据逐项可复核）、0 条 `possible` |
 
-**阶段 1 仍不进。** 剩下的硬缺口只有一个但很实在：
-**232/239 条的预算参数是"由档名推出来的"，不是产物记录的**。
-在 runner 里这不算问题（新产物会把实际参数写进 JSON），
-但用它做历史对照时，"同档名"不等于"同预算"——`target_accept` 就是现成的反例。
+**阶段 1 仍不进。** 剩下的硬缺口没变：233/239 条的预算数值是"由档名/脚本推出来的"，
+且**没有一条记录代码版本**。做历史对照时"同档名"不等于"同预算"，更不等于"同代码"。
 
 ---
 
-## 6. 复算
+## 8. `MANIFEST.json`：上一轮确实不存在（更正）
+
+上一轮报告里提到 `evidence/stage0_records/MANIFEST.json`，实际**没有写入**——该目录
+当时只有 `records.jsonl`、`coverage.json`、`README.md`。审计读不到文件是对的。
+
+v3 补上，并且由脚本生成、不手写：
+
+```bash
+python docs/round_2026-11-13/map_stage0_records.py --freeze   # 写副本 + MANIFEST
+python docs/round_2026-11-13/map_stage0_records.py --check    # 与冻结副本逐字节比对
+```
+
+`MANIFEST.json` 含：两个文件的 `sha256`/字节数、`registry_version` 与 `registry_digest`、
+记录数/独立数/重复态、`run_id` 统计、以及 9 份原始证据的 `path → sha256`
+（可用 `git cat-file blob` 直接复核入库副本）。
+
+---
+
+## 9. 复算
 
 ```bash
 D:/autoeis_env/Scripts/python.exe docs/round_2026-11-13/map_stage0_records.py
+D:/autoeis_env/Scripts/python.exe docs/round_2026-11-13/map_stage0_records.py --check
+D:/autoeis_env/Scripts/python.exe test_circuit_registry.py
 ```
 
 脚本内置断言（不通过直接退出，不产出半成品）：
-`record_id` 唯一；同一 `candidate_id` 必须对应同一份六字段定义（这条正是 AZ31 撞车的防线）；
-`identity_status ∈ IDENTITY_STATES`；`init_profile=unknown` ⇒ id 前缀 `U-` 且不可比较。
+`record_id` 唯一；同一 `candidate_id` 必须对应同一份六字段定义；
+`identity_status ∈ IDENTITY_STATES`；`init_profile=unknown` ⇒ `U-` 且不可比较；
+`duplicate_status ∈ DUPLICATE_STATES` 且 `independent` 与它一致；
+`run_id` 与状态前缀一致，未发号必须有 `RUN_ID_MISSING` 里的原因。

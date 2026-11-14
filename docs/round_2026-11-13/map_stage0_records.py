@@ -1,43 +1,53 @@
 # -*- coding: utf-8 -*-
-"""map_stage0_records.py —— 把阶段 0 的历史产物映射成机器可读的观测记录（v2）。
+"""map_stage0_records.py —— 把阶段 0 的历史产物映射成机器可读的观测记录（v3）。
 
 目的**不是**让历史数据好看，而是检验 `circuit_registry.observation_block` 到底
 能不能承载它们。凡是映射不了的字段，一律进 `unmapped` 并写明原因，不丢、不改、
 不补猜。映射过程**不跑任何拟合**，只读 evidence/ 里的副本。
 
-v2 相对 v1 修的三个身份缺陷（v1 全部是错的，不是措辞问题）
-------------------------------------------------------------
-1. **目录名推断从未命中**。v1 用 `p.parent.name` 查 `_INIT_HINT`，但归档文件是
-   平铺的 `evidence/stage0_three_spectra/`，父目录恒为该目录名，一个都不匹配，
-   于是 `init_profile` 静默回落成 `"uniform"`、标记 `default_assumed`。
-   更糟的是回落值是一个**真实档名**，看起来合法 ⇒ 13 条记录拿到无依据的身份键。
-   v2 改成：初始化由**生成脚本的代码路径**判定；查不到就 `INIT_UNKNOWN`，
-   id 前缀变 `U-`，且不许进 manifest。
-2. **AZ31 的 2 条 voigt 行被算成了 nested**。v1 写 `branch = r.get("branch") or "parallel"`，
-   而 voigt 行的 `branch` 是 `None` ⇒ 落成 nested/parallel，与真实 parallel 行
-   `candidate_id` 完全撞车（6 行只剩 4 个 id，`record_id` 也重复）——
-   voigt 的残差被记到了 nested 名下。v2 按 `label` 分流并断言 id 唯一。
-3. **pilot 的 voigt 初始化标错**。`voigt_init` 的文档写明"数据驱动初值（只看 f、|Z|）"，
-   v1 标成 `uniform`。v2 标 `data_driven`，并把 voigt 的该档补进注册表。
+v3 相对 v2 改的两件事（都是审计指出的，不是措辞）
+-------------------------------------------------
+1. **去重不再用"摘要哈希相同"当证据**。v2 的 `_fingerprint()` 只哈希
+   candidate + fit_observation + param_estimate，因此"摘要相同"被直接写成了
+   `independent=false`——而摘要相同并不能证明两条记录来自同一次（甚至同一个）运行。
+   v3 把判定交给 `circuit_registry.duplicate_verdict()`：输入是**来源**
+   （产物 path/sha、seed 及其证据等级、预算数值及其来源、run_id），
+   `summary_equal` 只是其中一个输入事实。三态：`distinct` /
+   `possible_duplicate`（标记但**不**从独立样本数里扣）/ `confirmed_duplicate`。
+2. **新增执行身份 `run_id`**（`circuit_registry.execution_identity`）。
+   `candidate_id` 只哈希档名（`"standard"`），不含 `target_accept=0.98` 这类实际
+   数值；同名的两个 `standard` 因此可以拿到同一个 `candidate_id`。执行层单独记
+   候选 + 数据 + seed + 实际预算 + 软件，`candidate_id` 保持不动。
+
+v3 顺带修的两处**身份错误**（v2 遗留，与第 1 轮审计指出的是同一类）
+------------------------------------------------------------------
+3. **pilot 的 `sensitivity` 段不是 nested**。代码是
+   `voigt_fit(f, Z, None, seed=0, init=voigt_init(f, Z))`——voigt K=2、自由 σ、
+   数据驱动初值，只对 `verdict=unusable_sampling` 的样本重跑。v2 把它映射成
+   nested/capacitive/L2，于是这些行与真正的 `nested` 段**共享 candidate_id**，
+   残差被记到了另一个模型名下。
+4. **pilot 的 `voigt_prod` / `voigt_fix2` 用的是默认初始化**（`init=None`），
+   不是 `voigt_init`。`bm_core.fit:603` 只有 `if init_values:` 才设
+   `init_to_value`，None 走 numpyro `init_to_uniform`。v2 因为读到
+   `voigt_init` 的 docstring（"数据驱动初值"）就把 120 行标成 `data_driven`，
+   方向反了——**函数文档描述的是它自己，不是谁在调用它**。
 
 四条口径必须先说清
 ------------------
 - `run_status` 与 `sampling_status` 分开判：`nested.json` 的 `status` 是**成熟度标签**
   （恒 `"exploratory"`），不是执行状态，不可直连；R̂/ESS 在 `diagnostics` 里。
-- 初始化**不来自**目录名，来自生成脚本：
+- 初始化**不来自**目录名、也不来自函数 docstring，来自**调用点**：
   `nested_fit.py:339` 调 `T.fit_top(...)` 不传 `init_values`，`bm_top.fit_top:1006`
   把它当 `init_params=None` ⇒ numpyro 默认 `init_to_uniform`。
-  `fit_family_compare.py` 只写 `family_fit_results.json`，**不写** `.nested.json`，
-  所以 `out/_user_fit_nested/*.nested.json` 不是它的产物（这条曾被搞混）。
 - 每个 `nested.json` 的 `files.json` 记录它**自己写到哪**，`input` 记录 `f_min/f_max`
   与含真值参数的文件名 ⇒ 原始目录与真值都能从产物自身复原，不必靠 MANIFEST 猜。
-  MANIFEST 只用于交叉核对。
-- 同配置同 seed 的重跑会产生**逐位相同**的指标（`1113` 那两份 elapsed 不同、指标相同）
-  ⇒ 那是可复现性证据，但**不是独立观测**，计数时必须标 `independent=false`。
+- `1113` 那两份 `elapsed` 不同、指标逐位相同：同候选、同 seed（`config.seed=0`，
+  **产物自己写的**）、同预算数值 ⇒ 两次执行、一次信息，计数时合并。
 
 用法：
-    python docs/round_2026-11-13/map_stage0_records.py
-    python docs/round_2026-11-13/map_stage0_records.py --out out/stage0_records
+    python docs/round_2026-11-13/map_stage0_records.py            # 写到 out/
+    python docs/round_2026-11-13/map_stage0_records.py --freeze   # 另存冻结副本 + MANIFEST
+    python docs/round_2026-11-13/map_stage0_records.py --check    # 与冻结副本逐字节比对
 """
 from __future__ import annotations
 
@@ -47,7 +57,7 @@ import json
 import math
 import re
 import sys
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 
 import numpy as np
@@ -59,10 +69,13 @@ if str(_ROOT) not in sys.path:
 import circuit_registry as R  # noqa: E402
 
 EVID = _ROOT / "evidence" / "stage0_three_spectra"
+FROZEN = _ROOT / "evidence" / "stage0_records"
 
 
 # --------------------------------------------------------------------------
 # 生成脚本 → 初始化档。判定依据写在这里，不写"档名"了事。
+# 规则必须是**调用点**，不是函数 docstring：`voigt_init` 的 docstring 说自己是
+# 数据驱动的，但 pilot 的 `voigt_prod`/`voigt_fix2` 传的是 `init=None`。
 # --------------------------------------------------------------------------
 _INIT_RULES = {
     "nested_fit.py": dict(
@@ -79,16 +92,28 @@ _INIT_RULES = {
         init_note="bm_real.fit_one 未传 init_values ⇒ init_to_uniform。"
                   "调用链 fit_family_compare→bm_select.fit_voigt→bm_real.fit_one。",
     ),
-    "coating_voigt_pilot.py:voigt": dict(
+    "coating_voigt_pilot.py:voigt_default": dict(
+        init_profile="uniform",
+        init_source="producer_code:coating_voigt_pilot.py:voigt_fit(init=None)",
+        init_note="voigt_prod / voigt_fix2 调 voigt_fit(f,Z,...) 不传 init ⇒ "
+                  "voigt_fit:160 把 init=None 传给 C.fit(init_values=None) ⇒ "
+                  "bm_core.fit:603 只在 `if init_values:` 时设 init_to_value，"
+                  "None 走 numpyro init_to_uniform。"
+                  "**注意**：voigt_init 的 docstring 描述的是它自己，"
+                  "不是这两个调用点（v2 在这里读错了）。",
+    ),
+    "coating_voigt_pilot.py:voigt_data_init": dict(
         init_profile="data_driven",
-        init_source="producer_code:coating_voigt_pilot.py:voigt_init",
-        init_note="voigt_init 的 docstring 明写「数据驱动初值（只看 f、|Z|，不读真值）」："
-                  "R_inf=min|Z|、W=(zmax−zmin)/2、τ 窗内均铺、φ=0.8、v=1/K。",
+        init_source="producer_code:coating_voigt_pilot.py:voigt_fit(init=voigt_init)",
+        init_note="只有 sensitivity 段传了 init=voigt_init(f,Z)（:268）："
+                  "R_inf=min|Z|、W=(zmax−zmin)/2、τ 窗内均铺、φ=0.8、v=1/K，"
+                  "只看 f 与 |Z|，不读真值。",
     ),
     "coating_voigt_pilot.py:nested": dict(
         init_profile="data_driven",
         init_source="producer_code:coating_voigt_pilot.py:data_init",
-        init_note="data_init 由 f/|Z| 的 min/zmax/中心频点算出，不读真值。",
+        init_note="nested 段（:219）用 data_init 经 physical_to_unconstrained 传入；"
+                  "由 f/|Z| 的 min/zmax/中心频点算出，不读真值。",
     ),
     "diag_passivation_init.py": dict(
         init_profile="value",
@@ -213,6 +238,21 @@ def map_nested_json(p: Path) -> dict:
     truth, fam = _truth_from_input(inp) if inp else (None, None)
 
     bk = cfg.get("budget_kw") or {}
+    bp = {"source": "recorded", **{k: _num(bk.get(k)) for k in R.BUDGET_PARAM_KEYS}}
+    seed = None if cfg.get("seed") is None else int(cfg["seed"])
+    exe = R.execution_identity(
+        candidate_id=cand.candidate_id,
+        # `data.ref` 取**文件名**：完整路径是机器相关的，进 run_id 会让同一个实验
+        # 换台机器就换号。原样路径留在 `unmapped["input.path"]` 里可查。
+        data={"ref": Path(str(inp.get("path") or p.name)).name,
+              "f_min": _num(inp.get("f_min")), "f_max": _num(inp.get("f_max"))},
+        seed=seed,
+        # seed 在 `config.seed` 里，是产物自己写的 —— 这是本批唯一够到
+        # `artifact` 级别的执行要素；预算也是 recorded。但代码版本没记，
+        # 所以 run_id_status 只能到 derived。
+        seed_source="artifact:config.seed" if seed is not None else "absent",
+        budget_params=bp,
+        software={"producer": "nested_fit.py"})
     obs = R.observation_block(
         candidate_id=cand.candidate_id,
         run_status=run_status,
@@ -239,6 +279,7 @@ def map_nested_json(p: Path) -> dict:
                                       else "σ 非逐点估计"))},
         budget_params={"source": "recorded", **{k: _num(bk.get(k))
                                                 for k in R.BUDGET_PARAM_KEYS}},
+        execution=exe,
         interpretation="descriptive_only" if samp != "passed" else None,
         unavailable=({"acf": "not_computed"} if met.get("acf") is None else None),
         notes=(f"来源 {p.name}", f"原始输出目录 {_orig_dir(d)}"),
@@ -260,6 +301,8 @@ def map_nested_json(p: Path) -> dict:
         "voigt_reference": {"value": bool(d.get("voigt_reference")),
                             "reason": "该轮未开 --with-voigt，无跨族对照"},
         "elapsed_s": {"value": _num(d.get("elapsed_s")), "reason": "schema 无成本字段"},
+        "input.path": {"value": str(inp.get("path") or ""),
+                       "reason": "原样路径机器相关；进执行身份的是文件名"},
     }
     return {
         "record_id": f"nested_json::{p.name}",
@@ -270,7 +313,7 @@ def map_nested_json(p: Path) -> dict:
                       "init_recorded_in_artifact": False,
                       "init_note": rule["init_note"]},
         "observation": obs,
-        "provenance": {"production_reachable": True, "independent": True},
+        "provenance": {"production_reachable": True},
         "unmapped": unmapped,
     }
 
@@ -283,7 +326,31 @@ def _orig_dir(d: dict) -> str:
 # --------------------------------------------------------------------------
 # 2. oracle 初始化诊断
 # --------------------------------------------------------------------------
-def map_oracle(p: Path) -> dict:
+def _oracle_data(truth: dict) -> dict | None:
+    """oracle 产物**没有记录**它跑的是哪条谱（只有 `truth_init`）。
+
+    `diag_passivation_init.py:14-17` 里那条 PATH 与钝化 `nested.json` 的 `input.path`
+    是同一个文件。这里不直接断言"同一个"，而是**用产物里的真值参数反查**：
+    两者的 Q 在各自 w_ref 下换算后必须逐项相等（容差 1e-6），否则不给 data，
+    该记录的执行身份就停在 `unconfirmed`。
+    """
+    p = EVID / "passivation__nested_capacitive_standard_default_init.nested.json"
+    if not p.exists():
+        return None
+    inp = json.loads(p.read_text(encoding="utf-8")).get("input") or {}
+    t, fam = _truth_from_input(inp)
+    if fam != "passivation" or not t:
+        return None
+    common = [k for k in t if k in truth]
+    if len(common) < 4:
+        return None
+    if any(abs(t[k] / float(truth[k]) - 1.0) > 1e-6 for k in common):
+        return None
+    return {"ref": Path(str(inp.get("path"))).name, "f_min": _num(inp.get("f_min")),
+            "f_max": _num(inp.get("f_max"))}
+
+
+def map_oracle(p: Path, budgets: dict) -> dict:
     d = json.loads(p.read_text(encoding="utf-8"))
     t = d["truth_init"]
     rule = _INIT_RULES["diag_passivation_init.py"]
@@ -293,6 +360,16 @@ def map_oracle(p: Path) -> dict:
         init_profile="value", budget_profile="oracle_diag",
         likelihood_profile="perpoint-2pct",
         identity_status="derived", init_source=rule["init_source"])
+    # 预算：产物没记，但 `diag_passivation_init.py:57-60` 写的是
+    # BUDGETS["standard"] 的四键 + target_accept=0.98 覆盖 ⇒ 属"由代码推出"。
+    std = budgets.get("standard") or {}
+    bp = {"source": "derived_from_tier", "tier": "standard",
+          **{k: std[k] for k in R.BUDGET_PARAM_KEYS if k in std},
+          "target_accept": 0.98}
+    exe = R.execution_identity(
+        candidate_id=cand.candidate_id, data=_oracle_data(t.get("truth") or {}),
+        seed=0, seed_source="producer_code:diag_passivation_init.py:59 seed=0",
+        budget_params=bp, software={"producer": "diag_passivation_init.py"})
     return {
         "record_id": f"oracle_init::{p.name}",
         "source": {"path": str(p.relative_to(_ROOT)).replace("\\", "/"),
@@ -316,10 +393,12 @@ def map_oracle(p: Path) -> dict:
             ratio={"value": None, "unavailable_reason": "not_computed"},
             predictive={"elpd": None, "se": None, "valid_for_comparison": False,
                         "reason": "该诊断只报残差与参数，未算 elpd"},
-            budget_params={"source": "unavailable", "reason": "not_computed"},
-            interpretation="reliable"),
+            budget_params=bp,
+            execution=exe,
+            interpretation="reliable",
+            notes=("预算数值由 diag_passivation_init.py:57-60 推出"
+                   "（BUDGETS['standard'] + target_accept=0.98），不是产物记录",)),
         "provenance": {"production_reachable": False,
-                       "independent": True,
                        "note": "oracle 初值：用文件名真值构造，生产环境拿不到"},
         "unmapped": {"elapsed_s": {"value": _num(t.get("seconds")),
                                    "reason": "schema 无成本字段"}},
@@ -330,16 +409,28 @@ def map_oracle(p: Path) -> dict:
 # 3. 60 条 pilot
 # --------------------------------------------------------------------------
 _PILOT_SECS = {
-    "voigt_prod": dict(topology="voigt", K=2, rule="coating_voigt_pilot.py:voigt",
+    "voigt_prod": dict(topology="voigt", K=2, rule="coating_voigt_pilot.py:voigt_default",
                        likelihood="free-sigma"),
-    "voigt_fix2": dict(topology="voigt", K=2, rule="coating_voigt_pilot.py:voigt",
+    "voigt_fix2": dict(topology="voigt", K=2, rule="coating_voigt_pilot.py:voigt_default",
                        likelihood="perpoint-2pct"),
     "nested": dict(topology="nested", K=None, rule="coating_voigt_pilot.py:nested",
                    likelihood="perpoint-2pct"),
-    "sensitivity": dict(topology="nested", K=None, rule="coating_voigt_pilot.py:nested",
-                        likelihood="perpoint-2pct"),
+    # v3 更正：sensitivity 是 **voigt + 自由 σ + 数据驱动初值**，不是 nested。
+    "sensitivity": dict(topology="voigt", K=2,
+                        rule="coating_voigt_pilot.py:voigt_data_init",
+                        likelihood="free-sigma"),
 }
-_RATIO_KEY = {"voigt_prod": "ratio", "voigt_fix2": "fix2_ratio", "nested": "nested_ratio"}
+#: 比值字段的位置：`("row", key)` 在记录顶层，`("block", key)` 在段内。
+_RATIO_KEY = {"voigt_prod": ("row", "ratio"), "voigt_fix2": ("row", "fix2_ratio"),
+              "nested": ("row", "nested_ratio"), "sensitivity": ("block", "ratio")}
+
+
+def _ratio_value(row: dict, sec: str, blk: dict):
+    where = _RATIO_KEY.get(sec)
+    if where is None:
+        return None
+    src = row if where[0] == "row" else blk
+    return _num(src.get(where[1]))
 
 
 def _pilot_candidate(sec: str):
@@ -366,8 +457,8 @@ def map_pilot(p: Path) -> list:
     # 分母口径 = **比值实际定义在哪几行**。不能按"有没有 rms"算：
     # voigt 自由 σ 是 60/60 都记了 rms，但只有收敛的 14 条算出比值，
     # 按 rms 计会把 14/60 的收敛子集中位数冒充成 60 条的中位数。
-    n_used = {s: (sum(1 for r in rows if _num(r.get(_RATIO_KEY[s])) is not None)
-                  if s in _RATIO_KEY else 0)
+    n_used = {s: sum(1 for r in rows
+                     if _ratio_value(r, s, r.get(s) or {}) is not None)
               for s in _PILOT_SECS}
     # 其中后验诊断通过的条数（文档里的中位数就是在这部分上算的）
     n_usable = {s: sum(1 for r in rows
@@ -398,8 +489,23 @@ def map_pilot(p: Path) -> list:
                     continue
                 peak[k] = {"rel_err": float(v)}
             floor = _num(r.get("floor"))
-            rkey = _RATIO_KEY.get(sec)
-            rval = _num(r.get(rkey)) if rkey else None
+            rval = _ratio_value(r, sec, blk)
+            bp = {"source": "derived_from_tier", "tier": "pilot_kw",
+                  "n_warmup": 2000, "n_samples": 1000, "num_chains": 2,
+                  "target_accept": 0.98, "max_tree_depth": 10}
+            fl = [_num(x) for x in (r.get("f") or []) if _num(x) is not None]
+            exe = R.execution_identity(
+                candidate_id=cand.candidate_id,
+                data={"ref": str(r["name"]),
+                      "f_min": min(fl) if fl else None,
+                      "f_max": max(fl) if fl else None},
+                seed=0,
+                # 四个段的调用点都写死 seed=0（voigt_fit:152 默认参数、
+                # :223 与 :268 显式传），但 results.jsonl 里没有 seed 字段
+                # ⇒ 属"由代码推出"，不是产物记录。
+                seed_source="producer_code:coating_voigt_pilot.py",
+                budget_params=bp,
+                software={"producer": "coating_voigt_pilot.py"})
 
             obs = R.observation_block(
                 candidate_id=cand.candidate_id,
@@ -413,7 +519,10 @@ def map_pilot(p: Path) -> list:
                              else {"value": None, "source": "not_available"}),
                 ratio=({"value": rval, "n_used": n_used[sec], "n_total": n_total,
                         "n_usable": n_usable[sec],
-                        "usable_rule": "R̂≤1.05 且 ESS≥100（registry 的 sampling_status）",
+                        "usable_rule": ("只在 verdict=unusable_sampling 的行上重跑，"
+                                        "n_total=60 是全表行数、n_used=46 是重跑子集"
+                                        if sec == "sensitivity"
+                                        else "R̂≤1.05 且 ESS≥100（registry 的 sampling_status）"),
                         "noise_floor_source": "truth_forward"} if rval is not None
                        else {"value": None, "unavailable_reason": "not_computed"}),
                 predictive={"elpd": None, "se": None, "valid_for_comparison": False,
@@ -421,6 +530,7 @@ def map_pilot(p: Path) -> list:
                 budget_params={"source": "derived_from_tier", "tier": "pilot_kw",
                                "n_warmup": 2000, "n_samples": 1000, "num_chains": 2,
                                "target_accept": 0.98, "max_tree_depth": 10},
+                execution=exe,
                 interpretation=None if rms is None else "descriptive_only",
                 unavailable=unavail or None,
                 notes=(r["name"], f"pilot #{i}", f"verdict={r.get('verdict')}"),
@@ -434,8 +544,12 @@ def map_pilot(p: Path) -> list:
                               "init_recorded_in_artifact": False,
                               "init_note": rule["init_note"]},
                 "observation": obs,
-                "provenance": {"production_reachable": True, "independent": True},
+                "provenance": {"production_reachable": True},
                 "unmapped": {
+                    "seed": {"value": None,
+                             "reason": "results.jsonl 无 seed 字段；四个段在调用点都写死 "
+                                       "seed=0（voigt_fit:152 默认参数、:223/:268 显式传），"
+                                       "故 seed 记为 producer_code 而非 artifact"},
                     "param_max_err": {"value": _num(blk.get("param_max_err")),
                                       "reason": "全域最大值，是派生标量；"
                                                 "逐参数 rel_err 已进 param_estimate"},
@@ -488,6 +602,19 @@ def map_az31(budgets: dict) -> list:
                 init_source="producer_code:nested_fit.py")
 
         rhat = _num(r.get("rhat"))
+        bp = ({"source": "derived_from_tier", "tier": tier, **bw}
+              if bw else {"source": "unavailable", "reason": "not_computed"})
+        exe = R.execution_identity(
+            candidate_id=cand.candidate_id,
+            data={"ref": Path(str(d.get("spec") or p.name)).name,
+                  "f_min": _num(d.get("f_min")), "f_max": _num(d.get("f_max"))},
+            seed=0,
+            # m4_real_nested_fit.py:105/161 调 fit_voigt / fit_nested 都不传 seed，
+            # 两者的默认参数是 seed=0（bm_select:331 / :385）⇒ 由代码推出。
+            seed_source=("producer_code:bm_select.fit_voigt(seed=0)" if is_voigt
+                         else "producer_code:bm_select.fit_nested(seed=0)"),
+            budget_params=bp,
+            software={"producer": "evidence/nested_topology/m4_real_nested_fit.py"})
         obs = R.observation_block(
             candidate_id=cand.candidate_id, run_status="completed",
             sampling_status=_sampling(rhat, _num(r.get("ess_min"))),
@@ -505,6 +632,7 @@ def map_az31(budgets: dict) -> list:
             budget_params=({"source": "derived_from_tier", "tier": tier, **bw}
                            if bw else {"source": "unavailable",
                                        "reason": "not_computed"}),
+            execution=exe,
             interpretation="descriptive_only",
             unavailable={"rms_rel": "not_computed"},
             notes=("AZ31 真实谱，无真值；rms 记的是绝对 Ω，不是相对残差",),
@@ -520,8 +648,13 @@ def map_az31(budgets: dict) -> list:
                           "init_note": "AZ31 脚本未记录 init；两条调用链"
                                        "（fit_nested / fit_voigt）都不传 init_values"},
             "observation": obs,
-            "provenance": {"production_reachable": True, "independent": True},
+            "provenance": {"production_reachable": True},
             "unmapped": {
+                "seed": {"value": None,
+                         "reason": "AZ31 产物无 seed 字段；调用链 fit_nested(:161) / "
+                                   "fit_voigt(:105) 都不传 seed，默认 0"},
+                "spec": {"value": str(d.get("spec") or ""),
+                         "reason": "原样路径机器相关；进执行身份的是文件名"},
                 "rms_re": {"value": _num(r.get("rms_re")),
                            "reason": "绝对 Ω，与 rms_rel 不同口径，不可互换"},
                 "rms_im": {"value": _num(r.get("rms_im")), "reason": "同上"},
@@ -541,33 +674,69 @@ def map_az31(budgets: dict) -> list:
 # --------------------------------------------------------------------------
 # 5. 去重与汇总
 # --------------------------------------------------------------------------
-def _fingerprint(rec: dict) -> str:
+def _summary_fingerprint(rec: dict) -> str:
+    """**结果摘要**指纹。只作 `duplicate_verdict(summary_equal=)` 的一个输入事实，
+    单独出现时**不构成**任何重复结论——它证明不了两条记录来自同一次运行。"""
     o = rec["observation"]
-    blob = json.dumps({"c": rec["candidate"]["candidate_id"],
-                       "f": o["fit_observation"], "p": o.get("param_estimate")},
+    blob = json.dumps({"f": o["fit_observation"], "p": o.get("param_estimate"),
+                       "b": o.get("budget_params")},
                       sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
 
 
+def _identity_view(rec: dict) -> dict:
+    """`duplicate_verdict` 要的最小视图：候选 + 执行身份 + 产物出处。"""
+    return {"candidate_id": rec["candidate"]["candidate_id"],
+            "execution": rec["observation"]["execution"],
+            "source": rec["source"]}
+
+
 def mark_duplicates(recs: list) -> None:
-    """同配置、同 seed、指标逐位相同 ⇒ 同一次结果的两个导出，不是独立观测。"""
-    seen = {}
+    """按**来源**判重复。判定规则在 `circuit_registry.duplicate_verdict()` 里，
+    这里只负责遍历候选组并落盘结论。
+
+    只比同 `candidate_id` 的记录：跨候选的摘要相同不构成重复（另有可能只是巧合）。
+    三态落进 `provenance`：
+        duplicate_status / duplicate_kind / independent / duplicate_of /
+        duplicate_reason / duplicate_evidence
+    `independent` 是 `duplicate_status != "confirmed_duplicate"` 的派生值——
+    证据不足时**不扣**，只标 `possible_duplicate`。
+    """
     for r in recs:
-        fp = _fingerprint(r)
-        if fp in seen:
-            first = seen[fp]
-            r["provenance"]["independent"] = False
-            r["provenance"]["duplicate_of"] = first["record_id"]
-            r["provenance"]["duplicate_reason"] = (
-                "指标与参数逐位相同（同配置同 seed）；elapsed 不同 ⇒ 是重跑而非拷贝，"
-                "属可复现性证据，但计数时不能重复算")
-        else:
-            seen[fp] = r
+        r["provenance"].update(duplicate_status="distinct", duplicate_kind=None,
+                               independent=True, duplicate_of=None,
+                               duplicate_reason=None, duplicate_evidence=None)
+    fps = {id(r): _summary_fingerprint(r) for r in recs}
+    by_cand = defaultdict(list)
+    for r in recs:
+        by_cand[r["candidate"]["candidate_id"]].append(r)
+
+    for group in by_cand.values():
+        for i, a in enumerate(group):
+            for b in group[:i]:
+                v = R.duplicate_verdict(_identity_view(a), _identity_view(b),
+                                        summary_equal=fps[id(a)] == fps[id(b)])
+                if v["duplicate_status"] == "confirmed_duplicate":
+                    root = b["provenance"].get("duplicate_of") or b["record_id"]
+                    a["provenance"].update(
+                        duplicate_status="confirmed_duplicate",
+                        duplicate_kind=v["duplicate_kind"], independent=False,
+                        duplicate_of=root, duplicate_reason=v["reason"],
+                        duplicate_evidence=v["evidence"])
+                    break
+                if (v["duplicate_status"] == "possible_duplicate"
+                        and a["provenance"]["duplicate_status"] == "distinct"):
+                    a["provenance"].update(
+                        duplicate_status="possible_duplicate",
+                        duplicate_of=b["record_id"],
+                        duplicate_reason=v["reason"],
+                        duplicate_evidence=v["evidence"])
 
 
 def coverage(recs: list) -> dict:
     n = len(recs)
-    ind = [r for r in recs if r["provenance"].get("independent")]
+    dup = Counter(r["provenance"]["duplicate_status"] for r in recs)
+    n_conf, n_poss = dup.get("confirmed_duplicate", 0), dup.get("possible_duplicate", 0)
     ident = Counter(r["candidate"]["identity_status"] for r in recs)
     inits = Counter(r["candidate"]["init_profile"] for r in recs)
     init_src = Counter(r["candidate"]["init_source"].split(":")[0] for r in recs)
@@ -586,16 +755,45 @@ def coverage(recs: list) -> dict:
                   if r["observation"]["sampling_status"] != "passed"
                   and r["observation"]["fit_observation"]["rms_rel"] is not None)
     unmapped = Counter(k for r in recs for k in r["unmapped"])
+    exe = [r["observation"]["execution"] for r in recs]
+    run_ids = [e["run_id"] for e in exe if e.get("run_id")]
     return {
         "n_records": n,
-        "n_independent": len(ind),
-        "n_duplicate": n - len(ind),
+        # 主口径：只扣**已确认**的重复；possible 只标记。
+        "n_independent": n - n_conf,
+        "n_independent_strict": n - n_conf - n_poss,
+        "duplicate_status": dict(dup),
+        "duplicate_kind": dict(Counter(r["provenance"]["duplicate_kind"] for r in recs
+                                       if r["provenance"]["duplicate_kind"])),
+        "confirmed_duplicate_records": [
+            {"record_id": r["record_id"], "duplicate_of": r["provenance"]["duplicate_of"],
+             "kind": r["provenance"]["duplicate_kind"]}
+            for r in recs if r["provenance"]["duplicate_status"] == "confirmed_duplicate"],
+        "possible_duplicate_records": [
+            {"record_id": r["record_id"], "duplicate_of": r["provenance"]["duplicate_of"]}
+            for r in recs if r["provenance"]["duplicate_status"] == "possible_duplicate"],
+        "dedup_rule": "重复判定只看来源（产物 path/sha、seed 及证据等级、预算数值及来源、"
+                      "run_id），摘要相同只是输入之一；证据不足只标 possible_duplicate、"
+                      "不从独立数里扣（n_independent_strict 给出扣掉后的对照）",
         "run_status": dict(run),
         "sampling_status": dict(samp),
         "interpretation": dict(interp),
         "candidate_identity": dict(ident),
         "init_profile": dict(inits),
         "init_source_kind": dict(init_src),
+        "execution": {
+            "n_unique_run_id": len(set(run_ids)),
+            "run_id_status": dict(Counter(e["run_id_status"] for e in exe)),
+            "run_id_prefix": dict(Counter((e["run_id"] or "None")[:2] for e in exe)),
+            "seed_source_kind": dict(Counter(str(e["seed_source"]).split(":")[0]
+                                             for e in exe)),
+            "budget_source_in_identity": dict(Counter(e.get("budget_source") for e in exe)),
+            "unavailable_reason": dict(Counter(e.get("unavailable_reason") for e in exe)),
+            "software_code_version_known": sum(
+                1 for e in exe if (e.get("software") or {}).get("code_version")),
+            "note": "run_id 是**执行条件**指纹（候选+数据+seed+实际预算+软件），不是墙钟实例号；"
+                    "同条件重复执行共享同一个 run_id，实例由 source.path 区分",
+        },
         "budget_params_source": dict(bud),
         "noise_floor_source": dict(nf),
         "ratio_denominator_scope": dict(ratio_scope),
@@ -609,23 +807,17 @@ def coverage(recs: list) -> dict:
     }
 
 
-def main(argv=None) -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default="out/stage0_records")
-    args = ap.parse_args(argv)
-    outdir = (_ROOT / args.out) if not Path(args.out).is_absolute() else Path(args.out)
-    outdir.mkdir(parents=True, exist_ok=True)
+def _serialize(recs: list) -> str:
+    return "".join(json.dumps(r, ensure_ascii=False, allow_nan=False) + "\n"
+                   for r in recs)
 
-    import bm_select  # 只为 BUDGETS 的实际数值（AZ31 只记了档名）
-    budgets = {k: {kk: int(vv) if isinstance(vv, int) else float(vv)
-                   for kk, vv in v.items() if kk in R.BUDGET_PARAM_KEYS}
-               for k, v in bm_select.BUDGETS.items()}
 
+def build(budgets: dict) -> list:
     recs = []
     for p in sorted(EVID.glob("*.nested.json")):
         recs.append(map_nested_json(p))
     for p in sorted(EVID.glob("*diag_truth_init.json")):
-        recs.append(map_oracle(p))
+        recs.append(map_oracle(p, budgets))
     pilot = EVID.parent / "coating_voigt_pilot" / "results.jsonl"
     if pilot.exists():
         recs.extend(map_pilot(pilot))
@@ -633,7 +825,7 @@ def main(argv=None) -> int:
 
     mark_duplicates(recs)
 
-    # --- 身份完整性断言：这三条正是 v1 出错的地方 ---
+    # --- 身份完整性断言：这几条正是前几轮出错的地方 ---
     ids = [r["record_id"] for r in recs]
     assert len(set(ids)) == len(ids), \
         f"record_id 重复：{[k for k, v in Counter(ids).items() if v > 1]}"
@@ -649,22 +841,105 @@ def main(argv=None) -> int:
         assert r["candidate"]["identity_status"] in R.IDENTITY_STATES
         if r["candidate"]["init_profile"] == R.INIT_UNKNOWN:
             assert cid.startswith("U-") and not r["candidate"]["comparable"]
+        prov = r["provenance"]
+        assert prov["duplicate_status"] in R.DUPLICATE_STATES, prov
+        assert prov["independent"] == (prov["duplicate_status"]
+                                       != "confirmed_duplicate"), prov
+        assert r["observation"]["candidate_id"] == cid
+        exe = r["observation"]["execution"]
+        assert exe["run_id_status"] in R.IDENTITY_STATES
+        if exe["run_id_status"] == "unconfirmed":
+            assert exe["run_id"] is None and exe["unavailable_reason"] in R.RUN_ID_MISSING
+        else:
+            assert exe["run_id"], exe
+    return recs
 
-    with (outdir / "records.jsonl").open("w", encoding="utf-8", newline="\n") as fh:
-        for r in recs:
-            fh.write(json.dumps(r, ensure_ascii=False, allow_nan=False) + "\n")
+
+def _manifest(paths, cov: dict, recs: list) -> dict:
+    files = {}
+    for p in paths:
+        b = p.read_bytes()
+        files[p.name] = {"sha256": hashlib.sha256(b).hexdigest(), "bytes": len(b)}
+    return {
+        "note": "本目录的冻结副本清单。`records.jsonl` 由 map_stage0_records.py "
+                "从 evidence/ 的原始产物映射而来，不跑拟合。",
+        "generated_by": "docs/round_2026-11-13/map_stage0_records.py",
+        "registry_version": R.REGISTRY_VERSION,
+        "registry_digest": R.registry_digest(),
+        "n_records": cov["n_records"],
+        "n_independent": cov["n_independent"],
+        "n_independent_strict": cov["n_independent_strict"],
+        "duplicate_status": cov["duplicate_status"],
+        "run_id_status": cov["execution"]["run_id_status"],
+        "n_unique_run_id": cov["execution"]["n_unique_run_id"],
+        "source_sha256": {r["source"]["path"]: r["source"]["sha256"] for r in recs},
+        "files": files,
+    }
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--out", default="out/stage0_records")
+    ap.add_argument("--freeze", action="store_true",
+                    help=f"另存字节级副本到 {FROZEN.relative_to(_ROOT)} 并写 MANIFEST.json")
+    ap.add_argument("--check", action="store_true",
+                    help="只重算并比对冻结副本（不写任何文件）")
+    args = ap.parse_args(argv)
+    outdir = (_ROOT / args.out) if not Path(args.out).is_absolute() else Path(args.out)
+
+    import bm_select  # 只为 BUDGETS 的实际数值（AZ31 / oracle 只记了档名）
+    budgets = {k: {kk: int(vv) if isinstance(vv, int) else float(vv)
+                   for kk, vv in v.items() if kk in R.BUDGET_PARAM_KEYS}
+               for k, v in bm_select.BUDGETS.items()}
+
+    recs = build(budgets)
     cov = coverage(recs)
-    (outdir / "coverage.json").write_text(
-        json.dumps(cov, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
-        encoding="utf-8", newline="\n")
+    text = _serialize(recs)
+    cov_text = json.dumps(cov, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
 
-    print(f"记录 {cov['n_records']} 条（独立 {cov['n_independent']}，"
-          f"重复 {cov['n_duplicate']}）→ {outdir}")
+    if args.check:
+        man = json.loads((FROZEN / "MANIFEST.json").read_text(encoding="utf-8"))
+        bad = []
+        for name, text in (("records.jsonl", text), ("coverage.json", cov_text)):
+            got = hashlib.sha256(text.encode("utf-8")).hexdigest()
+            want = man["files"][name]["sha256"]
+            flag = "一致" if got == want else "不一致"
+            print(f"{name}: 重算 {got[:16]} / 冻结 {want[:16]} → {flag}")
+            if got != want:
+                bad.append(name)
+        if bad:
+            print(f"{bad} 与当前映射代码/原始产物不对应")
+            return 2
+        print(f"{cov['n_records']} 条，{cov['n_independent']} 独立，"
+              f"{cov['execution']['n_unique_run_id']} 个唯一 run_id")
+        return 0
+
+    outdir.mkdir(parents=True, exist_ok=True)
+    (outdir / "records.jsonl").write_text(text, encoding="utf-8", newline="\n")
+    (outdir / "coverage.json").write_text(cov_text, encoding="utf-8", newline="\n")
+
+    if args.freeze:
+        FROZEN.mkdir(parents=True, exist_ok=True)
+        for name in ("records.jsonl", "coverage.json"):
+            src = outdir / name
+            dst = FROZEN / name
+            dst.write_bytes(src.read_bytes())
+            assert dst.read_bytes() == src.read_bytes(), f"{name} 副本与源不一致"
+        man = _manifest([FROZEN / "records.jsonl", FROZEN / "coverage.json"], cov, recs)
+        (FROZEN / "MANIFEST.json").write_text(
+            json.dumps(man, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
+            encoding="utf-8", newline="\n")
+        print(f"冻结副本 + MANIFEST → {FROZEN}")
+
+    print(f"记录 {cov['n_records']} 条（独立 {cov['n_independent']}；"
+          f"严格口径 {cov['n_independent_strict']}）→ {outdir}")
+    print("重复:", cov["duplicate_status"], cov["duplicate_kind"])
     print("run_status:", cov["run_status"])
     print("sampling_status:", cov["sampling_status"])
     print("identity:", cov["candidate_identity"])
     print("init_profile:", cov["init_profile"])
     print("init 判定依据:", cov["init_source_kind"])
+    print("执行身份:", cov["execution"])
     print("budget_params 来源:", cov["budget_params_source"])
     print("noise_floor 来源:", cov["noise_floor_source"])
     print("ratio 分母口径:", cov["ratio_denominator_scope"])

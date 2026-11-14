@@ -1,7 +1,28 @@
 {
   "n_records": 239,
   "n_independent": 237,
-  "n_duplicate": 2,
+  "n_independent_strict": 237,
+  "duplicate_status": {
+    "distinct": 237,
+    "confirmed_duplicate": 2
+  },
+  "duplicate_kind": {
+    "rerun_same_conditions": 2
+  },
+  "confirmed_duplicate_records": [
+    {
+      "record_id": "nested_json::coating__nested_capacitive_standard_1113.nested.json",
+      "duplicate_of": "nested_json::coating__nested_capacitive_standard.nested.json",
+      "kind": "rerun_same_conditions"
+    },
+    {
+      "record_id": "nested_json::passivation__nested_capacitive_standard_default_init.nested.json",
+      "duplicate_of": "nested_json::passivation__nested_capacitive_standard_1113.nested.json",
+      "kind": "rerun_same_conditions"
+    }
+  ],
+  "possible_duplicate_records": [],
+  "dedup_rule": "重复判定只看来源（产物 path/sha、seed 及证据等级、预算数值及来源、run_id），摘要相同只是输入之一；证据不足只标 possible_duplicate、不从独立数里扣（n_independent_strict 给出扣掉后的对照）",
   "run_status": {
     "completed": 239
   },
@@ -17,25 +38,46 @@
     "derived": 239
   },
   "init_profile": {
-    "uniform": 12,
+    "uniform": 132,
     "value": 1,
-    "data_driven": 226
+    "data_driven": 106
   },
   "init_source_kind": {
     "producer_code": 239
   },
+  "execution": {
+    "n_unique_run_id": 237,
+    "run_id_status": {
+      "derived": 239
+    },
+    "run_id_prefix": {
+      "D-": 239
+    },
+    "seed_source_kind": {
+      "artifact": 6,
+      "producer_code": 233
+    },
+    "budget_source_in_identity": {
+      "recorded": 6,
+      "derived_from_tier": 233
+    },
+    "unavailable_reason": {
+      "null": 239
+    },
+    "software_code_version_known": 0,
+    "note": "run_id 是**执行条件**指纹（候选+数据+seed+实际预算+软件），不是墙钟实例号；同条件重复执行共享同一个 run_id，实例由 source.path 区分"
+  },
   "budget_params_source": {
     "recorded": 6,
-    "unavailable": 1,
-    "derived_from_tier": 232
+    "derived_from_tier": 233
   },
   "noise_floor_source": {
     "not_available": 13,
     "truth_forward": 226
   },
   "ratio_denominator_scope": {
-    "null": 59,
-    "converged_subset": 180
+    "null": 13,
+    "converged_subset": 226
   },
   "predictive_valid_for_comparison": {
     "False": 233,
@@ -52,10 +94,13 @@
     "derived.L_ad_H": 6,
     "voigt_reference": 6,
     "elapsed_s": 7,
+    "input.path": 6,
+    "seed": 232,
     "param_max_err": 226,
     "verdict": 226,
     "sec": 226,
     "RsR1": 226,
+    "spec": 6,
     "rms_re": 6,
     "rms_im": 6,
     "rel_med": 6,

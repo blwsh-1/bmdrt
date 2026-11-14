@@ -2,6 +2,11 @@
 
 状态：**schema 层通过，判定逻辑未实现**。本轮不跑拟合、不接生产、不改任何门禁。
 
+> 0.4.0 修订（2026-11-14 第三轮审计后）：新增**执行身份**（`run_id`）与**重复判定三态**
+> （`duplicate_verdict`）。`candidate_id` 定义**未动**。用例 57 → **66**。见 §8。
+> 同时推翻 0.3.0 的一处判定：pilot 的 `voigt_prod`/`voigt_fix2` 是**默认初始化**，
+> 0.3.0 标成 `data_driven` 是读函数 docstring 读错了（§8.3）。
+>
 > 0.3.0 修订（2026-11-14 第二轮审计后）：候选**身份等级**、六项描述块
 > （`param_estimate` / `ratio` / `noise_floor` / `predictive` / `budget_params`、
 > 沿用 `param_stability`）。用例 45 → **57**。修订清单见 §7。
@@ -11,10 +16,10 @@
 > （E3 与 I 段签名），**不是新增测试掩盖旧失败**。
 
 产物：
-- `circuit_registry.py`（注册表 + 三个输出块 + 冻结契约，导入 0.05s，不加载 jax/numpyro）
-- `test_circuit_registry.py`（57 条用例，实跑 **57/57 通过**）
+- `circuit_registry.py`（注册表 + 三个输出块 + 执行身份 + 重复判定 + 冻结契约，导入 0.05s，不加载 jax/numpyro）
+- `test_circuit_registry.py`（66 条用例，实跑 **66/66 通过**）
 - `docs/round_2026-11-13/STAGE0A_SCHEMA_PRESSURE.md`（三谱压测，只读既有产物）
-- `docs/round_2026-11-13/STAGE0_RECORDS_MAP.md`（239 条历史记录映射，v2）
+- `docs/round_2026-11-13/STAGE0_RECORDS_MAP.md`（239 条历史记录映射，v3）
 
 ## 1. 六类验收情形 → 用例对照
 
@@ -28,6 +33,8 @@
 | 真实谱证据不足、不得误报 | `F1` / `F4` | 真实谱单候选 → `insufficient_evidence`；无真值时 `model_inadequate` 直接报错 |
 | **候选身份不可复现** | `J1`–`J5` | `init_profile=unknown` → `U-` 前缀 + `unconfirmed` + **禁止进 manifest** |
 | **六项描述块语义独立** | `K1`–`K7` | 档名≠数值、分母必填、真值列只许合成谱、ELPD 可用性必须显式 |
+| **执行身份与模型身份分层** | `L1`–`L5` / `L9` | 同档名不同预算数值 ⇒ 同 `candidate_id`、不同 `run_id`；缺 seed/预算/数据不发号；`run_id` 由观测预算重算复核 |
+| **重复判定的证据门槛** | `L6`–`L8` | 摘要相同 ≠ 重复；证据不足只标 `possible_duplicate` 且**不扣**独立数 |
 
 ## 2. schema 已强制的硬约束（可执行，不是注释）
 
@@ -68,6 +75,17 @@
     `truth` 或 `rel_err` 直接报错；`noise_floor.source` 非法、或 `not_available`
     却带 `value`，都报错；`predictive.valid_for_comparison` 必须是显式布尔，
     为 `False` 时必须给 `reason`。
+18. **执行身份与模型身份分层**：`candidate_id` 只含模型定义与预算**档名**；
+    `run_id` = 候选 + 数据 + seed + **实际预算数值** + 软件。`R-` 要求 seed 来自产物、
+    预算 `recorded`、代码版本已知；`D-` 为推导；缺任一项**不发号**（`None` +
+    `RUN_ID_MISSING` 原因）。候选为 `U-` 时不许发 `run_id`。
+19. **`run_id` 可复核**：`observation_block` 用观测里的 `budget_params` 重算
+    `run_id`，不符即报错；给了 `run_id` 却没给 `budget_params` 也报错。
+20. **重复判定看来源，不看摘要**：`duplicate_verdict()` 的三态
+    `distinct` / `possible_duplicate` / `confirmed_duplicate`；
+    `independent` 是派生值，只有 `confirmed_duplicate` 才为 `False`；
+    `confirmed_duplicate` 必须给 `kind`（`same_artifact` / `rerun_same_conditions`）；
+    "同条件但结果不同"记为 `distinct` + `contradiction`（可复现性问题），不合并。
 
 ## 3. 注册内容
 
@@ -82,9 +100,11 @@
 未接线不是"没测"，是"没有接点"。AZ31 那次失败正是接点问题（`R∥L` 必须在第二并联节点内，
 挂到 voigt 最外层串联只能把 noise=0 残差从 44.0% 降到 40.7%），所以这一档必须显式区分。
 
-`registry_digest = b52189cb1e3212e8`（本版，`0.3.0`）。manifest 会记录它，注册表被改可被发现；
-`consistency_id` 与观测 schema 常量（含身份枚举、缺失语义、预算参数名）都在指纹内，
-所以改校验规则或改"什么算可复现身份"都不会"指纹不变"。
+`registry_digest = 0f59a5686c2d0c5b`（本版，`0.4.0`）。manifest 会记录它，注册表被改可被发现；
+`consistency_id`、观测 schema 常量（含身份枚举、缺失语义、预算参数名）、
+**执行身份的哈希口径（`RUN_ID_BASIS`/`RUN_ID_SCOPE`/`RUN_ID_MISSING`）与重复判定三态**
+都在指纹内，所以改校验规则、改"什么算可复现身份"、改"什么算两次独立观测"
+都不会"指纹不变"。
 
 ## 4. 本轮未覆盖（留给阶段 1/2/3）
 
@@ -132,6 +152,10 @@
 | AZ31 的 2 条 **voigt 行被算成 nested** | voigt 行 `branch=None`，v1 写 `or "parallel"` | 与真实 nested parallel 行 `candidate_id` 完全撞车，6 行只剩 4 id；**voigt 残差记到了 nested 名下** | 按 `label` 分流 + 断言"同一 id 必须同一份六字段定义" | `J4`（映射脚本内置断言） |
 | pilot 的 voigt 初始化标成 `uniform` | `voigt_init` 文档写"数据驱动初值（只看 f、\|Z\|）" | schema 连"用的是哪种初值"都写不下 | voigt 补 `data_driven` 档 | `J5` |
 
+> **0.4.0 推翻第三行**：补 `data_driven` 档本身是对的（`J5` 保留），但**不应把它套到
+> `voigt_prod`/`voigt_fix2` 上**——那两个调用点传的是 `init=None`，走 `init_to_uniform`。
+> 详见 §8.3。
+
 补充事实（曾两边说法不一致，已核清）：`fit_family_compare.py` **只写**
 `family_fit_results.json`，**不写** `.nested.json`；`.nested.json` 的 `files.json`
 记录了它自己写到哪，`input` 记录了 `f_min/f_max` 与含真值的文件名。
@@ -160,4 +184,49 @@
 - runner（阶段 1）：未写。
 - `consistency_id` 仍是**人工维护**的版本号。改校验函数必须同步改 ID，代码无法自动识别
   逻辑变化——这是 `A4` 用例的设计前提，不是遗漏。
+
+## 8. 0.4.0 修订（针对第三轮审计：独立观测计数与两层身份）
+
+### 8.1 两个 P0/P1 都是真缺口
+
+| 编号 | 审计意见 | 核实结论 | 修法 | 用例 |
+|---|---|---|---|---|
+| P0 | 去重指纹只含摘要字段，`independent=false` 缺来源证据 | **成立**：v2 的 `_fingerprint` 是 `candidate_id + fit_observation + param_estimate`，函数内既不读 seed 也不读产物路径 | `duplicate_verdict()` 按来源判三态；`summary_equal` 降级为一个输入事实 | `L6`–`L8` |
+| P1 | `candidate_id` 不含实际预算数值 | **成立**：它哈希的是 `budget_profile` 档名 | **不改 `candidate_id`**，新增 `execution_identity()` → `run_id` | `L1`–`L5` / `L9` |
+
+### 8.2 `run_id` 的定义（写清边界，避免它变成第二个 `candidate_id`）
+
+| 问题 | 答案 |
+|---|---|
+| 它是什么 | **执行条件**指纹，不是墙钟实例号 |
+| 哈希什么 | `candidate_id` + 数据（文件名 + `f_min/f_max`）+ seed + seed 的证据类别 + 实际预算（含 `source`）+ 软件 |
+| 为什么含数据 | 同候选同 seed 同预算跑 60 条谱是 60 次执行；不写数据会共享一个号 |
+| 为什么含 `source` | 数值相同、证据不同（产物记录 vs 档名推导）不能拿同一个号，否则推导出的条件被当成观测到的条件 |
+| 同条件重跑 | **共享同一个 `run_id`**，实例由 `source.path` 区分。这正是它能当去重键的原因 |
+| 什么时候不发 | 缺数据 / seed / 预算 ⇒ `None` + `unavailable_reason` |
+
+`recorded`（`R-`）要求 seed 来自产物、预算 `recorded`、代码版本已知三者齐。
+**本批 0 条**——没有一份历史产物记代码版本。这是待补字段，不是降门槛的理由。
+
+### 8.3 推翻 0.3.0 的一处判定 + 查出的一处同类错误
+
+| 项 | 0.3.0 的说法 | 事实 | 后果 |
+|---|---|---|---|
+| pilot `voigt_prod`/`voigt_fix2` 初值 | `data_driven` | `voigt_fit(f,Z,...)` 不传 `init` ⇒ `C.fit(init_values=None)` ⇒ `init_to_uniform` | 120 行标反。0.3.0 是**照函数 docstring 判身份**，正是它自己反对的做法 |
+| pilot `sensitivity` 拓扑 | `nested / capacitive / L2` | `voigt_fit(f,Z,None,seed=0,init=voigt_init(...))` = **voigt K=2 / 自由 σ / 数据驱动** | 46 条的残差被记到另一个模型名下，且与 `nested` 段共享 `candidate_id` |
+
+两处都由**调用点**判定，不是由函数名或文档判定。修正后
+`uniform 132 / data_driven 106 / value 1`（原 `uniform 12 / data_driven 226 / value 1`）。
+
+### 8.4 与 0.3.0 的关系
+
+0.2.0/0.3.0 的 17 条硬约束**一条未放宽**，只新增 18–20 三条；`candidate_id` 的
+六个字段与两处结构一致性校验**原样**。被推翻的两处（§8.3）是映射层的判定，
+不是 schema 约束。
+
+### 8.5 仍未做的
+
+- runner（阶段 1）：未写。本轮只补身份与计数口径，**不是** runner 的前置条件已满足。
+- 代码版本字段（`software.code_version`）：schema 有位置，历史产物没有值。
+- 阈值：`acf`、区间宽度、`n_viable`，一个都没定。
 
