@@ -920,7 +920,7 @@ Y 组测六块各自缺项时降哪一档，M 组测清单本身（含"降级零
 | C1 | `layers=True`（bool 冒充 int）；`include_L=1`（反向） | 都 `unconfirmed`（规范化失败 ⇒ 无号） | `True` 是 `int` 的子类，这类错**不报错**就会当层数用（P1-1） |
 | C2 | `kk_mode="bypass"`（闭集 `gate/warn/off`） | `derived` + `config_type_mismatch` | 越界档位一路走到门禁里当"不拦"用 |
 | C3 | `branch` 越界 / `diag` 非 dict / `plot` 非 bool | 均被拒 | 类型标签不能只是注释（P1-1） |
-| X5 | 三个 sigma 来源子字段的键集与载荷 | 已登记、**不在**哈希集、不在载荷里 | P0-1 的结构侧护栏（T19a 是行为侧） |
+| X5 | **四个** sigma 来源子字段（`sigma_mode`/`sigma_pct`/`sigma_abs`/`sigma_floor`）的键集与载荷 | 已登记、**不在**哈希集、不在载荷里 | P0-1 的结构侧护栏（T19a 是行为侧）；v1.4 把 `sigma_floor` 并入后由三扩到四 |
 
 ---
 
@@ -1120,6 +1120,12 @@ W1；`bm_select` 选择/重跑变 → W2（入口）；`kk_mode` 门禁变 → T
    T23a–d 只用夹具；复算逻辑本身已冻结）；
 ② 补丁包能否**重建**工作树（要 dirty 状态下的真实产物，T24 只用夹具）；
 ③ `sampler_entry` 到底挂不挂得上（Y6 只保证"少了不许冒充三个"，没保证可采）。
+
+`v1.4` 之后按"先验采集、后写 runner"的顺序推进，第 ① 项（B 路径）已有实测
+（`round_2026-11-14/SNAPSHOT_PROBE.md`），但它**只解除"能不能采"**，不解除
+"采到的东西怎么算"：`sampler_entry` 可挂（③ 的一半）、三时点在同一路径上同集，
+而 harness 自身文件、路径格式（POSIX 相对 vs Windows 绝对）、一次工作流多次采样的
+归属这三处仍会让记录**静默**落进 `derived` 或错配。②③ 两项仍未动。
 其余字段与规则都已有反例护着（§18）。
 
 `v1.3` 修掉的两处 P0 说明一件事：**"测试全绿"不等于"实现忠实"**。T19a 与 T23c
@@ -1205,8 +1211,8 @@ W1；`bm_select` 选择/重跑变 → W2（入口）；`kk_mode` 门禁变 → T
 
 | 项 | 为什么还不行 | 需要什么 |
 |---|---|---|
-| `runtime_loaded_modules` / `source_coverage` 的判定 | **集合复算本身已冻结**（T23a–d），但复算的输入是夹具：真 `sys.modules` 还没读过，闭包与运行时的差集没实测 | 一次真实运行的三个时点快照 |
-| `sampler_entry` 到底能不能挂上 | Y6 只证明"少一个时点不许冒充三个"，没证明这个时点**可采** | runner 里试挂一次；若确认挂不上，要改的是契约（届时所有真实运行停在 `derived`），不是放宽 Y6 |
+| `runtime_loaded_modules` / `source_coverage` 的判定 | **集合复算本身已冻结**（T23a–d），但复算的输入是夹具：真 `sys.modules` 还没读过，闭包与运行时的差集没实测 | **B 路径已实测**（`round_2026-11-14/SNAPSHOT_PROBE.md`）：三时点同集、排除 harness 后 `complete`、`declared_not_loaded` 4 个；A/C 未测，且 §4.1–4.3 三项接口细节未定 ⇒ **仍不冻结** |
+| `sampler_entry` 到底能不能挂上 | Y6 只证明"少一个时点不许冒充三个"，没证明这个时点**可采** | **B 路径实测可挂**（`MCMC.run` 类属性包装，`n_calls` 与真实采样次数一致）；但"一次工作流多次采样如何归属"未定（`SNAPSHOT_PROBE.md` §4.3），所以原因码口径仍未冻结 |
 | 补丁包**重建**工作树 | T24 只测"缺包 ⇒ 降级"，没测过"解包后复算摘要一致" | dirty 状态下的一次真实运行 |
 | 降级双条件（`plot_only`/`decision` 等） | 本轮**零降级**（M2）；`pending_demotions` 全部 `applied:false` | 关功能运行 / 改常量重跑 |
 | `capture_interface` / `unknown_keys` 的真实值 | 夹具里是手写的；真实调用点的 `**kwargs` 还没被枚举 | runner 捕获 |
