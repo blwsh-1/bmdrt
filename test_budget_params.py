@@ -109,8 +109,14 @@ def case_C3_no_second_budget_entry_in_config():
 
 def case_C4_v14_chk_budget_all_recorded():
     b = recorded_block()
-    assert E._chk_budget(b) == [], E._chk_budget(b)
-    return "全 recorded ⇒ v1.4 _chk_budget() 返回空"
+    evi = {"upstream_origin_captured": True,
+           "capture_version": "1.0", "capture_site": "bm_core.fit",
+           "evidence_sha256": E.budget_evidence_sha256(b),
+           "event_sha256": "a" * 64}
+    assert E._chk_budget(b, evi) == [], E._chk_budget(b, evi)
+    # C1：v1.4 只要五项写着 recorded 就放行；v1.5 必须有显式证据块。
+    assert E._chk_budget(b) != [], "缺显式证据块却放行 recorded（G1 回归）"
+    return "全 recorded + 合规证据块 ⇒ v1.5 _chk_budget() 空；缺证据块 ⇒ 拒"
 
 
 def case_C5_build_equals_validate():
@@ -410,8 +416,13 @@ def case_G2_one_derived():
     b = B.validate_budget_params(c, upstream_origin_captured=True)
     st = B.budget_evidence_state(b, upstream_origin_captured=True)
     assert st["state"] == "derived" and st["weakest_keys"] == ["n_samples"]
-    assert E._chk_budget(b) == ["budget_not_recorded:n_samples"], E._chk_budget(b)
-    return "最弱项 derived；v1.4 _chk_budget() 精确点名 n_samples"
+    evi = {"upstream_origin_captured": True,
+           "capture_version": "1.0", "capture_site": "bm_core.fit",
+           "evidence_sha256": E.budget_evidence_sha256(b),
+           "event_sha256": "a" * 64}
+    assert E._chk_budget(b, evi) == ["budget_not_recorded:n_samples"], \
+        E._chk_budget(b, evi)
+    return "最弱项 derived；v1.5 _chk_budget()（带合规证据块）精确点名 n_samples"
 
 
 def case_G3_one_unavailable():

@@ -40,6 +40,7 @@ from __future__ import annotations
 import os
 from typing import Any, Mapping
 
+import budget_capture_adapter as BA
 import sampler_provenance as SP
 
 CAPTURE_VERSION = "1.0"
@@ -354,6 +355,23 @@ def _event(mcmc, site: str, *, ctx: Mapping | None, recs: list, judged: bool,
         "aggregate": SP.aggregate(recs),
         "attached_to": PROVENANCE_ATTR,
     }
+    # G2：捕获事件自带可落盘的 `budget_params` 六键块与显式证据块。
+    # **拒绝式适配**：值已捕获、上游来源链未闭合 ⇒ 五项 source='unavailable'。
+    # 绝不把事件的 `upstream_origin_captured=False` 上调；观测值只进
+    # `budget_observations` 明账，不进身份哈希。适配失败不吞：单独落错误字段，
+    # 让 runner / 准入复查看得见，而不是拿一个假块当身份来源。
+    try:
+        adapted = BA.adapt_capture_event(ev)
+    except (ValueError, TypeError, KeyError) as exc:
+        ev["budget_params"] = None
+        ev["budget_evidence"] = None
+        ev["budget_observations"] = None
+        ev["budget_adaptation_error"] = f"{type(exc).__name__}: {exc}"
+    else:
+        ev["budget_params"] = adapted["budget_params"]
+        ev["budget_evidence"] = adapted["budget_evidence"]
+        ev["budget_observations"] = adapted["observations"]
+        ev["budget_adaptation_error"] = None
     try:
         setattr(mcmc, PROVENANCE_ATTR, ev)
     except Exception:                            # noqa: BLE001 —— 挂不上不影响返回值

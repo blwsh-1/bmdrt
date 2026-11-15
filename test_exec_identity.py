@@ -110,11 +110,31 @@ def _env(**over) -> dict:
     return env
 
 
+def _budget_cells(values=(2000, 1000, 2, 0.98, 10)) -> dict:
+    """v1.5 合规六键预算块（来源上游已捕获的正例夹具）。"""
+    return {k: {"value": v, "source": "recorded",
+                "origin": "cli_explicit", "requested": v,
+                "transformed": [], "where": f"bm_real.KW.{k}"}
+            for k, v in zip(E.BUDGET_KEYS, values)}
+
+
+def _budget_evidence(block: dict) -> dict:
+    """与块自洽的显式证据块；`evidence_sha256` 由身份层同构算法重算。"""
+    return {"upstream_origin_captured": True,
+            "capture_version": "1.0",
+            "capture_site": "bm_core.fit",
+            "evidence_sha256": E.budget_evidence_sha256(block),
+            "event_sha256": "a" * 64}
+
+
 def _rec(*, items: list[dict] | None = None) -> dict:
     items = list(items if items is not None else _items())
     sig = E.sigma_block(kind="none", mode="free")
+    bud = _budget_cells()
     return {
         "identity_contract_version": E.IDENTITY_CONTRACT_VERSION,
+        E.RUN_ID_CONFIG_KEYS_VERSION_FIELD: E.RUN_ID_CONFIG_KEYS_VERSION,
+        "budget_evidence": _budget_evidence(bud),
         "candidate_id": "voigt:hn2+rl_parallel",
         "data": {"ref": "a.csv", "sha256": _DATA, "n_points": 50,
                  "subset_sha256": None, "f_min": 0.1, "f_max": 1e5,
@@ -125,8 +145,7 @@ def _rec(*, items: list[dict] | None = None) -> dict:
                          "n_chains": 2, "init_strategy": "init_to_uniform"},
                 "seed_evidence": {"source": "artifact:config.seed"},
                 "actual": {"chain_keys": ["k0", "k1"], "init_values_sha256": None}},
-        "budget_params": {k: {"value": v, "source": "recorded"} for k, v in
-                          zip(E.BUDGET_KEYS, (2000, 1000, 2, 0.98, 10))},
+        "budget_params": bud,
         "config": {
             "effective": {
                 "branch": {"value": "parallel", "origin": "cli",
@@ -338,8 +357,8 @@ def case_T14_zscale():
 def case_T15_budget_tier():
     r = _rec()
     r2 = copy.deepcopy(r)
-    for k, v in zip(E.BUDGET_KEYS, (800, 400, 2, 0.9, 10)):   # quick 档的**数值**
-        r2["budget_params"][k] = {"value": v, "source": "recorded"}
+    r2["budget_params"] = _budget_cells((800, 400, 2, 0.9, 10))  # quick 档数值
+    r2["budget_evidence"] = _budget_evidence(r2["budget_params"])
     a, b = _ids(r), _ids(r2)
     assert a[0] != b[0], "预算数值变了 run_id 没变（档名冒充数值，F4）"
     assert "standard" not in json.dumps(E.run_id_payload(r2)), "档名混进了载荷"
@@ -351,7 +370,7 @@ def case_T16_with_voigt():
     child = copy.deepcopy(parent)
     _set(child, "workflow.role", "child")
     child_items = copy.deepcopy(_val(parent, "code.declared_source_set"))
-    child_run = "R1-" + E.run_id_digest(child)[:32]
+    child_run = "R2-" + E.run_id_digest(child)[:32]
     p2 = _set(copy.deepcopy(parent), "workflow.extras.with_voigt", True)
     _set(p2, "workflow.children", [child_run])
     a, b = _ids(parent), _ids(p2)
@@ -717,7 +736,7 @@ def case_W4_gate_result_not_identity():
 def case_W5_children():
     r = _rec()
     a = _ids(r)
-    r2 = _set(copy.deepcopy(r), "workflow.children", ["R1-" + "f" * 32])
+    r2 = _set(copy.deepcopy(r), "workflow.children", ["R2-" + "f" * 32])
     b = _ids(r2)
     assert a[1] != b[1], "children 变了 workflow_id 没变"
     assert a[0] == b[0], "children 不该影响父 run_id"
@@ -945,7 +964,7 @@ def case_Y1_env_digest():
     ev = E.evaluate(r2)
     assert ev["status"] == "derived", f"env 摘要对不上却 recorded：{ev}"
     assert "env_digest_mismatch" in ev["reasons"], ev["reasons"]
-    assert ev["run_id"].startswith("D1-"), ev["run_id"]
+    assert ev["run_id"].startswith("D2-"), ev["run_id"]
     return f"Y1 env 摘要不符 ⇒ derived（{ev['reasons']}）"
 
 
@@ -1039,7 +1058,7 @@ def case_X2_v0_record_rejected():
     r2 = _set(_rec(), "identity_contract_version", "1.0")
     msg2 = _expect_raise(E.run_id_payload, r2)
     assert "1.0" in msg2 or "identity_contract_version" in msg2, msg2
-    return "X2 缺版本 / v1.0 记录不许套 v1.4 载荷"
+    return "X2 缺版本 / v1.0 记录不许套 v1.5 载荷"
 
 
 def case_X4_voigt_K_dual_effect():

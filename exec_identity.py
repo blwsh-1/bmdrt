@@ -27,6 +27,7 @@
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import pathlib
@@ -45,10 +46,22 @@ import numpy as np
 #: `1.4`（P0-1 收尾）：`sigma_floor` 也退出哈希（它与 `sigma.floor` 是同一个量，
 #: 原来由两条通道分别进哈希）；持久化记录的 `mode`↔`kind` 自洽检查从构造函数移进
 #: `sigma_run_id_value()`。键集少了 `sigma_floor` ⇒ 载荷变 ⇒ 换号。
-IDENTITY_CONTRACT_VERSION = "1.4"
+#: `1.5`（身份链 P0 修复，第 4 步复裁 §6）：
+#:   C1/G1 `source=recorded` 从字符串自检升为**结构化证据门槛**；
+#:   C2/G5 `run_id_config_keys_version` 进记录 / 两个载荷 / `_require_version()`；
+#:   C3/G3 `retry_kw` 退出 `workflow_id`，且在算号前强制拦截五项预算键；
+#:   C3/G4 每次重跑由 `rerun.attempt` 生成独立子 `run_id`；
+#:   C5/G2 捕获事件的 `origin` 字面量禁止升级为 `recorded`。
+#: 载荷键集与语义都变了 ⇒ **所有 v1.4 号整体失效**（全换号是预期代价，
+#: 不许用「兼容旧号」绕过）。
+IDENTITY_CONTRACT_VERSION = "1.5"
 
-#: `RUN_ID_CONFIG_KEYS` 的闭集版本。加键/改 `effect` 必须 +1。
-RUN_ID_CONFIG_KEYS_VERSION = 1
+#: `RUN_ID_CONFIG_KEYS` 的闭集版本。加键/改 `effect` 必须 +1，
+#: 且**必须同时**升 `IDENTITY_CONTRACT_VERSION`。
+#: G5：v1.4 里它既不进哈希也不被校验 ⇒ 单升它是空操作；v1.5 起
+#: 进两个载荷、被 `_require_version()` 校验，并由记录显式携带。
+RUN_ID_CONFIG_KEYS_VERSION = 2
+RUN_ID_CONFIG_KEYS_VERSION_FIELD = "run_id_config_keys_version"
 
 #: `effect` 六值闭集（D-6）。前两个进 `run_id`，后四个不进。
 EFFECTS = (
@@ -78,10 +91,37 @@ IDENTITY_STATES = ("recorded", "derived", "unconfirmed")
 #: 降级处置"，**且照样降 `derived`**——两个时点的成功采集不能被说成三个都完成了。
 SNAPSHOT_POINTS = ("before_fit", "sampler_entry", "after_fit")
 
-#: 前缀只作辅助标识（D-4），权威是 `identity_contract_version` + 状态。
-RUN_ID_PREFIX = {"recorded": "R1-", "derived": "D1-"}
+#: 前缀只作辅助标识（D-4），权威是 `identity_contract_version` + 状态 + 世代。
+#: v1.4 → v1.5 是**新世代**：`R1-/D1-` 留给 v1.4 历史号，不复用、不兼容。
+RUN_ID_PREFIX = {"recorded": "R2-", "derived": "D2-"}
 
-WORKFLOW_PREFIX = "W1-"
+WORKFLOW_PREFIX = "W2-"
+
+#: v1.5 权威世代表。`budget_params.IDENTITY_GENERATIONS` 是第 2 步的 v1.4 投影，
+#: 其文件字节被 `8015721` 审查脚本按 blob 锁定，本轮**不改**；新世代判定以本表为准。
+#: 三套号（registry `R-/D-` 10hex、v1.4 `R1-/D1-`、v1.5 `R2-/D2-`）互不跨世代比号。
+IDENTITY_GENERATIONS = {
+    "R-": "registry_0.7.0", "D-": "registry_0.7.0",
+    "R1-": "exec_identity_1.4", "D1-": "exec_identity_1.4",
+    "R2-": "exec_identity_1.5", "D2-": "exec_identity_1.5",
+}
+
+#: C1 结构化证据门槛：身份层本地复刻 `budget_params` 的闭集词表。
+#: 本模块**零 import 产出层**（既有 AST 守护），逐项相等由
+#: `test_budget_capture_adapter.py` / `test_exec_identity.py` 交叉核验。
+BUDGET_CELL_KEYS = ("value", "source", "origin", "requested",
+                    "transformed", "where")
+BUDGET_SOURCE_STATES = ("recorded", "derived", "unavailable")
+BUDGET_ORIGINS = (
+    "cli_explicit", "module_constant", "programmatic_override",
+    "function_default", "library_default", "runtime_derived", "unknown")
+BUDGET_EVIDENCE_FIELD = "budget_evidence"
+BUDGET_EVIDENCE_KEYS = ("upstream_origin_captured", "capture_version",
+                        "capture_site", "evidence_sha256", "event_sha256")
+
+#: G4 重跑身份：每次实际执行是一个独立子运行，用 `attempt` 区分。
+RERUN_FIELD = "rerun"
+RERUN_KEYS = ("attempt", "reason", "parent_workflow_ref")
 
 #: `run_id` 认的是"进似然/进模型的东西"；键名原样，不改写不加前缀。
 #: 值 = (类型标签, `effect`)。类型标签只用于校验，不参与哈希。
@@ -270,6 +310,63 @@ def canonical_json(obj: Any) -> str:
     """
     return json.dumps(_plain(obj), sort_keys=True, separators=(",", ":"),
                       ensure_ascii=False, allow_nan=False)
+
+
+def budget_evidence_sha256(block: Mapping) -> str:
+    """六键预算块的证据指纹（C1 / G1）。
+
+    与 `budget_capture_adapter.budget_evidence_sha256` 同构：先规整成
+    `BUDGET_KEYS × BUDGET_CELL_KEYS` 固定顺序再算摘要。身份层拿重算值比对
+    记录里 `budget_evidence.evidence_sha256` ⇒ **验证完再篡改块**会被抓到。
+    注意：这只是**结构与自洽**校验，不是「真的捕获过」的密码学证明；
+    后者只能由生产捕获接口 + 显式 `upstream_origin_captured` 给出。
+    """
+    if not isinstance(block, Mapping):
+        raise ValueError("budget_params 必须是映射")
+    absent = [k for k in BUDGET_KEYS if k not in block]
+    extra = [k for k in block if k not in BUDGET_KEYS]
+    if absent or extra:
+        raise ValueError(f"budget_params 键必须恰好五项：缺 {absent}、多 {extra}")
+    norm = {}
+    for k in BUDGET_KEYS:
+        cell = block[k]
+        if not isinstance(cell, Mapping):
+            raise ValueError(f"budget_params[{k!r}] 必须是六键复合块")
+        missing = [c for c in BUDGET_CELL_KEYS if c not in cell]
+        over = [c for c in cell if c not in BUDGET_CELL_KEYS]
+        if missing or over:
+            raise ValueError(
+                f"budget_params[{k!r}] 键必须恰好是 {list(BUDGET_CELL_KEYS)}；"
+                f"缺 {missing}、多 {over}")
+        norm[k] = {c: _plain(cell[c], path=f"budget_params.{k}.{c}")
+                   for c in BUDGET_CELL_KEYS}
+    return hashlib.sha256(canonical_json(norm).encode("utf-8")).hexdigest()
+
+
+def id_generation(run_id: Any) -> str | None:
+    """号的契约世代（v1.5 权威）。长前缀先匹配，避免 `R1-` 被 `R-` 吃掉。"""
+    if not isinstance(run_id, str):
+        return None
+    for prefix in ("R2-", "D2-", "R1-", "D1-", "R-", "D-"):
+        if run_id.startswith(prefix):
+            return IDENTITY_GENERATIONS[prefix]
+    return None
+
+
+def can_compare_ids(a: Any, b: Any) -> dict:
+    """跨世代不比号。同世代也**不声明等价**，只说可按各世代自己的规则比对。"""
+    ga, gb = id_generation(a), id_generation(b)
+    comparable = ga is not None and gb is not None and ga == gb
+    return {
+        "comparable": comparable,
+        "generation_a": ga,
+        "generation_b": gb,
+        "reason": (
+            "同世代，可按各世代自己的规则比对" if comparable else
+            "不同契约世代（registry 0.7.0 的 R-/D- 10hex、v1.4 的 "
+            "R1-/D1-、v1.5 的 R2-/D2-）：禁止直接拿前缀或摘要比对来判断历史记录漂移"),
+        "declares_equivalence": False,
+    }
 
 
 def _norm_float(v: Any, *, key: str) -> float:
@@ -620,14 +717,44 @@ def check_declared_set(items: Iterable[Mapping]) -> None:
 # ---------------------------------------------------------------------------
 
 def _require_version(rec: Mapping) -> str:
+    """C2/G5：版本从「注释性常量」升为**记录字段 + 校验项**。
+
+    `run_id_config_keys_version` 现在必须由记录显式携带、是整数、与本常量相等；
+    缺字段 / 字符串 / bool / 旧世代值一律拒 → `unhashable:` → 无号。
+    单升 `RUN_ID_CONFIG_KEYS_VERSION` 而不同时升 `IDENTITY_CONTRACT_VERSION`
+    仍然不够：两个都要变，且都要写进载荷。
+    """
     v = (rec.get("identity_contract_version") or "")
     if v != IDENTITY_CONTRACT_VERSION:
         raise ValueError(
             f"identity_contract_version 必须是 {IDENTITY_CONTRACT_VERSION!r}，收到 {v!r}"
-            "：v0 记录走 circuit_registry 的旧规则，不许套 v1 载荷")
+            "：v0 / v1.4 记录走各自的旧规则，不许套 v1.5 载荷")
+    kv = rec.get(RUN_ID_CONFIG_KEYS_VERSION_FIELD)
+    if (isinstance(kv, bool) or not isinstance(kv, int)
+            or kv != RUN_ID_CONFIG_KEYS_VERSION):
+        raise ValueError(
+            f"{RUN_ID_CONFIG_KEYS_VERSION_FIELD} 必须是整数 "
+            f"{RUN_ID_CONFIG_KEYS_VERSION}，收到 {kv!r}："
+            "v1.4 空常量不算身份输入，缺字段不许用默认值补")
     if not rec.get("candidate_id"):
         raise ValueError("candidate_id 缺失：run_id 的模型定义层没有锚点")
     return v
+
+
+def _rerun_attempt(rec: Mapping) -> int:
+    """G4：父运行 attempt=0；每次重跑 attempt≥1 且必须显式写整数。"""
+    rr = rec.get(RERUN_FIELD)
+    if rr is None:
+        return 0
+    if not isinstance(rr, Mapping):
+        raise ValueError("rerun 必须是映射或 None")
+    unknown = [k for k in rr if k not in RERUN_KEYS]
+    if unknown:
+        raise ValueError(f"rerun 出现未登记键 {unknown}")
+    a = rr.get("attempt")
+    if isinstance(a, bool) or not isinstance(a, int) or a < 0:
+        raise ValueError(f"rerun.attempt 必须是非负整数，收到 {a!r}")
+    return a
 
 
 def _budget_payload(bud: Mapping) -> dict:
@@ -675,6 +802,10 @@ def run_id_payload(rec: Mapping, *, role: str = "parent") -> dict:
                           else norm_effective(k, raw))
     return {
         "v": ver,
+        # C2/G5：键表版本进载荷（改键表 / 升版本 ⇒ 全换号，不再是空操作）。
+        "config_keys_version": rec[RUN_ID_CONFIG_KEYS_VERSION_FIELD],
+        # G4：第几次重跑是**条件**，不是结果；同一预算重跑两次也必须不同号。
+        "rerun_attempt": _rerun_attempt(rec),
         "candidate_id": rec["candidate_id"],
         "data": _data_payload(rec.get("data") or {}),
         "rng_plan": {k: _plain((rec.get("rng") or {}).get("plan", {}).get(k))
@@ -712,6 +843,7 @@ def workflow_payload(rec: Mapping) -> dict:
     gate = wf.get("gate") or {}
     return {
         "v": _require_version(rec),
+        "config_keys_version": rec[RUN_ID_CONFIG_KEYS_VERSION_FIELD],
         "workflow_source_tree_sha256": canon_sha256(
             (rec.get("code") or {}).get("workflow_source_tree_sha256"),
             what="workflow_source_tree_sha256"),
@@ -723,7 +855,10 @@ def workflow_payload(rec: Mapping) -> dict:
         "guards": _plain(wf.get("guards") or {}),
         "pair_mode": wf.get("pair_mode"),
         "retry": wf.get("retry"),
-        "retry_kw": _plain(wf.get("retry_kw") or {}),
+        # C3/G3：`retry_kw` 整块退出 workflow_id。生产曾把 BUDGETS 五数值整包
+        # 塞进来（`bm_select.py`），造成「改预算换父号」的二次承载。重跑策略
+        # 由 `retry` / `children` 表达；每次实际预算由该次子 run_id 承担。
+        # `evaluate()` 会在算号前强制拦截含五键的 retry_kw（错误记录不发号）。
         "children": sorted(wf.get("children") or []),
     }
 
@@ -773,15 +908,129 @@ def _chk_rng(rng: Mapping, bud: Mapping) -> list[str]:
     return []
 
 
-def _chk_budget(bud: Mapping) -> list[str]:
-    r = []
+def _chk_budget_evidence(bud: Mapping, evidence: Any) -> list[str]:
+    """C1：证据块必须**显式落盘**并与预算块自洽，不许靠 runner 自觉。
+
+    五键恰好、`upstream_origin_captured is True`（bool）、捕获版本/站点非空、
+    `evidence_sha256` 用预算块重算比对、`event_sha256` 格式合法；若记录带了
+    `budget_observations`，连事件指纹也一并重算。
+    """
+    if evidence is None:
+        return ["budget_evidence_missing"]
+    if not isinstance(evidence, Mapping):
+        return ["budget_evidence_invalid"]
+    r: list[str] = []
+    missing = [k for k in BUDGET_EVIDENCE_KEYS if k not in evidence]
+    over = [k for k in evidence if k not in BUDGET_EVIDENCE_KEYS]
+    if missing:
+        r.append("budget_evidence_missing_fields:" + ",".join(missing))
+    if over:
+        r.append("budget_evidence_unknown_fields:"
+                 + ",".join(sorted(str(k) for k in over)))
+    flag = evidence.get("upstream_origin_captured")
+    if flag is not True:                                  # 不许 truthy 蒙混
+        r.append("budget_evidence_upstream_not_captured")
+    for key, code in (("capture_version", "budget_evidence_capture_version_invalid"),
+                      ("capture_site", "budget_evidence_capture_site_invalid")):
+        val = evidence.get(key)
+        if not isinstance(val, str) or not val.strip():
+            r.append(code)
+    try:
+        want = budget_evidence_sha256(bud)
+    except (ValueError, TypeError, KeyError):
+        r.append("budget_evidence_sha_uncomputable")
+        return r
+    if evidence.get("evidence_sha256") != want:
+        r.append("budget_evidence_sha_mismatch")
+    es = evidence.get("event_sha256")
+    if not isinstance(es, str) or len(es) != 64:
+        r.append("budget_evidence_event_sha_invalid")
+    any_recorded = any(isinstance(c, Mapping) and c.get("source") == "recorded"
+                       for c in bud.values())
+    if any_recorded and flag is not True:
+        r.append("budget_recorded_without_upstream")
+    return r
+
+
+def _chk_budget(bud: Mapping, evidence: Any = None) -> list[str]:
+    """C1/G1：`recorded` 的**结构化证据门槛**（第 4 步复裁 §6 C1）。
+
+    v1.4 只校 `cell.get("source") == "recorded"` 这个字符串，裸
+    `{value, source:"recorded"}` 就能拿 `R1-` 号；同一块喂
+    `budget_params.validate_budget_params()` 却被拒 ⇒ 两层 `recorded` 两个门槛。
+    v1.5 起身份层自己校验：五项恰好 / 每项恰好六键 / `source` 三值闭集 /
+    `origin` 七值闭集 / `value` 类型与 finite / `where` 与 `transformed` 形状 /
+    `recorded` 还要求 `origin != unknown` 且 `where` 非空；外加
+    `_chk_budget_evidence()` 的显式证据块与指纹重算。
+
+    **保留** `budget_not_recorded:{k}` 原因码与状态阶梯语义：非 `recorded`
+    ⇒ `unconfirmed` 无号，不是降 `derived` 发号。
+    """
+    r: list[str] = []
+    if not isinstance(bud, Mapping):
+        return ["budget_not_mapping"]
+    over_top = [k for k in bud if k not in BUDGET_KEYS]
+    if over_top:
+        r.append("budget_unknown_keys:"
+                 + ",".join(sorted(str(k) for k in over_top)))
+    n_recorded = 0
     for k in BUDGET_KEYS:
         cell = bud.get(k)
         if not isinstance(cell, Mapping):
             r.append(f"budget_missing:{k}")
-        elif cell.get("source") != "recorded":
+            continue
+        src = cell.get("source")
+        # 状态阶梯的自然短路：`data`/`rng`/`budget` 任一不过就已经是
+        # `unconfirmed` 无号。对**必然发不出号**的项，只精确点名一项原因，
+        # 不再堆形状/证据细节——形状与证据门槛是为「可能发号」的 recorded
+        # 项设的。这既保留 v1.4 的原因码语义，也不给错误记录任何可乘之机。
+        if src != "recorded":
             r.append(f"budget_not_recorded:{k}")
+            continue
+        n_recorded += 1
+        missing = [c for c in BUDGET_CELL_KEYS if c not in cell]
+        over = [c for c in cell if c not in BUDGET_CELL_KEYS]
+        if missing or over:
+            r.append(f"budget_cell_shape:{k}")
+            continue
+        if cell["origin"] not in BUDGET_ORIGINS:
+            r.append(f"budget_origin_invalid:{k}")
+        v = cell["value"]
+        if isinstance(v, bool) or not isinstance(v, (int, float)) \
+                or not np.isfinite(float(v)):
+            r.append(f"budget_value_invalid:{k}")
+        if not isinstance(cell["transformed"], (list, tuple)):
+            r.append(f"budget_transformed_invalid:{k}")
+        w = cell["where"]
+        if w is not None and (not isinstance(w, str) or not w.strip()):
+            r.append(f"budget_where_invalid:{k}")
+        if cell["origin"] == "unknown":
+            r.append(f"budget_recorded_origin_unknown:{k}")
+        if not w:
+            r.append(f"budget_recorded_where_missing:{k}")
+    # 证据门槛：有 recorded 项（可能发号）时强制；显式带了证据块时也校验，
+    # 免得「五项 unavailable 却自称上游已闭合」被静默放过（G2②）。
+    if n_recorded or evidence is not None:
+        r += _chk_budget_evidence(bud, evidence)
     return r
+
+
+def _chk_retry_kw(wf: Mapping) -> list[str]:
+    """C3/G3：算号前强制拦截 `retry_kw` 的五项预算键（Q5）。
+
+    `budget_params.check_retry_kw()` 之前**不在算号路径**上：生产把 BUDGETS
+    整包传进 `workflow.retry_kw`，v1.4 又把它整块塞进 `workflow_id`。
+    v1.5 两处都做：载荷里移除整块 + 这里在发号前拦截 ⇒ 错误记录不发号。
+    """
+    rkw = wf.get("retry_kw")
+    if rkw is None:
+        return []
+    if not isinstance(rkw, Mapping):
+        return ["retry_kw_not_mapping"]
+    found = [k for k in BUDGET_KEYS if k in rkw]
+    if found:
+        return ["retry_kw_budget_keys:" + ",".join(found)]
+    return []
 
 
 def _cell_value(cell: Any) -> Any:
@@ -1094,11 +1343,15 @@ def evaluate(rec: Mapping, *, role: str = "parent") -> dict:
     cfg = rec.get("config") or {}
     code = rec.get("code") or {}
     env = rec.get("env") or {}
+    wf = rec.get("workflow") or {}
 
     reasons: list[str] = []
     reasons += _chk_data(dat)
     reasons += _chk_rng(rng, bud)
-    reasons += _chk_budget(bud)
+    # C1：证据块与预算块一起进门槛；缺证据 / 篡改指纹 ⇒ 不发号。
+    reasons += _chk_budget(bud, rec.get(BUDGET_EVIDENCE_FIELD))
+    # G3：`retry_kw` 含五项预算 ⇒ 错误记录，归入 fatal（unconfirmed 无号）。
+    reasons += _chk_retry_kw(wf)
     fatal = bool(reasons)
 
     reasons += _chk_config(cfg, rec, role=role)
@@ -1123,4 +1376,46 @@ def evaluate(rec: Mapping, *, role: str = "parent") -> dict:
                 "run_id": None, "workflow_id": None}
     out["run_id"] = RUN_ID_PREFIX[status] + rid[:32]
     out["workflow_id"] = WORKFLOW_PREFIX + wid[:32]
+    return out
+
+
+# ---------------------------------------------------------------------------
+# G4：重跑身份独立
+# ---------------------------------------------------------------------------
+
+def make_rerun_record(parent: Mapping, *, attempt: int,
+                      budget_params: Mapping, budget_evidence: Mapping,
+                      reason: str | None = None,
+                      parent_workflow_ref: str | None = None,
+                      rng: Mapping | None = None) -> dict:
+    """生成一次**独立**重跑的子记录（纯函数：不写盘、不改入参、不构造号）。
+
+    父记录里保留的是**身份条件**：`candidate_id` / `data` / `rng` / `config` /
+    `code` / `env` / 两个版本字段。换掉的是本次实际执行的
+    `budget_params` + `budget_evidence`；`rerun.attempt` 进 `run_id` 载荷，
+    所以**同一组预算重跑两次也必然不同号**（失败与重跑各有明确身份）。
+
+    丢掉：`instance` / `provenance` / `kk_status` / `patch_bundle_*`（结果或实例）、
+    父 `workflow.retry_kw`（G3：预算数值不许进工作流身份）、`children`（子运行
+    不拥有子运行）。父 `workflow.children` 只放本次子号作引用，不放预算。
+
+    换预算时 `rng.plan.n_chains` 必须与 `budget_params.num_chains.value` 一致，
+    由调用方用 `rng=` 显式给；本函数不猜、不自动折算。
+    """
+    if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 1:
+        raise ValueError(f"attempt 必须是 ≥1 的整数，收到 {attempt!r}")
+    if not isinstance(budget_params, Mapping) or not isinstance(budget_evidence, Mapping):
+        raise ValueError("budget_params / budget_evidence 必须是映射")
+    keep = ("candidate_id", "data", "rng", "config", "code", "env",
+            "identity_contract_version", RUN_ID_CONFIG_KEYS_VERSION_FIELD)
+    out = {k: copy.deepcopy(dict(parent[k]) if isinstance(parent.get(k), Mapping)
+                            else parent[k])
+           for k in keep if k in parent}
+    if rng is not None:
+        out["rng"] = copy.deepcopy(dict(rng))
+    out["budget_params"] = copy.deepcopy(dict(budget_params))
+    out["budget_evidence"] = copy.deepcopy(dict(budget_evidence))
+    out[RERUN_FIELD] = {"attempt": attempt, "reason": reason,
+                        "parent_workflow_ref": parent_workflow_ref}
+    out["workflow"] = {"role": "child", "retry": 0, "retry_kw": {}, "children": []}
     return out
