@@ -1,7 +1,7 @@
 # 采样参数来源契约（sampler provenance）v1.0
 
 > 实现：`sampler_provenance.py`（纯函数层，**不被生产模块 import**）
-> 反例矩阵：`test_sampler_provenance.py`（**36/36**，其中 15 格是裁决过的矩阵）
+> 反例矩阵：`test_sampler_provenance.py`（**38/38**，其中 15 格是裁决过的矩阵，另 2 格为矩阵外追加）
 > 上游：`docs/round_2026-11-14/SAMPLER_PROVENANCE_AUDIT.md`（阶段 A）、
 > `SAMPLER_PROVENANCE_AUDIT_B.md`（补充审计：三执行字段 + 内核适用性）
 >
@@ -93,6 +93,12 @@
 - **⑤ 用 `defaulted` 不用 `derived`**：默认值是**生效值**，与"只知道档名"不是一回事。
   区别在捕获位置——在调用点把默认值物化成实参并记下来算"记录实际值"；
   事后从源码读默认值算"猜"，不行。
+- **⑤ 只能在 ④ 通过后到达**：`defaulted` 说的是**请求值的来源**（来自库默认，不是显式指定），
+  不是"这次执行没问题"。`origin=default` 但两值不等时在 ④ 就返回 `mismatch`，
+  而 `resolved.origin="default"` 仍留在记录里——**来源事实与证据结论分两处存**，
+  谁也不许把对方吸收掉。所以"聚合 = `defaulted`"只在**所有默认来源项都值相等**时成立；
+  A 路径（3 链 / 1 台设备，`chain_method` 被改成 `sequential`）的聚合是 **`mismatch`**，
+  不是 `defaulted`（M14）。
 
 `resolved.origin="default"` 且 `resolved.where=None` 时另加 `reason_code=origin_default_unsourced`：
 `bm_real.KW` 是**模块级可变 dict**（`evidence/ws_crit/wp2_run.py:34-36` 等直接改它），
@@ -135,9 +141,23 @@
 `OVERRIDE_CODES`（前两个）是**执行条件偏移**：状态是 `mismatch`，性质是"条件不等价"，
 不是"证据链断裂"。聚合里单列 `n_override` / `override_fields`，避免两类混在一起没法处置。
 
+偏移是**声明**，不是从值里推的；正因为是声明，才不能被随口声明。四处当场 raise（M15）：
+
+| # | 假的偏移声明 | 为什么不行 |
+|---|---|---|
+| 1 | 跨字段套用（`n_warmup` + `sequentially_resolved`） | 只有 `chain_method` 会被设备数改、只有 `progress_bar` 会被 CI 改；跨字段套用等于给"改值"发免责声明 |
+| 2 | 值没变却声称偏移 | 偏移是两值之比，两值相等就没有"偏移"这回事 |
+| 3 | 没采到值却声称偏移（`attribute_missing` / `None` / NaN） | `incomplete` 想借"环境干的"洗白，正好是这轮要防的静默 |
+| 4 | 只知道档名（`resolved=None`）却声称偏移 | 没有请求值就没有比较对象 |
+
+反过来，**漏声明**不会让记录变好看：同一处差异不带码就落 `value_differs`，计入
+`mismatch` 但不计入 `n_override`。"漏声明"只会让整体看起来更糟，不会更干净——
+失败方向是安全的（M15 末段）。
+
 > 现实后果，先说清楚：A 路径 `num_chains=3` + 1 台设备**每次**触发
-> `sequentially_resolved` ⇒ 这条运行的聚合会停在 `mismatch`。这是**如实记录**，
-> 不是回归：值没错，执行条件与声明不等价，而这件事以前没有任何字段记录。
+> `sequentially_resolved` ⇒ 这条运行的聚合会停在 `mismatch`（`n_override=1`）。
+> 这是**如实记录**，不是回归：值没错，执行条件与声明不等价，而这件事以前没有任何字段
+> 记录。反过来，**不许**把它读成 `defaulted`："来源是库默认"与"执行被改写过"是两件事。
 
 ---
 
@@ -160,7 +180,7 @@
 | # | 场景 | 期望 | 用例 |
 |---|---|---|---|
 | 1 | 八项全显式且一致 | 8/8 `complete` | M1 |
-| 2 | 八项全走默认 | 8/8 `defaulted`，**不等于** `derived` | M2 |
+| 2 | 八项全走默认**且值都相等** | 8/8 `defaulted`，**不等于** `derived` | M2 |
 | 3 | 部分显式 | 逐项不同，聚合取最弱 | M3 |
 | 4 | `--quick` 改三个数 | 记**改后**值，`origin≠default` | M4 |
 | 5a | 五参数之一被改 | 该项 `mismatch`，其余不动，`override_fields=[]` | M5a |
@@ -179,7 +199,15 @@
 另有 P 组 10 格（通道白名单、契约观测点、origin 必填、NaN、原因码闭集、不许自报不适用、
 元组无序比较、树深预算、适用性缺上下文、`where` 必填）、G 组 5 格（聚合）、
 X 组 5 格（生产零引用、无重依赖、不改入参、JSON 直出、字段顺序稳定）。
-合计 **36/36**。
+
+**矩阵外追加 2 格**（不改动上面 15 格的编号）：
+
+| # | 场景 | 期望 | 用例 |
+|---|---|---|---|
+| 14 | `origin=default` 且值被改；A 路径（3 链 / 1 设备）整体 | `status=mismatch` 但 `resolved.origin` 仍为 `default`；聚合 `mismatch`，**不是** `defaulted` | M14 |
+| 15 | 四类假的偏移声明 + 同一差异带码/不带码 | 四处 raise；带码进 `override_fields`，不带码落 `value_differs` | M15 |
+
+合计 **38/38**。
 
 ---
 
@@ -187,7 +215,7 @@ X 组 5 格（生产零引用、无重依赖、不改入参、JSON 直出、字�
 
 ```bash
 D:/autoeis_env/Scripts/python.exe sampler_provenance.py        # 内置自检
-D:/autoeis_env/Scripts/python.exe test_sampler_provenance.py   # 36/36
+D:/autoeis_env/Scripts/python.exe test_sampler_provenance.py   # 38/38
 ```
 
 回归不受影响（本层零耦合）：identity 68/68、capture 31/31、bundle 25/25、

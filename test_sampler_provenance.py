@@ -8,7 +8,9 @@
 四组：
 
 · **P**（10 格）纯函数契约：通道白名单、契约观测点、origin 必填、NaN、原因码闭集…
-· **M**（15 格）反例矩阵：M1–M13，其中 M5 拆成 a/b/c/d 四种改法（各改一处）
+· **M**（18 格）反例矩阵：M1–M13 是约定的 15 格（M5 拆成 a/b/c/d 四种改法），
+  M14/M15 是矩阵外追加的两条语义锁（`origin=default` 不吸收 `mismatch`；
+  偏移声明不许跨字段、不许无值、不许值没变）
 · **G**（5 格）聚合：最弱项、不适用计数、两条事件互不覆盖、缺项、偏移单列
 · **X**（5 格）护栏：纯函数层不被生产模块 import、不 import 重量级依赖、
   不改入参、可 JSON 直出、字段顺序稳定
@@ -458,6 +460,97 @@ def case_M13_b_path_declared_not_delivered():
     return "声明未送达 ⇒ mismatch"
 
 
+def case_M14_origin_default_is_not_a_status():
+    """M14（矩阵外）`origin=default` 只描述**来源**，不吸收 `mismatch`。
+
+    这一格锁住一句话：**"请求值来自库默认"与"实际执行被改写"是两件事，
+    不能合成一个 `defaulted`。** 三档对照：
+
+    a) `origin=default` 且两值相等 ⇒ `defaulted`（值是库默认，且没被改）
+    b) `origin=default` 且两值不等 ⇒ `mismatch`，**且 `resolved.origin` 仍是
+       `default`**（来源事实不许因为报了 mismatch 就丢掉）
+    c) A 路径（3 链 / 1 台设备）整体 ⇒ `weakest=mismatch`，不是 `defaulted`
+    """
+    same = S.evaluate("chain_method",
+                      resolved=_slot("parallel", "default",
+                                     "numpyro.MCMC.__init__:chain_method"),
+                      observation=S.observe("chain_method", "parallel"),
+                      num_chains=2)
+    assert same["status"] == "defaulted", same["status"]
+
+    recs = _recs()
+    recs[2] = S.evaluate("num_chains", resolved=_slot(3, "tier", "BUDGETS"),
+                         observation=S.observe("num_chains", 3), num_chains=3)
+    recs[5] = S.evaluate("chain_method",
+                         resolved=_slot("parallel", "default",
+                                        "numpyro.MCMC.__init__:chain_method"),
+                         observation=S.observe("chain_method", "sequential"),
+                         num_chains=3, reason_code="sequentially_resolved")
+    one = recs[5]
+    assert one["status"] == "mismatch", one["status"]
+    # 来源事实必须还在：报告 mismatch 不等于把 origin 抹成"未知"
+    assert one["resolved"]["origin"] == "default", one["resolved"]
+    assert one["resolved"]["where"] == "numpyro.MCMC.__init__:chain_method"
+    # 来源与状态**分两处**，不能一个字段两种意思
+    assert one["observed_status"] == "captured", one["observed_status"]
+
+    a = _agg(recs)
+    assert a["weakest"] == "mismatch", a["weakest"]
+    assert a["fields"]["chain_method"] == "mismatch", a["fields"]["chain_method"]
+    assert a["n_by_status"]["defaulted"] == 1, a["n_by_status"]  # 只剩 progress_bar
+    assert a["fields"]["progress_bar"] == "defaulted", a["fields"]
+    assert a["override_fields"] == ["chain_method"], a["override_fields"]
+    assert a["complete_evidence"] is False
+    return "来源 default + 值被改 ⇒ mismatch，聚合不低于 mismatch"
+
+
+def case_M15_override_claims_are_guarded():
+    """M15（矩阵外）偏移声明护栏：偏移是**声明**，但不能随便声明。
+
+    四类假的"条件偏移"必须当场 raise，不能落成一条看起来无害的 evidence：
+
+    1. 跨字段套用（`n_warmup` 被设备数改？不存在）
+    2. 值没变却声称偏移
+    3. 没采到值却声称偏移（`incomplete` 想借"环境干的"洗白）
+    4. 只知道档名（`resolved` 缺失）却声称偏移
+
+    另加反面：同一个 `chain_method` 差异，带码进 `override_fields`，
+    不带码就是普通 `mismatch`——两个桶不许互相串。
+    """
+    _must_raise(lambda: S.evaluate("n_warmup", resolved=_slot(800),
+                                   observation=S.observe("n_warmup", 400),
+                                   reason_code="sequentially_resolved"),
+                "只能用于 chain_method")
+    _must_raise(lambda: S.evaluate("chain_method",
+                                   resolved=_slot("parallel", "default", "hi"),
+                                   observation=S.observe("chain_method", "parallel"),
+                                   num_chains=2,
+                                   reason_code="sequentially_resolved"),
+                "值没变")
+    _must_raise(lambda: S.evaluate("progress_bar", resolved=_slot(True, "cli", "KW"),
+                                   observed_status="attribute_missing",
+                                   reason_code="forced_by_env"),
+                "观测")
+    _must_raise(lambda: S.evaluate("progress_bar", resolved=_slot(True, "cli", "KW"),
+                                   observation=None, reason_code="forced_by_env"),
+                "观测")
+    _must_raise(lambda: S.evaluate("progress_bar", resolved=None,
+                                   observation=S.observe("progress_bar", False),
+                                   reason_code="forced_by_env"),
+                "resolved")
+
+    # 同一差异、两种口径：带码 = 条件偏移；不带码 = 普通 mismatch
+    plain = _recs()
+    plain[5] = S.evaluate("chain_method",
+                          resolved=_slot("parallel", "default", "numpyro.MCMC"),
+                          observation=S.observe("chain_method", "sequential"),
+                          num_chains=3)
+    ap = _agg(plain)
+    assert ap["n_by_status"]["mismatch"] == 1 and ap["n_override"] == 0, ap
+    assert ap["reason_codes"]["chain_method"] == "value_differs", ap["reason_codes"]
+    return "四类假偏移 raise；带码/不带码分两桶"
+
+
 # ---------------------------------------------------------------------------
 # G：聚合
 # ---------------------------------------------------------------------------
@@ -641,6 +734,8 @@ CASES = [
     ("M11 换 HMC", case_M11_kernel_hmc),
     ("M12 单链", case_M12_single_chain),
     ("M13 B 路径声明未送达", case_M13_b_path_declared_not_delivered),
+    ("M14 origin=default 不是状态", case_M14_origin_default_is_not_a_status),
+    ("M15 偏移声明的护栏", case_M15_override_claims_are_guarded),
     # G
     ("G1 最弱项与顺序无关", case_G1_weakest_independent_of_order),
     ("G2 不适用计数", case_G2_not_applicable_counted),

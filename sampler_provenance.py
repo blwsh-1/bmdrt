@@ -108,7 +108,7 @@ HOW_BY_FIELD = {
 }
 
 #: 原因码闭集。它不是状态：状态说"弱不弱"，原因码说"为什么弱"。
-#: `sequentially_resolved` / `forced_by_env` 属于 schema 内的偏1移——
+#: `sequentially_resolved` / `forced_by_env` 属于 schema 内的偏移——
 #: 值可能完全正确，但执行条件与声明不等价，必须能被筛选出来。
 REASON_CODES = (
     "sequentially_resolved",     # chain_method 被 local_device_count 改成 sequential
@@ -127,7 +127,17 @@ REASON_CODES = (
 
 #: 属于"执行条件偏移"的原因码：状态是 `mismatch`，但性质是"条件不等价"，
 #: 不是"证据链断裂"。聚合里单独计数，避免两类混在一起没法处置。
+#:
+#: 两个码各自只对**一个**字段成立：`chain_method` 只有链方式会被设备数改写，
+#: `progress_bar` 只有进度条会被 CI 环境变量关掉。跨字段套用会把"某处改值"
+#: 说成"条件偏移"，等于给证据链断裂发免责声明。
 OVERRIDE_CODES = ("sequentially_resolved", "forced_by_env")
+
+#: 偏移码 → 只允许出现在哪个字段上。
+OVERRIDE_FIELD = {
+    "sequentially_resolved": "chain_method",
+    "forced_by_env": "progress_bar",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -269,6 +279,18 @@ def _norm_slot(slot: Any, *, name: str, what: str) -> dict | None:
     return {"value": val, "origin": origin, "where": where}
 
 
+def _no_override_without_value(reason_code: str | None, ctx: str) -> None:
+    """「条件偏移」是**两值之比**：没有可比的一对值，就不能声称偏移。
+
+    这一条挡的是最省事的那种作弊——采集中断后顺手写个 `forced_by_env`，
+    让 `incomplete` 看起来像"环境干的、不是我们没采"。
+    """
+    if reason_code in OVERRIDE_CODES:
+        raise ValueError(
+            f"evaluate: reason_code={reason_code!r} 说的是「执行条件偏移」，"
+            f"必须有可比的请求值与观测值；当前{ctx}，不能声称偏移")
+
+
 def evaluate(name: str, *, resolved: Mapping | None = None,
              requested: Mapping | None = None,
              observation: Mapping | None = None,
@@ -281,6 +303,8 @@ def evaluate(name: str, *, resolved: Mapping | None = None,
 
         ① 适用性（不适用 ⇒ `not_applicable` / `derived`，**跳过值比较**）
         ② 观测通道（失败 ⇒ `incomplete`，**不许用 `resolved` 顶替**）
+        ②′ 偏移自洽（声明了 `sequentially_resolved`/`forced_by_env`，
+            就必须真的有一对**不同**的请求值与观测值，否则 raise）
         ③ `resolved` 缺失（⇒ `derived`）
         ④ 值不等（⇒ `mismatch`）
         ⑤ `origin="default"`（⇒ `defaulted`，**不是** `derived`）
@@ -298,6 +322,10 @@ def evaluate(name: str, *, resolved: Mapping | None = None,
             f"收到 {observed_status!r}")
     if reason_code is not None and reason_code not in REASON_CODES:
         raise ValueError(f"evaluate: 未知原因码 {reason_code!r}，闭集见 REASON_CODES")
+    if reason_code in OVERRIDE_CODES and OVERRIDE_FIELD[reason_code] != name:
+        raise ValueError(
+            f"evaluate: {reason_code} 只能用于 {OVERRIDE_FIELD[reason_code]}，"
+            f"不能套在 {name} 上——跨字段套用会把「改值」洗成「条件偏移」")
     if why is not None and (not isinstance(why, str) or not why.strip()):
         raise ValueError("evaluate: why 必须是非空字符串或 None")
 
@@ -354,19 +382,31 @@ def evaluate(name: str, *, resolved: Mapping | None = None,
 
     # ② 观测通道
     if supplied in _FAILED_OBS:
+        _no_override_without_value(reason_code, f"observed_status={supplied}")
         rec["status"] = "incomplete"
         rec["why"] = rec["why"] or supplied
         return rec
     if observation is None:
+        _no_override_without_value(reason_code, "没有观测值")
         rec["status"] = "incomplete"
         rec["reason_code"] = rec["reason_code"] or "observation_missing"
         rec["why"] = rec["why"] or "observation_missing"
         return rec
     if _is_nan(observation["value"]):
+        _no_override_without_value(reason_code, "观测值是 NaN")
         rec["status"] = "incomplete"
         rec["reason_code"] = rec["reason_code"] or "observed_nan"
         rec["why"] = rec["why"] or "observed_nan"
         return rec
+
+    # ②′ 偏移是**声明**，不是从值里推的：声明了偏移就必须真的有一对不同的值
+    if reason_code in OVERRIDE_CODES:
+        if resolved is None:
+            _no_override_without_value(reason_code, "只知道档名（resolved 缺失）")
+        if _same_value(resolved["value"], observation["value"]):
+            raise ValueError(
+                f"evaluate: {reason_code} 声称执行条件偏移，但请求值与观测值都是 "
+                f"{observation['value']!r}——值没变就不算偏移")
 
     # ③ 解析值缺失：只知道档名
     if resolved is None:
