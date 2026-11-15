@@ -6,6 +6,10 @@
 > **审查性质**：只读。不修改 `8015721` 的任何既有文件（探针 / 报告 / 生产 / 身份层一律不动），
 > 不写产物、不构造 `run_id` / `workflow_id`、不启动 runner、三处旧挂账不动。
 > **新增文件**：本报告 + `budget_chain_probe_review.py`（静态核对脚本，纯只读）+ `INDEX` 同步。
+> **本轮 errata（用户裁决 2026-11-15）**：F1–F3 **全部订正**，权威文本见 §3.1；F4 / F5 按裁决本轮不处理。
+> 订正只写在本审查报告 + `docs/INDEX.md` + 项目日志；`8015721` 的被审 blob（含
+> `BUDGET_CHAIN_PROBE_REPORT.md`）**字节保持不变**，其 §2 / §3 对应原句按 §3.1 视为作废。
+> 订正不改探针 / 生产代码 / 身份层 / 测试，不改变 C1–C8 实测判定与 `upstream_origin_captured=False`。
 > **结论一句话**：四项重点检查的**实测部分成立**，但结论必须限定在 C1–C8 覆盖的生产路径
 > 与测试工况内；预算的数值传递链已有独立实测证据，**预算来源溯源仍未闭合，
 > 完整执行身份仍不可生成**。
@@ -23,7 +27,8 @@
 
 审查脚本 `budget_chain_probe_review.py` 共 **51 条机械断言、FAIL 0、rc=0**；
 探针复跑 **rc=0、8/8 case + 辅助核验全 PASS**。同时固化 **5 条文档/实现对应性发现**
-（F1–F5，见 §3），其中 F1–F3 是**表述 / 范围问题，不是实测结论错误**，本轮只记录、不擅自订正。
+（F1–F5，见 §3），其中 F1–F3 是**表述 / 范围问题，不是实测结论错误**，
+**已按用户裁决在 §3.1 给出权威订正文（errata）**；F4 / F5 本轮不扩大处理。
 
 **两个关键事实复核成立**（§5）：C8 的声明值 / 执行值分叉是真因果，不是探针写死的两个数字；
 A / B / C 的同名档数值确实不同、`quick` 确实没有统一覆盖五项。
@@ -123,7 +128,7 @@ a4a4c59  第 2 步 budget_params v1.4 产出层    ← 8015721 的父提交（�
 - C4 / C7(b) 的 ④ 层为 `budget_kw()` + `fit_top` 的**等价展开**，报告 §2 已明账
   「薄封装会写产物，未调用」——**用户边界 2 成立，这个限制继续保留**。
 
-**必须补齐的表述（F2）**：①–③ **不是生产入口埋点**。
+**订正后的表述（F2，权威文本见 §3.1）**：①–③ **不是生产入口埋点**。
 
 - ① 全部是探针注入的档名 / 开关标注，实测 **11 处 `p.mark(...)` 传空 dict**；
   探针未调用 `bmdrt.py` 的 CLI 合并，也未调用 `bm_real.run()` 批处理入口。
@@ -179,22 +184,110 @@ a4a4c59  第 2 步 budget_params v1.4 产出层    ← 8015721 的父提交（�
 
 ---
 
-## 3. 审查发现（只记录，不修改被审对象）
+## 3. 审查发现与 F1–F3 订正裁决（errata）
 
 | 编号 | 级别 | 发现 | 处置建议 |
 |---|---|---|---|
-| **F1** | P1 表述错误 | 报告 §2 写「每条 case 都 `reset()`、`close()` 还原全部埋点」。实现**没有 `reset()` 方法**（方法只有 `begin` / `finish` / `close`），`p.close()` 全文**调用 1 次**（`main()` 的 `finally`）。实际是 hooks 在 `Probe.__init__` 安装一次、每条 case 用 `begin()` 重置账本。行为无缺陷，但描述与实现不符。另：`begin()` 不重置 `tamper` / `micro` / `last_real`（`tamper` 由 C8 `try/finally` 清、`micro` 恒 True、`last_real` 每条 `finish()` 更新）。 | 订正措辞为「hooks 安装一次；每条 case `begin()` 重置账本；`main()` 末尾 `close()` 统一还原」，并补 `begin()` 重置范围 |
-| **F2** | P1 范围表述 | ①–③ 层是探针侧标注 / 等价复现，非生产入口埋点（§2.2）。报告 §2 表格 ③ 的位置写法易被读成生产内 hook。 | 明账 ①③ 的取证性质；与 C4/C7(b) 的 ④ 等价展开一并列为「受控路径限制」 |
-| **F3** | P1 扩大化（正对应用户边界 1） | 报告 §3 写「五项**总是**被生产 fit 显式传给 `MCMC` / `NUTS`」。这是 C1–C8 覆盖的**两处生产构造点 + 五条转发路径**上的实测，不宜扩大成所有入口、所有调用方式；K3 未纳入。 | 加限定语「在本探针覆盖的 `bm_core.fit` / `bm_top.fit_top` 构造点与所列转发路径上」 |
-| **F4** | P2 引用澄清 | 报告 §0 的「`budget_hash_payload()` 与 v1.4 投影一致」是**第 2 步结论的引用**；本轮探针全文 `budget_hash_payload` 出现 **0 次**，只调了既有 `E._budget_payload()`。 | 注明「引用第 2 步」，避免被读成第 3 步独立核验了产出层投影函数 |
-| **F5** | P2 状态确认 | `chain_method` 未登记 `RUN_ID_CONFIG_KEYS` ⇒ Q6 裁决仍未产生 `run_id` 影响。 | 保持挂账，属第 4 步 |
+| **F1** | P1 表述错误 | 报告 §2 写「每条 case 都 `reset()`、`close()` 还原全部埋点」。实现**没有 `reset()` 方法**（方法只有 `begin` / `finish` / `close`），`p.close()` 全文**调用 1 次**（`main()` 的 `finally`）。实际是 hooks 在 `Probe.__init__` 安装一次、每条 case 用 `begin()` 重置账本。行为无缺陷，但描述与实现不符。另：`begin()` 不重置 `tamper` / `micro` / `last_real`（`tamper` 由 C8 `try/finally` 清、`micro` 恒 True、`last_real` 每条 `finish()` 更新）。 | **已订正 → §3.1 F1**：按实际实现给出权威文本，删除不存在的 `reset()` 描述 |
+| **F2** | P1 范围表述 | ①–③ 层是探针侧标注 / 等价复现，非生产入口埋点（§2.2）。报告 §2 表格 ③ 的位置写法易被读成生产内 hook。 | **已订正 → §3.1 F2**：分层明账（①–③ 标注 / 等价复现，④–⑦ 真实 hook）+ 逐项列出未覆盖入口 |
+| **F3** | P1 扩大化（正对应用户边界 1） | 报告 §3 写「五项**总是**被生产 fit 显式传给 `MCMC` / `NUTS`」。这是 C1–C8 覆盖的**两处生产构造点 + 五条转发路径**上的实测，不宜扩大成所有入口、所有调用方式；K3 未纳入。 | **已订正 → §3.1 F3**：限定 C1–C8 路径与工况，明账 K3 独立构造路径未纳入、禁止外推 |
+| **F4** | P2 引用澄清 | 报告 §0 的「`budget_hash_payload()` 与 v1.4 投影一致」是**第 2 步结论的引用**；本轮探针全文 `budget_hash_payload` 出现 **0 次**，只调了既有 `E._budget_payload()`。 | **按用户裁决本轮不处理**：报告未声称探针直接验证该函数，非需补代码的缺陷（原引用澄清保留） |
+| **F5** | P2 状态确认 | `chain_method` 未登记 `RUN_ID_CONFIG_KEYS` ⇒ Q6 裁决仍未产生 `run_id` 影响。 | **按用户裁决本轮不处理**：属第 4 步复裁输入，不提前改身份层 |
 
 另有两处**不影响结论**的健壮性 / 整洁边界（P3）：C7(b) 的 `b_lost` 在 `try` 内赋值，
 若 `budget_kw()` 抛异常会在 `return` 处 `UnboundLocalError`（本次 rc=0 未触发）；
 `bm_core.py:613` 有一行阶段 C 改注释时留下的重复注释残留，不改行为、非本轮范围。
 
-**本轮不改动 `8015721` 的任何既有文件**：F1–F3 属文档表述订正，是否修改、何时修改
-由用户裁决；订正不影响 C1–C8 的实测判定，也不改变 `upstream_origin_captured=False` 的结论。
+**订正方式与效力**：用户已裁决 F1–F3 全部订正。订正文只写在本审查报告 §3.1 + `docs/INDEX.md`
++ 项目日志；`8015721` 的任何既有文件（含被审 `BUDGET_CHAIN_PROBE_REPORT.md`）**字节保持不变**——
+这既是为守住「审查对象 = 远端提交对象及其 blob」的 A 组断言（51/51 仍成立），也是为避免把
+文档订正混入代码改动。因此 §3.1 采用 **errata** 形式：被审报告 §2 / §3 对应原句按 §3.1
+视为删除 / 作废，一切后续引用以 §3.1 为准。订正不改变 C1–C8 的实测判定、
+不改变 `upstream_origin_captured=False` 的结论、不构造任何号。F4 / F5 按裁决本轮不扩大处理。
+
+### 3.1 F1–F3 权威订正文（用户裁决落地）
+
+> 适用范围声明：以下三条**不是新的实测**，只是把既有实测的证据边界写准。凡与
+> `BUDGET_CHAIN_PROBE_REPORT.md`（`8015721` blob）§2 / §3 表述冲突处，**一律以本节为准**。
+
+#### F1 — 探针生命周期：按实际实现描述
+
+- **hooks 安装一次**：`Probe.__init__` 调用 `_install()` **一次**，装 4 个类级 hook
+  （`MCMC.__init__` / `MCMC.run` / `NUTS.__init__` / `HMC.__init__`）与 5 个模块函数
+  wrapper；所有 case 共用这一组 hooks，不逐 case 重装。
+- **每条 case 用 `begin()` 重置账本**：`begin(label, expected)` 重置 `rows`、
+  `ctor_passed`、`ctor_effective`、`kern_passed`、`run_passed`、`mcmc_obj` 并置
+  `active=True`；`finish()` 置 `active=False` 并更新 `last_real`。
+  **`begin()` 不重置** `tamper` / `micro` / `last_real`：`tamper` 由 C8 的
+  `try/finally` 清除，`micro` 恒 `True`，`last_real` 由每条 `finish()` 更新。
+- **`close()` 的真实调用范围**：全文仅 `main()` 的 `finally` 中 `p.close()` **调用 1 次**，
+  统一还原 4 个类属性与 5 个模块函数；**不是每条 case 调一次**。
+- **实现中不存在 `reset()` 方法**（方法集只有 `_install` / `close` / `begin` / `mark` / `finish`）。
+  被审报告 §2 末句「每条 case 都 `reset()`、`close()` 还原全部埋点」中的
+  **`reset()` 描述删除、该句作废**；权威替换文本为上面三条。
+
+行为无缺陷，仅表述与实现不符；订正不影响 C1–C8 判定。
+
+#### F2 — ①–③ 与 ④–⑦ 分层，逐项列出未覆盖入口
+
+| 层 | 取证性质 | 依据 |
+|---|---|---|
+| ① 入口声明 | **探针侧标注**（档名 / 开关，不当数值证据） | 11 处 `p.mark(...)` 传空 dict；未调 `bmdrt.py` CLI 合并、未调 `bm_real.run()` |
+| ② 查表 | **实况**（真实生产常量与函数输出） | `bm_real.KW` / `bm_select.BUDGETS` / `nested_fit.budget_kw()` |
+| ③ 覆盖 | **等价复现**（不是生产内埋点） | `case_C3` 照抄 `bm_real.py:2771` 的 `kw.update(...)` 与 `:2774` 的 `kw["target_accept"]`，非 `bm_real.run()` 内 hook 取值 |
+| ④ 转发 | **真实生产 hook** | 5 个模块函数 wrapper 的 `kw` 入参快照；C4 / C7(b) 的 ④ 是 `budget_kw()` + `fit_top` 的**等价展开**（薄封装会写产物，未调用） |
+| ⑤ 签名默认 | **真实生产 hook** | `bind_partial().apply_defaults()` 的真实绑定 + 「签名补齐」键 |
+| ⑥ 运行时 | **真实生产 hook** | 类级 hook 取真实构造实参 / run 实参 |
+| ⑦ 观测 | **真实生产 hook** 后读属性 | `mc.*` / `mc.sampler._*` |
+
+⇒ **④–⑦ 才是真实生产 hook；①–③ 是探针侧标注或等价复现**，
+「CLI 声明 → 查表 → 覆盖」是**受控等价复现**，不是 CLI 入口埋点。
+
+**未覆盖入口（逐项明账，不得外推）**：
+
+1. `bmdrt.py` CLI 与 `DEFAULTS` 合并；
+2. `bm_real.run()` 批处理入口；
+3. `nested_fit.fit_one`（唯一会写产物的薄封装，C4 / C7(b) 只调其公开的 `budget_kw()` 查表 + 生产 `bm_top.fit_top`）；
+4. `bm_top_gen`；
+5. 任意脚本直接构造 `MCMC` 的方式；
+6. **K3 = `evidence/nested_topology/m35_cond_n2.py:116`**（阶段 A 编号；
+   `sampler_capture.NON_PRODUCTION_SITES` 明账「独立实验路径，绕过 fit/fit_top 与 BUDGETS，
+   未纳入生产捕获范围」）。
+
+⇒ 准确说法：**「生产常量 / 查表输出 → ④⑤ 转发与签名绑定 → ⑥ 真实构造实参 → ⑦ 对象属性」
+有独立实测证据**；**不能写成所有入口都已端到端取证，更不能写成整个生产系统已完成预算捕获**。
+
+#### F3 — 五项显式传递：限定路径与工况
+
+被审报告 §3「五项**总是**被生产 fit 显式传给 `MCMC` / `NUTS`，不落 numpyro 库默认」
+中的 **「总是」删除、该断言作废**；权威替换文本：
+
+> **在本探针 C1–C8 覆盖的路径与测试工况内**——即两处生产构造点
+> （`bm_core.py:610` / `bm_top.py:1004`）与所列五条转发路径
+> （`fit_voigt` / `fit_nested` / `fit_one` / `bm_core.fit` / `bm_top.fit_top`），
+> 且仅在八条 case 设定的工况（默认值 / 覆盖 / 挑键 / 环境覆盖 / 缺键 / 人为篡改）下——
+> 五项预算被显式以关键字实参传给 `MCMC` / `NUTS`，不落 numpyro 库默认；
+> 只有 `chain_method` 从不传 ⇒ 读库默认 `parallel`（多链时由设备数派生，
+> 单链按阶段 B R4 标 `not_applicable`）。
+
+- **K3 独立构造路径尚未纳入**：`m35_cond_n2.py:116` 绕过 fit / fit_top 与 `BUDGETS`，
+  本探针**没有**为它取证；它是否满足「五项显式传递」**未知**，不得据 C1–C8 推断。
+- 其余未覆盖入口见 F2 的六项清单；**不得外推到全部生产入口、全部调用方式或任意运行时工况**。
+- 该项只描述**数值传递链**，不构成 `origin` 来源证据，也不使 `source=recorded` 成立。
+
+#### 订正不改变的部分
+
+`upstream_origin_captured=False`、无一项标 `recorded`、不构造 `run_id` / `workflow_id`、
+执行身份链不整体冻结、三处旧挂账不动、C1–C8 八条 PASS 与辅助核验结论——**全部不变**。
+F4（`budget_hash_payload` 引用澄清）与 F5（`chain_method` 未登记）按用户裁决本轮不扩大处理，
+F5 作为第 4 步复裁输入。
+
+> **与审查脚本打印的关系（明账）**：`budget_chain_probe_review.py` 末尾仍会打印
+> 「F1 报告 §2 写 reset()/close()」「F3 含扩大化措辞 = True」。这些打印描述的是
+> **被审对象 `8015721` 的历史字节**，按本轮裁决**不改动**；它们与被审 blob 的
+> A 组字节对齐断言同属「审查时刻快照」，不是现行表述。因此打印保持原样是预期行为，
+> 与 §3.1 的 errata **不矛盾**：§3.1 管后续引用口径，脚本管历史 blob 取证。
+> 本轮未改该脚本（用户限定「测试一律不动」），复跑 **51 条机械断言 FAIL 0、rc=0**。
 
 ---
 
@@ -202,7 +295,7 @@ a4a4c59  第 2 步 budget_params v1.4 产出层    ← 8015721 的父提交（�
 
 | 用户边界 | 审查核实 | 结论 |
 |---|---|---|
-| **五项显式传递只是受控路径实测结论，不宜扩大；K3 未纳入** | 探针只挂 5 个模块函数 + 2 处生产构造点；`NON_PRODUCTION_SITES` 明账 K3 未纳入；`bmdrt.py` CLI、`bm_real.run()`、`nested_fit.fit_one` 均未调用 | **边界成立**，报告 §3「总是」需按 F3 订正 |
+| **五项显式传递只是受控路径实测结论，不宜扩大；K3 未纳入** | 探针只挂 5 个模块函数 + 2 处生产构造点；`NON_PRODUCTION_SITES` 明账 K3 未纳入；`bmdrt.py` CLI、`bm_real.run()`、`nested_fit.fit_one` 均未调用 | **边界成立**，报告 §3「总是」已按 §3.1 F3 订正作废 |
 | **C4 / C7(b) 等价展开不替代 `fit_one` 端到端证据** | 报告 §2 明账「薄封装会写产物，未调用」；实现确实只调 `budget_kw()` + `fit_top`，④ 层标「等价展开」 | **边界成立**，限制继续保留 |
 | **辅助投影核验只证明接口兼容，不能改 `True`、不能生成号** | `projection_check()` 用探针采集值喂 `E._budget_payload()` / `E._chk_budget()`，五项 `source="derived"`；探针不构造号、不改身份层、不改清单；报告 §0 / §3 / §4 三处保留 `False` | **边界成立** |
 
@@ -243,9 +336,15 @@ a4a4c59  第 2 步 budget_params v1.4 产出层    ← 8015721 的父提交（�
 ## 6. 复现与回归证据
 
 ```
-python docs/round_2026-11-15/budget_chain_probe_review.py      # 审查静态核对，rc=0，50/50
+python docs/round_2026-11-15/budget_chain_probe_review.py      # 审查静态核对，rc=0，51/51
 D:/autoeis_env/Scripts/python.exe docs/round_2026-11-15/budget_chain_probe.py   # rc=0
 ```
+
+> 两条命令的解释器要求不同：审查脚本是纯 `ast` + `git` 静态核对，无需 jax，
+> 但第 294 行 f-string 内含反斜杠 ⇒ 需 **Python ≥ 3.12**（本轮实测系统 Python 3.13.14 通过）；
+> `D:/autoeis_env/Scripts/python.exe` 是 3.10.7，解析该脚本会 `SyntaxError`。
+> 探针脚本需 jax / numpyro，只能用 autoeis_env。这是既有环境约束，本轮未改任何脚本。
+
 
 - 审查脚本：**51 条机械断言 FAIL 0**；A 组基线 8 条、B 组独立性 8 条、C 组埋点 7 条、
   D 组注入 6 条、E 组 case 对应 22 条；另打印 F1–F5 的可复现静态证据。
@@ -270,8 +369,8 @@ D:/autoeis_env/Scripts/python.exe docs/round_2026-11-15/budget_chain_probe.py   
 |---|---|
 | 第 1 步：上游来源链只读审计 | 已完成（`2416062`） |
 | 第 2 步：`budget_params` 纯函数产出层 | 已完成（`a4a4c59`） |
-| 第 3 步：独立探针 | **按报告完成；本轮远端代码审查已完成（见本报告）**；F1–F3 表述订正待用户裁决 |
-| 第 4 步：身份闭集复裁 | **待开始**（本轮未动） |
+| 第 3 步：独立探针 | **按报告完成；远端代码审查已完成；F1–F3 已按用户裁决订正（§3.1 errata）** |
+| 第 4 步：身份闭集复裁 | **用户已批准开始**（另立复裁报告收口；本报告只收口 F1–F3 文档订正） |
 | 第 5 步：最小 runner | **尚未授权、未启动** |
 | 三处旧挂账 | 保持不动 |
 
@@ -280,9 +379,12 @@ D:/autoeis_env/Scripts/python.exe docs/round_2026-11-15/budget_chain_probe.py   
 `origin` 七类仍是按路径推断而非生产记录、`sampling` 已被 C8 证伪、`chain_method` 未登记 ⇒
 报告 §4 的四处缺口**逐一复核仍成立**。
 
-下一步由用户裁决：① F1–F3 是否在进入第 4 步前订正报告措辞；
-② 是否批准开始第 4 步身份闭集复裁（`chain_method` 登记 + 升 `RUN_ID_CONFIG_KEYS_VERSION`、
-`retry_kw` 分工、是否把外部挂点常驻化、完整 `run_id` / `workflow_id` 可生成性、跨世代兼容）。
+用户裁决（2026-11-15）：① F1–F3 **全部订正**，已在本报告 §3.1 落地（本轮只做文档修订，
+与第 4 步分开收口）；② **批准开始第 4 步身份闭集复裁**，但其范围被限定为
+「先冻结事实 → 逐项复裁承载关系 → 专门处理来源闭合 → 交付准入结论」，
+**本步不改 `exec_identity.py`、不登记 `chain_method`、不启动 runner**。
+`chain_method` 登记 / 升 `RUN_ID_CONFIG_KEYS_VERSION`、`retry_kw` 分工、外部挂点常驻化、
+完整号可生成性、跨世代兼容均是复裁的**输入与裁决项**，不是本轮已授权的实现动作。
 **最小 runner 在任何情况下仍需单独授权。**
 
 ---
@@ -290,3 +392,5 @@ D:/autoeis_env/Scripts/python.exe docs/round_2026-11-15/budget_chain_probe.py   
 > **最终结论（与用户判断一致，不因探针通过而改变）**：
 > **预算的数值传递链已有独立实测证据（限 C1–C8 覆盖的生产路径与测试工况），
 > 但预算来源溯源仍未闭合，完整执行身份仍不可生成。**
+>
+> F1–F3 的订正只收紧表述与证据边界，**不改变**上述结论中的任何一项。
