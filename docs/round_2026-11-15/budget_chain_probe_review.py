@@ -83,17 +83,32 @@ def main() -> int:
 
     # ---------------------------------------------------------------- A 基线
     head = git("rev-parse", "origin/main").decode().strip()
-    L.ck("A", "远端 origin/main = 8015721", head == BASE, head[:8])
+    # 审查报告自身会推进 main，故不能断言「当前 main == BASE」：
+    # 审查对象是 BASE 这个提交对象及其 blob，只要求它是当前 main 的祖先。
+    ancestor = subprocess.run(
+        ("git", "merge-base", "--is-ancestor", BASE, "origin/main"),
+        cwd=str(ROOT), capture_output=True).returncode == 0
+    L.ck("A", "8015721 是 origin/main 的祖先（审查报告提交后仍成立）",
+         ancestor, f"origin/main={head[:8]}")
+    L.ck("A", "8015721 提交对象可读",
+         git("cat-file", "-t", BASE).decode().strip() == "commit")
     parent = git("rev-parse", f"{BASE}^").decode().strip()
     L.ck("A", "父提交 = a4a4c59（第 2 步产出层）", parent == PARENT, parent[:8])
     changed = sorted(git("diff", "--name-only", PARENT, BASE).decode().split())
     expect = sorted([PROBE.as_posix(), REPORT.as_posix(), "docs/INDEX.md"])
     L.ck("A", "提交仅 3 文件、零生产改动", changed == expect, ", ".join(changed))
-    for rel in (PROBE, REPORT, Path("docs/INDEX.md"), Path("budget_params.py")):
-        oid = git("ls-tree", "origin/main", "--", rel.as_posix()).decode().split()[2]
+    for rel in (PROBE, REPORT, Path("budget_params.py")):
+        oid = git("ls-tree", BASE, "--", rel.as_posix()).decode().split()[2]
         blob = git("cat-file", "-p", oid)
-        L.ck("A", f"远端 blob 字节对齐 {rel.name}",
+        L.ck("A", f"8015721 的 blob 字节对齐 {rel.name}",
              sha(blob) == sha((ROOT / rel).read_bytes()), oid[:8])
+    # INDEX 会被本审查报告自身追加条目 ⇒ 不能与本地字节比；改核 BASE 相对父提交的单行 diff。
+    idx_old, idx_new = (git("show", f"{PARENT}:docs/INDEX.md"),
+                        git("show", f"{BASE}:docs/INDEX.md"))
+    L.ck("A", "8015721 的 INDEX 相对父提交仅追加第 3 步条目",
+         idx_old != idx_new and b"budget_chain_probe.py" in idx_new
+         and b"budget_chain_probe.py" not in idx_old,
+         f"parent={len(idx_old)}B, base={len(idx_new)}B")
 
     # ------------------------------------------------------------ B 独立性
     bad: list[tuple[str, int]] = []
