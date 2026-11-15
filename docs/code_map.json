@@ -1,0 +1,1549 @@
+{
+ "generated_by": "tools/repo_map.py",
+ "n_modules": 62,
+ "n_tests": 19,
+ "total_lines": 41119,
+ "layers": {
+  "L0": {
+   "desc": "数值内核：纯数学/模型定义，无文件 IO",
+   "modules": [
+    "bm_ad.py",
+    "bm_circuit.py",
+    "bm_core.py",
+    "bm_diff.py",
+    "bm_top.py",
+    "bm_ws.py",
+    "circuit_registry.py",
+    "drt.py"
+   ]
+  },
+  "L1": {
+   "desc": "数据与 IO：读谱、转换、批处理、参考实现",
+   "modules": [
+    "batch_2e.py",
+    "bm_real.py",
+    "bm_ref_rwp.py",
+    "convert_2e.py",
+    "convert_3e.py",
+    "fit_store.py",
+    "report_2e.py"
+   ]
+  },
+  "L2": {
+   "desc": "分析与诊断：门禁、可辨识性、相关矩阵、合成验收",
+   "modules": [
+    "bm_bench.py",
+    "bm_check.py",
+    "bm_corr.py",
+    "bm_evidence.py",
+    "bm_experiments.py",
+    "bm_grade.py",
+    "bm_ident.py",
+    "bm_identifiability.py",
+    "bm_kk.py",
+    "bm_top_gen.py",
+    "bm_zhit.py"
+   ]
+  },
+  "L3": {
+   "desc": "结果与呈现：唯一结果对象、静态图、交互面板",
+   "modules": [
+    "bm_dash.py",
+    "bm_figure.py",
+    "bm_result.py"
+   ]
+  },
+  "L4": {
+   "desc": "编排与入口：CLI、研究接口、跨族选择、命令行子命令",
+   "modules": [
+    "bm_select.py",
+    "bmdrt.py",
+    "cmd_diff.py",
+    "cmd_status.py",
+    "nested_fit.py",
+    "sweep_sigma_floor.py"
+   ]
+  },
+  "L5": {
+   "desc": "执行身份与审计：预算/采样/补丁包的契约与捕获",
+   "modules": [
+    "budget_capture_adapter.py",
+    "budget_params.py",
+    "capture_contract.py",
+    "exec_identity.py",
+    "patch_bundle.py",
+    "patch_bundle_io.py",
+    "sampler_capture.py",
+    "sampler_provenance.py"
+   ]
+  },
+  "L6": {
+   "desc": "测试：反例矩阵与回归",
+   "modules": [
+    "test_ad_gate.py",
+    "test_ad_gate_synth.py",
+    "test_audit_findings.py",
+    "test_bm_ad_e2e.py",
+    "test_bm_ad_sampler.py",
+    "test_bm_ad_select.py",
+    "test_budget_params.py",
+    "test_capture_contract.py",
+    "test_circuit_registry.py",
+    "test_contract.py",
+    "test_drt_signed.py",
+    "test_ecm.py",
+    "test_exec_identity.py",
+    "test_identity_p0.py",
+    "test_include_L.py",
+    "test_patch_bundle.py",
+    "test_sampler_capture.py",
+    "test_sampler_provenance.py",
+    "test_seed.py"
+   ]
+  }
+ },
+ "product_core": [
+  "bm_core.py",
+  "bm_dash.py",
+  "bm_diff.py",
+  "bm_figure.py",
+  "bm_kk.py",
+  "bm_real.py",
+  "bm_result.py",
+  "bm_top.py",
+  "bm_ws.py",
+  "bmdrt.py"
+ ],
+ "product_optional": [
+  "bm_ad.py",
+  "bm_bench.py",
+  "bm_check.py",
+  "bm_corr.py",
+  "bm_evidence.py",
+  "bm_experiments.py",
+  "bm_grade.py",
+  "bm_identifiability.py",
+  "bm_ref_rwp.py",
+  "bm_select.py",
+  "circuit_registry.py",
+  "cmd_status.py",
+  "convert_2e.py",
+  "convert_3e.py",
+  "drt.py",
+  "nested_fit.py"
+ ],
+ "not_for_product": [
+  "batch_2e.py",
+  "bm_circuit.py",
+  "bm_ident.py",
+  "bm_top_gen.py",
+  "bm_zhit.py",
+  "budget_capture_adapter.py",
+  "budget_params.py",
+  "capture_contract.py",
+  "cmd_diff.py",
+  "exec_identity.py",
+  "fit_store.py",
+  "patch_bundle.py",
+  "patch_bundle_io.py",
+  "report_2e.py",
+  "sampler_capture.py",
+  "sampler_provenance.py",
+  "sweep_sigma_floor.py",
+  "test_ad_gate.py",
+  "test_ad_gate_synth.py",
+  "test_audit_findings.py",
+  "test_bm_ad_e2e.py",
+  "test_bm_ad_sampler.py",
+  "test_bm_ad_select.py",
+  "test_budget_params.py",
+  "test_capture_contract.py",
+  "test_circuit_registry.py",
+  "test_contract.py",
+  "test_drt_signed.py",
+  "test_ecm.py",
+  "test_exec_identity.py",
+  "test_identity_p0.py",
+  "test_include_L.py",
+  "test_patch_bundle.py",
+  "test_sampler_capture.py",
+  "test_sampler_provenance.py",
+  "test_seed.py"
+ ],
+ "coupling": {
+  "uses_out_dir": [
+   "batch_2e.py",
+   "bm_figure.py",
+   "bmdrt.py",
+   "cmd_status.py",
+   "nested_fit.py",
+   "report_2e.py",
+   "sweep_sigma_floor.py",
+   "test_audit_findings.py",
+   "test_bm_ad_e2e.py",
+   "test_contract.py",
+   "test_drt_signed.py",
+   "test_ecm.py",
+   "test_include_L.py",
+   "test_patch_bundle.py"
+  ],
+  "sys_path_hack": [
+   "bm_zhit.py",
+   "nested_fit.py",
+   "patch_bundle_io.py",
+   "sweep_sigma_floor.py",
+   "test_ad_gate.py",
+   "test_ad_gate_synth.py",
+   "test_audit_findings.py",
+   "test_bm_ad_e2e.py",
+   "test_bm_ad_sampler.py",
+   "test_bm_ad_select.py",
+   "test_budget_params.py",
+   "test_capture_contract.py",
+   "test_circuit_registry.py",
+   "test_contract.py",
+   "test_drt_signed.py",
+   "test_exec_identity.py",
+   "test_identity_p0.py",
+   "test_include_L.py",
+   "test_patch_bundle.py",
+   "test_sampler_capture.py",
+   "test_sampler_provenance.py",
+   "test_seed.py"
+  ],
+  "entry_points": [
+   "batch_2e.py",
+   "bm_ad.py",
+   "bm_bench.py",
+   "bm_check.py",
+   "bm_core.py",
+   "bm_corr.py",
+   "bm_dash.py",
+   "bm_diff.py",
+   "bm_evidence.py",
+   "bm_experiments.py",
+   "bm_figure.py",
+   "bm_grade.py",
+   "bm_ident.py",
+   "bm_identifiability.py",
+   "bm_kk.py",
+   "bm_real.py",
+   "bm_ref_rwp.py",
+   "bm_result.py",
+   "bm_select.py",
+   "bm_top.py",
+   "bm_top_gen.py",
+   "bm_ws.py",
+   "bm_zhit.py",
+   "bmdrt.py",
+   "budget_capture_adapter.py",
+   "budget_params.py",
+   "capture_contract.py",
+   "convert_2e.py",
+   "convert_3e.py",
+   "drt.py",
+   "fit_store.py",
+   "nested_fit.py",
+   "patch_bundle.py",
+   "patch_bundle_io.py",
+   "report_2e.py",
+   "sampler_capture.py",
+   "sampler_provenance.py",
+   "sweep_sigma_floor.py",
+   "test_ad_gate.py",
+   "test_ad_gate_synth.py",
+   "test_audit_findings.py",
+   "test_bm_ad_e2e.py",
+   "test_bm_ad_sampler.py",
+   "test_bm_ad_select.py",
+   "test_budget_params.py",
+   "test_capture_contract.py",
+   "test_circuit_registry.py",
+   "test_contract.py",
+   "test_drt_signed.py",
+   "test_ecm.py",
+   "test_exec_identity.py",
+   "test_identity_p0.py",
+   "test_include_L.py",
+   "test_patch_bundle.py",
+   "test_sampler_capture.py",
+   "test_sampler_provenance.py",
+   "test_seed.py"
+  ],
+  "most_depended": [
+   [
+    "bm_core",
+    17
+   ],
+   [
+    "bm_real",
+    13
+   ],
+   [
+    "bm_experiments",
+    8
+   ],
+   [
+    "bm_ad",
+    6
+   ],
+   [
+    "bm_top",
+    6
+   ],
+   [
+    "bmdrt",
+    6
+   ],
+   [
+    "exec_identity",
+    6
+   ],
+   [
+    "bm_diff",
+    4
+   ],
+   [
+    "sampler_capture",
+    4
+   ],
+   [
+    "sampler_provenance",
+    4
+   ]
+  ]
+ },
+ "layer_violations": [
+  {
+   "src": "bm_ad",
+   "src_layer": "L0",
+   "dep": "bm_kk",
+   "dep_layer": "L2"
+  },
+  {
+   "src": "bm_check",
+   "src_layer": "L2",
+   "dep": "bm_select",
+   "dep_layer": "L4"
+  },
+  {
+   "src": "bm_core",
+   "src_layer": "L0",
+   "dep": "sampler_capture",
+   "dep_layer": "L5"
+  },
+  {
+   "src": "bm_diff",
+   "src_layer": "L0",
+   "dep": "bm_grade",
+   "dep_layer": "L2"
+  },
+  {
+   "src": "bm_real",
+   "src_layer": "L1",
+   "dep": "bm_corr",
+   "dep_layer": "L2"
+  },
+  {
+   "src": "bm_real",
+   "src_layer": "L1",
+   "dep": "bm_experiments",
+   "dep_layer": "L2"
+  },
+  {
+   "src": "bm_real",
+   "src_layer": "L1",
+   "dep": "bm_grade",
+   "dep_layer": "L2"
+  },
+  {
+   "src": "bm_real",
+   "src_layer": "L1",
+   "dep": "bm_kk",
+   "dep_layer": "L2"
+  },
+  {
+   "src": "bm_top",
+   "src_layer": "L0",
+   "dep": "sampler_capture",
+   "dep_layer": "L5"
+  },
+  {
+   "src": "drt",
+   "src_layer": "L0",
+   "dep": "fit_store",
+   "dep_layer": "L1"
+  },
+  {
+   "src": "sweep_sigma_floor",
+   "src_layer": "L4",
+   "dep": "test_ecm",
+   "dep_layer": "L6"
+  }
+ ],
+ "modules": [
+  {
+   "file": "batch_2e.py",
+   "layer": "L1",
+   "role": "2E 批处理调度 + 交付",
+   "product": "no",
+   "stability": "research",
+   "module": "batch_2e",
+   "lines": 449,
+   "doc": "batch_2e.py —— 把 convert_2e.py 产出的 117 条谱批量跑完，并交付图片/数据。",
+   "deps": [
+    "bm_real"
+   ],
+   "has_main": true,
+   "uses_out": true,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 1
+  },
+  {
+   "file": "bm_ad.py",
+   "layer": "L0",
+   "role": "低频吸附电感元件 `Z_ad`",
+   "product": "opt",
+   "stability": "stable",
+   "module": "bm_ad",
+   "lines": 333,
+   "doc": "低频吸附电感元件（`Z_ad`）。",
+   "deps": [
+    "bm_kk"
+   ],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 6
+  },
+  {
+   "file": "bm_bench.py",
+   "layer": "L2",
+   "role": "合成 benchmark（难度递增案例）",
+   "product": "opt",
+   "stability": "stable",
+   "module": "bm_bench",
+   "lines": 331,
+   "doc": "合成数据 benchmark：一组难度递增的案例，量化\"拟合度到底怎么样\"。",
+   "deps": [
+    "bm_core",
+    "bm_experiments"
+   ],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 1
+  },
+  {
+   "file": "bm_check.py",
+   "layer": "L2",
+   "role": "合成数据端到端验收 PASS/FAIL",
+   "product": "opt",
+   "stability": "stable",
+   "module": "bm_check",
+   "lines": 416,
+   "doc": "合成数据端到端验收：跑一遍就给出 PASS / FAIL 清单。",
+   "deps": [
+    "bm_core",
+    "bm_experiments",
+    "bm_ident",
+    "bm_select",
+    "bm_top"
+   ],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 1
+  },
+  {
+   "file": "bm_circuit.py",
+   "layer": "L0",
+   "role": "等效电路图绘制（模式 A）",
+   "product": "no",
+   "stability": "stable",
+   "module": "bm_circuit",
+   "lines": 413,
+   "doc": "等效电路图（模式 A：BM-DRT 对应的电路）。",
+   "deps": [
+    "bm_core",
+    "bm_diff"
+   ],
+   "has_main": false,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 1
+  },
+  {
+   "file": "bm_core.py",
+   "layer": "L0",
+   "role": "贝叶斯混合（stick-breaking + HN）voigt 族模型与 `fit`",
+   "product": "core",
+   "stability": "frozen",
+   "module": "bm_core",
+   "lines": 807,
+   "doc": "BM-DRT：用贝叶斯混合自动定弛豫峰数（对齐 Liu & Ciucci 2025 原方案）",
+   "deps": [
+    "bm_ad",
+    "bm_diff",
+    "sampler_capture"
+   ],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 17
+  },
+  {
+   "file": "bm_corr.py",
+   "layer": "L2",
+   "role": "全参数后验相关矩阵 + 置信区间",
+   "product": "opt",
+   "stability": "stable",
+   "module": "bm_corr",
+   "lines": 394,
+   "doc": "bm_corr —— 全参数后验相关矩阵 + 置信区间表（\"别只看误差\"的那一层证据）。",
+   "deps": [
+    "bm_core"
+   ],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 2
+  },
+  {
+   "file": "bm_dash.py",
+   "layer": "L3",
+   "role": "自包含 HTML 交互面板（零运行时依赖）",
+   "product": "core",
+   "stability": "stable",
+   "module": "bm_dash",
+   "lines": 1650,
+   "doc": "bm_dash.py —— 单文件交互式分析面板（自包含 HTML，零运行时依赖）。",
+   "deps": [
+    "bm_result"
+   ],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 1
+  },
+  {
+   "file": "bm_diff.py",
+   "layer": "L0",
+   "role": "Warburg 族扩散元件与 HN↔Warburg 退化诊断",
+   "product": "core",
+   "stability": "stable",
+   "module": "bm_diff",
+   "lines": 912,
+   "doc": "扩散阻抗元件（Warburg 族）与 HN↔Warburg 退化诊断。",
+   "deps": [
+    "bm_core",
+    "bm_grade"
+   ],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 4
+  },
+  {
+   "file": "bm_evidence.py",
+   "layer": "L2",
+   "role": "证据卡生成器（L3 唯一输出形态，只读消费 JSON）",
+   "product": "opt",
+   "stability": "stable",
+   "module": "bm_evidence",
+   "lines": 1093,
+   "doc": "证据卡生成器（L3 的唯一输出形态）：只读消费既有 JSON，不重算、不裁决、不排序。",
+   "deps": [
+    "bm_grade",
+    "bm_ws"
+   ],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 0
+  },
+  {
+   "file": "bm_experiments.py",
+   "layer": "L2",
+   "role": "全部实验脚本分发（`acf_max` 等指标也在这里）",
+   "product": "opt",
+   "stability": "frozen",
+   "module": "bm_experiments",
+   "lines": 595,
+   "doc": "BM-DRT 的全部实验脚本，用第一个命令行参数选择：",
+   "deps": [
+    "bm_core"
+   ],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 8
+  },
+  {
+   "file": "bm_figure.py",
+   "layer": "L3",
+   "role": "出版级静态图（与面板共用同一份数据）",
+   "product": "core",
+   "stability": "stable",
+   "module": "bm_figure",
+   "lines": 595,
+   "doc": "bm_figure.py —— 出版级静态图（matplotlib），与交互面板共用同一份数据。",
+   "deps": [
+    "bm_result"
+   ],
+   "has_main": true,
+   "uses_out": true,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 1
+  },
+  {
+   "file": "bm_grade.py",
+   "layer": "L2",
+   "role": "证据资格分档 A/B/C（只贴标签）",
+   "product": "opt",
+   "stability": "stable",
+   "module": "bm_grade",
+   "lines": 295,
+   "doc": "证据资格分档（A / B / C）：只贴标签，不参与任何决策。",
+   "deps": [],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 3
+  },
+  {
+   "file": "bm_ident.py",
+   "layer": "L2",
+   "role": "峰位偏差归因（代码错 vs 估计量性质）",
+   "product": "no",
+   "stability": "research",
+   "module": "bm_ident",
+   "lines": 138,
+   "doc": "峰位偏差的归因：是代码错，还是估计量的性质？",
+   "deps": [
+    "bm_core"
+   ],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 1
+  },
+  {
+   "file": "bm_identifiability.py",
+   "layer": "L2",
+   "role": "统一可辨识性报告（六类诊断 / 三态）",
+   "product": "opt",
+   "stability": "stable",
+   "module": "bm_identifiability",
+   "lines": 451,
+   "doc": "统一参数可辨识性报告（P0 ①）：把 voigt / nested 的零散诊断归一到同一 schema。",
+   "deps": [],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 1
+  },
+  {
+   "file": "bm_kk.py",
+   "layer": "L2",
+   "role": "拟合前 Lin-KK 门禁（gate/warn/off）",
+   "product": "core",
+   "stability": "frozen",
+   "module": "bm_kk",
+   "lines": 883,
+   "doc": "拟合前的 Lin-KK（线性时不变）门禁。",
+   "deps": [
+    "fit_store"
+   ],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 3
+  },
+  {
+   "file": "bm_real.py",
+   "layer": "L1",
+   "role": "真实数据主程序：读谱 / Lin-KK 门禁 / 选 K / 报告（**职责过载，需拆分**）",
+   "product": "core",
+   "stability": "frozen",
+   "module": "bm_real",
+   "lines": 3123,
+   "doc": "真实 EIS 数据主程序：DRT 只做预判断，K 由证据选，不由 DRT 定。",
+   "deps": [
+    "bm_ad",
+    "bm_circuit",
+    "bm_core",
+    "bm_corr",
+    "bm_diff",
+    "bm_experiments",
+    "bm_grade",
+    "bm_kk",
+    "bm_ref_rwp",
+    "bm_ws",
+    "drt"
+   ],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 13
+  },
+  {
+   "file": "bm_ref_rwp.py",
+   "layer": "L1",
+   "role": "参考性 Rwp（独立 LS 重拟合，只作对照）",
+   "product": "opt",
+   "stability": "frozen",
+   "module": "bm_ref_rwp",
+   "lines": 398,
+   "doc": "bm_ref_rwp.py —— **参考性 Rwp**（独立 LS 重拟合），只作跨工具对照。",
+   "deps": [
+    "bm_core"
+   ],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 3
+  },
+  {
+   "file": "bm_result.py",
+   "layer": "L3",
+   "role": "`AnalysisResult` 唯一结果来源与导出包",
+   "product": "core",
+   "stability": "stable",
+   "module": "bm_result",
+   "lines": 750,
+   "doc": "bm_result.py —— 一次分析结果的**唯一来源**（AnalysisResult）与导出包。",
+   "deps": [
+    "bm_core",
+    "bm_experiments",
+    "bm_ref_rwp"
+   ],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 3
+  },
+  {
+   "file": "bm_select.py",
+   "layer": "L4",
+   "role": "M4 跨族选择器骨架（voigt vs nested）",
+   "product": "opt",
+   "stability": "research",
+   "module": "bm_select",
+   "lines": 1748,
+   "doc": "M4 跨族选择器（骨架）：voigt 族（`bm_core`）vs nested 族（`bm_top`）。",
+   "deps": [
+    "bm_core",
+    "bm_real",
+    "bm_top",
+    "bm_top_gen"
+   ],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 3
+  },
+  {
+   "file": "bm_top.py",
+   "layer": "L0",
+   "role": "嵌套并联拓扑 `z_nested` 正演 + `fit_top` 独立采样路径",
+   "product": "core",
+   "stability": "frozen",
+   "module": "bm_top",
+   "lines": 1088,
+   "doc": "嵌套并联电路拓扑（M1 正演 + `fit_top()` 独立采样路径）。",
+   "deps": [
+    "sampler_capture"
+   ],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 6
+  },
+  {
+   "file": "bm_top_gen.py",
+   "layer": "L2",
+   "role": "nested 拓扑独立生成器（合成侧）",
+   "product": "no",
+   "stability": "research",
+   "module": "bm_top_gen",
+   "lines": 646,
+   "doc": "嵌套并联拓扑的**独立生成器**（M3 档 1 的生成侧）。",
+   "deps": [
+    "bm_top"
+   ],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 1
+  },
+  {
+   "file": "bm_ws.py",
+   "layer": "L0",
+   "role": "Ws 判据候选量（生产模块，被 `bm_real` 消费）",
+   "product": "core",
+   "stability": "frozen",
+   "module": "bm_ws",
+   "lines": 692,
+   "doc": "Ws 判据的候选诊断量（**生产模块**：`bm_real.diffusion_gate` / `select_mechanism` 消费）。",
+   "deps": [],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 2
+  },
+  {
+   "file": "bm_zhit.py",
+   "layer": "L2",
+   "role": "Z-HIT 自洽检验一阶形式（离线原型，**已否决不接**）",
+   "product": "no",
+   "stability": "research",
+   "module": "bm_zhit",
+   "lines": 427,
+   "doc": "Z-HIT 自洽检验的**一阶形式**（离线原型）。",
+   "deps": [
+    "bm_real"
+   ],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": true,
+   "hardcwd": false,
+   "imported_by": 0
+  },
+  {
+   "file": "bmdrt.py",
+   "layer": "L4",
+   "role": "唯一 CLI 入口（`cmd_*.py` 自动注册子命令）",
+   "product": "core",
+   "stability": "stable",
+   "module": "bmdrt",
+   "lines": 872,
+   "doc": "bmdrt —— BM-DRT 的唯一入口。",
+   "deps": [
+    "bm_bench",
+    "bm_check",
+    "bm_real"
+   ],
+   "has_main": true,
+   "uses_out": true,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 6
+  },
+  {
+   "file": "budget_capture_adapter.py",
+   "layer": "L5",
+   "role": "捕获事件 → 六键的拒绝式适配层",
+   "product": "no",
+   "stability": "frozen",
+   "module": "budget_capture_adapter",
+   "lines": 314,
+   "doc": "捕获事件 → `budget_params` 六键的**拒绝式适配层**（身份链 P0 / G2）。",
+   "deps": [],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 2
+  },
+  {
+   "file": "budget_params.py",
+   "layer": "L5",
+   "role": "`budget_params` 产出层（五项预算纯函数）",
+   "product": "no",
+   "stability": "frozen",
+   "module": "budget_params",
+   "lines": 687,
+   "doc": "`budget_params` v1.4 产出层：五项实际生效预算的纯函数构造与校验。",
+   "deps": [],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 2
+  },
+  {
+   "file": "capture_contract.py",
+   "layer": "L5",
+   "role": "采集契约：路径规范化 / harness 归属 / 事件归属",
+   "product": "no",
+   "stability": "frozen",
+   "module": "capture_contract",
+   "lines": 601,
+   "doc": "采集契约（capture contract）：路径规范化、harness 归属、采样事件归属。",
+   "deps": [],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 3
+  },
+  {
+   "file": "circuit_registry.py",
+   "layer": "L0",
+   "role": "候选电路注册表（schema 承载能力）",
+   "product": "opt",
+   "stability": "research",
+   "module": "circuit_registry",
+   "lines": 2195,
+   "doc": "circuit_registry.py —— 候选电路注册表（阶段 0B 最小原型）",
+   "deps": [],
+   "has_main": false,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 2
+  },
+  {
+   "file": "cmd_diff.py",
+   "layer": "L4",
+   "role": "子命令：扩散项数学与可辨识性回归",
+   "product": "no",
+   "stability": "stable",
+   "module": "cmd_diff",
+   "lines": 414,
+   "doc": "cmd_diff —— 扩散项的数学与可辨识性回归测试（不需要 MCMC）。",
+   "deps": [
+    "bm_diff"
+   ],
+   "has_main": false,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 0
+  },
+  {
+   "file": "cmd_status.py",
+   "layer": "L4",
+   "role": "子命令：查看 out/ 里跑过的结果",
+   "product": "opt",
+   "stability": "stable",
+   "module": "cmd_status",
+   "lines": 141,
+   "doc": "cmd_status —— 看 out/ 里所有跑过的结果，不用重跑。",
+   "deps": [
+    "bmdrt"
+   ],
+   "has_main": false,
+   "uses_out": true,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 0
+  },
+  {
+   "file": "convert_2e.py",
+   "layer": "L1",
+   "role": "Gamry 2E xlsx → 三列 CSV",
+   "product": "opt",
+   "stability": "stable",
+   "module": "convert_2e",
+   "lines": 225,
+   "doc": "convert_2e.py —— EISmeasurements/ 里 13 个 \"2E\" Gamry xlsx → bmdrt 能吃的三列 CSV。",
+   "deps": [],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 0
+  },
+  {
+   "file": "convert_3e.py",
+   "layer": "L1",
+   "role": "Gamry 3E xlsx → 三列 CSV",
+   "product": "opt",
+   "stability": "stable",
+   "module": "convert_3e",
+   "lines": 451,
+   "doc": "convert_3e.py —— EISmeasurements/3E data/ 的 23 个 xlsx → 三列 CSV。",
+   "deps": [],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 0
+  },
+  {
+   "file": "drt.py",
+   "layer": "L0",
+   "role": "DRT 粗解（只报过程数/时间常数/电阻）",
+   "product": "opt",
+   "stability": "stable",
+   "module": "drt",
+   "lines": 421,
+   "doc": "DRT（弛豫时间分布）粗解 —— 只回答\"有几个过程、各自时间常数和电阻\"。",
+   "deps": [
+    "fit_store"
+   ],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 2
+  },
+  {
+   "file": "exec_identity.py",
+   "layer": "L5",
+   "role": "执行身份契约 v1.5（纯函数：`run_id`/`workflow_id`）",
+   "product": "no",
+   "stability": "frozen",
+   "module": "exec_identity",
+   "lines": 1728,
+   "doc": "exec_identity.py —— 执行身份契约 `v1.4` 的**纯函数**实现（不跑拟合、不写产物）。",
+   "deps": [],
+   "has_main": false,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 6
+  },
+  {
+   "file": "fit_store.py",
+   "layer": "L1",
+   "role": "drt 命令行模式的兼容读取器",
+   "product": "no",
+   "stability": "stable",
+   "module": "fit_store",
+   "lines": 139,
+   "doc": "drt.py 命令行模式的兼容读取器（只依赖 numpy）。",
+   "deps": [],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 2
+  },
+  {
+   "file": "nested_fit.py",
+   "layer": "L4",
+   "role": "nested 独立研究接口（**未接主流程**）",
+   "product": "opt",
+   "stability": "research",
+   "module": "nested_fit",
+   "lines": 516,
+   "doc": "nested_fit.py —— nested 拓扑的**独立研究性接口**（不接 `bmdrt.py` 主流程）。",
+   "deps": [
+    "bm_core",
+    "bm_experiments",
+    "bm_real",
+    "bm_select",
+    "bm_top"
+   ],
+   "has_main": true,
+   "uses_out": true,
+   "sys_path_hack": true,
+   "hardcwd": false,
+   "imported_by": 1
+  },
+  {
+   "file": "patch_bundle.py",
+   "layer": "L5",
+   "role": "补丁包契约（纯函数层）",
+   "product": "no",
+   "stability": "frozen",
+   "module": "patch_bundle",
+   "lines": 672,
+   "doc": "补丁包契约（patch bundle contract）：纯函数层。",
+   "deps": [],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 2
+  },
+  {
+   "file": "patch_bundle_io.py",
+   "layer": "L5",
+   "role": "补丁包 I/O（采集 / 独立重建）",
+   "product": "no",
+   "stability": "frozen",
+   "module": "patch_bundle_io",
+   "lines": 509,
+   "doc": "补丁包的 I/O 层：从真实工作树采集、在独立目录重建。",
+   "deps": [
+    "capture_contract",
+    "exec_identity",
+    "patch_bundle"
+   ],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": true,
+   "hardcwd": false,
+   "imported_by": 1
+  },
+  {
+   "file": "report_2e.py",
+   "layer": "L1",
+   "role": "2E 汇总表 → 可复核交付说明",
+   "product": "no",
+   "stability": "research",
+   "module": "report_2e",
+   "lines": 223,
+   "doc": "report_2e.py —— 由 batch_2e 的汇总表生成一份可复核的交付说明。",
+   "deps": [],
+   "has_main": true,
+   "uses_out": true,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 0
+  },
+  {
+   "file": "sampler_capture.py",
+   "layer": "L5",
+   "role": "采样参数捕获层（两处生产构造点）",
+   "product": "no",
+   "stability": "frozen",
+   "module": "sampler_capture",
+   "lines": 528,
+   "doc": "采样参数捕获层（阶段 C 第一轮）：在两处生产构造点读八项配置。",
+   "deps": [
+    "budget_capture_adapter",
+    "sampler_provenance"
+   ],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 4
+  },
+  {
+   "file": "sampler_provenance.py",
+   "layer": "L5",
+   "role": "采样参数来源三态（请求/解析/观测）",
+   "product": "no",
+   "stability": "frozen",
+   "module": "sampler_provenance",
+   "lines": 685,
+   "doc": "采样参数来源契约（sampler provenance）：八项配置的请求 / 解析 / 观测三态。",
+   "deps": [],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 4
+  },
+  {
+   "file": "sweep_sigma_floor.py",
+   "layer": "L4",
+   "role": "σ 噪声地板敏感性扫描",
+   "product": "no",
+   "stability": "research",
+   "module": "sweep_sigma_floor",
+   "lines": 528,
+   "doc": "σ 噪声地板敏感性扫描。",
+   "deps": [
+    "test_ecm"
+   ],
+   "has_main": true,
+   "uses_out": true,
+   "sys_path_hack": true,
+   "hardcwd": false,
+   "imported_by": 0
+  },
+  {
+   "file": "test_ad_gate.py",
+   "layer": "L6",
+   "role": "`detect_ad` 边界 + 不变性",
+   "product": "no",
+   "stability": "stable",
+   "module": "test_ad_gate",
+   "lines": 305,
+   "doc": "test_ad_gate.py —— M6 第一阶段：`detect_ad` 边界状态 + 不变性回归。",
+   "deps": [
+    "bm_ad",
+    "bm_experiments",
+    "bm_real"
+   ],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": true,
+   "hardcwd": false,
+   "imported_by": 0
+  },
+  {
+   "file": "test_ad_gate_synth.py",
+   "layer": "L6",
+   "role": "吸附门控合成矩阵",
+   "product": "no",
+   "stability": "stable",
+   "module": "test_ad_gate_synth",
+   "lines": 615,
+   "doc": "test_ad_gate_synth.py —— M6 合成谱门控矩阵（独立生成器，不调用被测试模型）。",
+   "deps": [
+    "bm_experiments",
+    "bm_real"
+   ],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": true,
+   "hardcwd": false,
+   "imported_by": 0
+  },
+  {
+   "file": "test_audit_findings.py",
+   "layer": "L6",
+   "role": "审查缺陷可复现",
+   "product": "no",
+   "stability": "stable",
+   "module": "test_audit_findings",
+   "lines": 281,
+   "doc": "test_audit_findings.py —— 代码审查发现的缺陷的可复现测试。",
+   "deps": [
+    "bm_core",
+    "bm_real"
+   ],
+   "has_main": true,
+   "uses_out": true,
+   "sys_path_hack": true,
+   "hardcwd": false,
+   "imported_by": 0
+  },
+  {
+   "file": "test_bm_ad_e2e.py",
+   "layer": "L6",
+   "role": "吸附端到端接线",
+   "product": "no",
+   "stability": "stable",
+   "module": "test_bm_ad_e2e",
+   "lines": 156,
+   "doc": "test_bm_ad_e2e.py —— M4 端到端接线：fit_one / init_values / run / CLI。",
+   "deps": [
+    "bm_ad",
+    "bm_real",
+    "bmdrt"
+   ],
+   "has_main": true,
+   "uses_out": true,
+   "sys_path_hack": true,
+   "hardcwd": false,
+   "imported_by": 0
+  },
+  {
+   "file": "test_bm_ad_sampler.py",
+   "layer": "L6",
+   "role": "吸附接入采样器 + 合成标定",
+   "product": "no",
+   "stability": "stable",
+   "module": "test_bm_ad_sampler",
+   "lines": 174,
+   "doc": "test_bm_ad_sampler.py —— M2（吸附元件接入采样器）+ M3（合成标定）。",
+   "deps": [
+    "bm_ad",
+    "bm_core"
+   ],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": true,
+   "hardcwd": false,
+   "imported_by": 0
+  },
+  {
+   "file": "test_bm_ad_select.py",
+   "layer": "L6",
+   "role": "`detect_ad` 三闸 + 选择器",
+   "product": "no",
+   "stability": "stable",
+   "module": "test_bm_ad_select",
+   "lines": 259,
+   "doc": "test_bm_ad_select.py —— M4：detect_ad（门控三闸）+ select_adsorption（外层选择器）。",
+   "deps": [
+    "bm_ad",
+    "bm_experiments",
+    "bm_real"
+   ],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": true,
+   "hardcwd": false,
+   "imported_by": 0
+  },
+  {
+   "file": "test_budget_params.py",
+   "layer": "L6",
+   "role": "budget_params v1.4 产出层",
+   "product": "no",
+   "stability": "stable",
+   "module": "test_budget_params",
+   "lines": 616,
+   "doc": "test_budget_params.py —— ③ 第 2 步 `budget_params` v1.4 产出层正式测试。",
+   "deps": [
+    "budget_params",
+    "exec_identity"
+   ],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": true,
+   "hardcwd": false,
+   "imported_by": 0
+  },
+  {
+   "file": "test_capture_contract.py",
+   "layer": "L6",
+   "role": "采集契约 C-1/C-2/C-3",
+   "product": "no",
+   "stability": "stable",
+   "module": "test_capture_contract",
+   "lines": 599,
+   "doc": "test_capture_contract.py —— 采集契约（C-1 harness / C-2 路径 / C-3 采样事件）反例矩阵。",
+   "deps": [
+    "capture_contract",
+    "exec_identity",
+    "test_exec_identity"
+   ],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": true,
+   "hardcwd": false,
+   "imported_by": 0
+  },
+  {
+   "file": "test_circuit_registry.py",
+   "layer": "L6",
+   "role": "registry schema 契约",
+   "product": "no",
+   "stability": "stable",
+   "module": "test_circuit_registry",
+   "lines": 1262,
+   "doc": "test_circuit_registry.py —— 阶段 0C：schema 契约测试（registry 0.2.0）。",
+   "deps": [
+    "bm_top",
+    "circuit_registry"
+   ],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": true,
+   "hardcwd": false,
+   "imported_by": 0
+  },
+  {
+   "file": "test_contract.py",
+   "layer": "L6",
+   "role": "二轮审查四组契约回归",
+   "product": "no",
+   "stability": "stable",
+   "module": "test_contract",
+   "lines": 1222,
+   "doc": "test_contract.py —— 二轮代码审查 §5 的四组「契约」回归，防退化。",
+   "deps": [
+    "batch_2e",
+    "bm_core",
+    "bm_corr",
+    "bm_dash",
+    "bm_figure",
+    "bm_identifiability",
+    "bm_kk",
+    "bm_real",
+    "bm_ref_rwp",
+    "bm_result",
+    "bm_select",
+    "bm_top",
+    "bmdrt",
+    "nested_fit"
+   ],
+   "has_main": true,
+   "uses_out": true,
+   "sys_path_hack": true,
+   "hardcwd": false,
+   "imported_by": 0
+  },
+  {
+   "file": "test_drt_signed.py",
+   "layer": "L6",
+   "role": "有符号 DRT 方案 A",
+   "product": "no",
+   "stability": "stable",
+   "module": "test_drt_signed",
+   "lines": 183,
+   "doc": "test_drt_signed.py —— M5 方案 A（有符号 DRT）的可复现测试。",
+   "deps": [
+    "bm_core",
+    "drt"
+   ],
+   "has_main": true,
+   "uses_out": true,
+   "sys_path_hack": true,
+   "hardcwd": false,
+   "imported_by": 0
+  },
+  {
+   "file": "test_ecm.py",
+   "layer": "L6",
+   "role": "AutoECM 数据端到端回归",
+   "product": "no",
+   "stability": "stable",
+   "module": "test_ecm",
+   "lines": 553,
+   "doc": "test_ecm.py —— 用 AutoECM 的 ECM 模拟数据给 bmdrt 做端到端回归。",
+   "deps": [
+    "bm_real",
+    "bmdrt"
+   ],
+   "has_main": true,
+   "uses_out": true,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 2
+  },
+  {
+   "file": "test_exec_identity.py",
+   "layer": "L6",
+   "role": "身份 v1.4 反例矩阵 T/W/S/Y/M/X/C 七组",
+   "product": "no",
+   "stability": "stable",
+   "module": "test_exec_identity",
+   "lines": 1293,
+   "doc": "test_exec_identity.py —— 执行身份契约 v1.4 的反例矩阵（T/W/S/Y/M/X/C 七组）。",
+   "deps": [
+    "circuit_registry",
+    "exec_identity"
+   ],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": true,
+   "hardcwd": false,
+   "imported_by": 2
+  },
+  {
+   "file": "test_identity_p0.py",
+   "layer": "L6",
+   "role": "身份 P0 四项反例 + v1.5 版本升级",
+   "product": "no",
+   "stability": "stable",
+   "module": "test_identity_p0",
+   "lines": 680,
+   "doc": "test_identity_p0.py —— 身份链 P0 修复的四项反例 + 版本升级（v1.5）。",
+   "deps": [
+    "budget_capture_adapter",
+    "budget_params",
+    "exec_identity",
+    "sampler_capture",
+    "sampler_provenance",
+    "test_exec_identity"
+   ],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": true,
+   "hardcwd": false,
+   "imported_by": 0
+  },
+  {
+   "file": "test_include_L.py",
+   "layer": "L6",
+   "role": "`include_L` 对照（单变量）",
+   "product": "no",
+   "stability": "stable",
+   "module": "test_include_L",
+   "lines": 168,
+   "doc": "对照实验：同一条谱、同一 σ 地板，只把 `include_L` 打开。",
+   "deps": [
+    "bmdrt",
+    "test_ecm"
+   ],
+   "has_main": true,
+   "uses_out": true,
+   "sys_path_hack": true,
+   "hardcwd": false,
+   "imported_by": 0
+  },
+  {
+   "file": "test_patch_bundle.py",
+   "layer": "L6",
+   "role": "补丁包 15 格 + 真实 Git 往返 7 格",
+   "product": "no",
+   "stability": "stable",
+   "module": "test_patch_bundle",
+   "lines": 574,
+   "doc": "test_patch_bundle.py —— 补丁包契约的反例矩阵（纯函数 15 格 + 真实 Git 往返 7 格）。",
+   "deps": [
+    "capture_contract",
+    "exec_identity",
+    "patch_bundle",
+    "patch_bundle_io"
+   ],
+   "has_main": true,
+   "uses_out": true,
+   "sys_path_hack": true,
+   "hardcwd": false,
+   "imported_by": 0
+  },
+  {
+   "file": "test_sampler_capture.py",
+   "layer": "L6",
+   "role": "捕获层 28 格",
+   "product": "no",
+   "stability": "stable",
+   "module": "test_sampler_capture",
+   "lines": 468,
+   "doc": "test_sampler_capture.py —— ③ 阶段 C 第一轮：捕获层的 28 格。",
+   "deps": [
+    "sampler_capture",
+    "sampler_provenance"
+   ],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": true,
+   "hardcwd": false,
+   "imported_by": 0
+  },
+  {
+   "file": "test_sampler_provenance.py",
+   "layer": "L6",
+   "role": "采样来源 15 格 + 接口护栏",
+   "product": "no",
+   "stability": "stable",
+   "module": "test_sampler_provenance",
+   "lines": 927,
+   "doc": "test_sampler_provenance.py —— ③ 阶段 B 的 15 格反例矩阵 + 接口护栏。",
+   "deps": [
+    "sampler_provenance"
+   ],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": true,
+   "hardcwd": false,
+   "imported_by": 0
+  },
+  {
+   "file": "test_seed.py",
+   "layer": "L6",
+   "role": "sampler seed 传递链",
+   "product": "no",
+   "stability": "stable",
+   "module": "test_seed",
+   "lines": 308,
+   "doc": "test_seed.py —— B3b：sampler seed 的可控传递（只测种子链路，不改采样策略）。",
+   "deps": [
+    "bm_core",
+    "bm_real",
+    "bmdrt"
+   ],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": true,
+   "hardcwd": false,
+   "imported_by": 0
+  }
+ ]
+}

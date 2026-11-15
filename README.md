@@ -459,6 +459,7 @@ not_compared, rejected_by_kk}`（旧结果文件里的 `ok` 是 `converged` 的�
 
 | 文档 | 内容 |
 |------|------|
+| `docs/CODE_MAP.md` | **代码地图（分层 / 产品候选 / 软件化阻塞项）**：62 个模块按 L0–L6 分层、逐模块职责与产品可用性、产品核心 10 个 + 依赖闭包 26 个、五个阻塞项（cwd 相对路径 / 无包结构 / `bm_real` 职责过载 / 全局 `KW` / L0 反向依赖 L5）、目标包结构与迁移顺序、以及「为何不在原树物理搬迁」；由 `tools/repo_map.py` 生成，`--check` 校验分类覆盖 |
 | `docs/BMDRT_RESULT_AND_FIGURE_DESIGN.md` | **结果与图形系统设计（v1.0）**：三个出口（分析面板 / 出版图 / 数据包）、`AnalysisResult` 单一数据源、面板布局与理由、视觉编码、口径三条、导出目录契约、验收条件与已知限制 |
 | `docs/DIFFUSION_PLAN.md` | 扩散扩展方案：数学、先验、测试矩阵、模型选择 |
 | `docs/ADSORPTION_PROJECT.md` | **低频吸附电感元件立项书**：`R_ad∥L_ad` 定义、负 RC 恒等式、DRT 盲区、三区间可辨识性、M0–M6 里程碑与验收标准 |
