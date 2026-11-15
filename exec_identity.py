@@ -123,6 +123,21 @@ BUDGET_EVIDENCE_KEYS = ("upstream_origin_captured", "capture_version",
 RERUN_FIELD = "rerun"
 RERUN_KEYS = ("attempt", "reason", "parent_workflow_ref")
 
+#: Gate 2A F-03：五项预算的值域。整数预算必须是 ≥1 的整数值，
+#: `target_accept` 必须是开区间 (0,1) 内的实数。`None` 只许配 `unavailable`。
+BUDGET_INT_KEYS = ("n_warmup", "n_samples", "num_chains", "max_tree_depth")
+
+#: Gate 2A F-05：捕获证据的版本与站点闭集。逐项与
+#: `sampler_capture.CAPTURE_VERSION` / `CALL_SITES` 对齐，由测试交叉核验；
+#: 身份层不 import 捕获层（既有 AST 守护）。
+BUDGET_CAPTURE_VERSIONS = ("1.0",)
+BUDGET_CAPTURE_SITES = ("bm_core.fit", "bm_top.fit_top")
+
+#: Gate 2A F-06：预算数值**唯一**允许的落点是 `budget_params`。
+#: 这些 workflow 整块字段走 `_plain` 进 `workflow_id`，若把五项键塞进去，
+#: 就等于绕开 G3 二次承载预算 ⇒ 算号前必须拒。
+WORKFLOW_PLAIN_FIELDS = ("search", "extras", "guards", "gate", "retry")
+
 #: `run_id` 认的是"进似然/进模型的东西"；键名原样，不改写不加前缀。
 #: 值 = (类型标签, `effect`)。类型标签只用于校验，不参与哈希。
 RUN_ID_CONFIG_KEYS: dict[str, tuple[str, str]] = {
@@ -757,6 +772,116 @@ def _rerun_attempt(rec: Mapping) -> int:
     return a
 
 
+# ---------------------------------------------------------------------------
+# Gate 2A 最小修复集：F-03 / F-04 / F-05 / F-06 / F-07 / F-08 / F-09
+# ---------------------------------------------------------------------------
+
+_ID_REF_PREFIXES = tuple(IDENTITY_GENERATIONS) + (WORKFLOW_PREFIX,)
+
+
+def _is_identity_ref(v: Any) -> bool:
+    """F-07：`children` / `parent_workflow_ref` 只许是身份号引用。
+
+    形状 = 已登记世代前缀 + 非空 hex 摘要。字符串里夹预算数值（如
+    `"n_samples=1000"`）不是引用，必须拒；dict 展开子任务参数更不是引用。
+    """
+    if not isinstance(v, str):
+        return False
+    for p in _ID_REF_PREFIXES:
+        if v.startswith(p):
+            tail = v[len(p):]
+            return bool(tail) and re.fullmatch(r"[0-9a-f]+", tail) is not None
+    return False
+
+
+def _budget_keys_in(obj: Any, *, _depth: int = 0) -> list[str]:
+    """F-06：递归找出藏在 Mapping 键里的五项预算键（值里的字符串不看）。"""
+    if _depth > 8:
+        return []
+    found: list[str] = []
+    if isinstance(obj, Mapping):
+        for k, v in obj.items():
+            if k in BUDGET_KEYS:
+                found.append(str(k))
+            found += _budget_keys_in(v, _depth=_depth + 1)
+    elif isinstance(obj, (list, tuple)):
+        for x in obj:
+            found += _budget_keys_in(x, _depth=_depth + 1)
+    return found
+
+
+def _budget_value_ok(key: str, v: Any) -> bool:
+    """F-03：按参数语义校值域。类型门禁仍在这里，不外包给产出层。"""
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return False
+    f = float(v)
+    if not np.isfinite(f):
+        return False
+    if key == "target_accept":
+        return 0.0 < f < 1.0
+    if f != int(f):                       # 整数预算不许 2.5 之类
+        return False
+    return int(f) >= 1
+
+
+def _rerun_lineage(rec: Mapping) -> dict | None:
+    """F-08/F-09：重跑的「来自哪个父工作流」与「为什么重跑」是执行实例条件。
+
+    父记录返回 None；子记录带 `reason` + `parent_workflow_ref`。两者进
+    `run_id` 载荷 ⇒ 不同 lineage 的同 attempt 子运行不再撞号，失败/成功
+    重试也不再同号。它们**不是**模型定义，不进 `config`。
+    """
+    rr = rec.get(RERUN_FIELD)
+    if rr is None:
+        return None
+    return {"reason": rr.get("reason"),
+            "parent_workflow_ref": rr.get("parent_workflow_ref")}
+
+
+def _chk_rerun(rec: Mapping) -> list[str]:
+    """F-08：子运行必须显式给出父工作流引用，否则不同 lineage 会同号。
+
+    `reason` 也强制非空：失败重试与门禁重试是两种执行条件，不许静默合并。
+    """
+    rr = rec.get(RERUN_FIELD)
+    if rr is None:
+        return []
+    if not isinstance(rr, Mapping):
+        return ["rerun_not_mapping"]
+    try:
+        attempt = _rerun_attempt(rec)
+    except ValueError:
+        return ["rerun_invalid"]
+    if attempt < 1:
+        return ["rerun_attempt_zero"]
+    r: list[str] = []
+    reason = rr.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        r.append("rerun_reason_missing")
+    if not _is_identity_ref(rr.get("parent_workflow_ref")):
+        r.append("rerun_parent_ref_invalid")
+    return r
+
+
+def _chk_workflow(wf: Mapping) -> list[str]:
+    """F-06/F-07：workflow 整块字段不得二次承载预算；children 只放引用。"""
+    r: list[str] = []
+    for f in WORKFLOW_PLAIN_FIELDS:
+        if _budget_keys_in(wf.get(f)):
+            r.append(f"workflow_budget_keys:{f}")
+    pm = wf.get("pair_mode")
+    if isinstance(pm, str) and any(k in pm for k in BUDGET_KEYS):
+        r.append("workflow_budget_keys:pair_mode")
+    ch = wf.get("children")
+    if ch is None:
+        ch = []
+    if not isinstance(ch, (list, tuple)):
+        r.append("workflow_children_not_list")
+    elif any(not _is_identity_ref(c) for c in ch):
+        r.append("workflow_children_not_reference")
+    return r
+
+
 def _budget_payload(bud: Mapping) -> dict:
     out = {}
     for k in BUDGET_KEYS:
@@ -806,6 +931,9 @@ def run_id_payload(rec: Mapping, *, role: str = "parent") -> dict:
         "config_keys_version": rec[RUN_ID_CONFIG_KEYS_VERSION_FIELD],
         # G4：第几次重跑是**条件**，不是结果；同一预算重跑两次也必须不同号。
         "rerun_attempt": _rerun_attempt(rec),
+        # F-08/F-09：lineage 与重跑原因也是执行实例条件。缺了它们，
+        # 两个不同父工作流的同 attempt 子运行会撞号、失败/成功重跑会同号。
+        "rerun_lineage": _rerun_lineage(rec),
         "candidate_id": rec["candidate_id"],
         "data": _data_payload(rec.get("data") or {}),
         "rng_plan": {k: _plain((rec.get("rng") or {}).get("plan", {}).get(k))
@@ -930,11 +1058,11 @@ def _chk_budget_evidence(bud: Mapping, evidence: Any) -> list[str]:
     flag = evidence.get("upstream_origin_captured")
     if flag is not True:                                  # 不许 truthy 蒙混
         r.append("budget_evidence_upstream_not_captured")
-    for key, code in (("capture_version", "budget_evidence_capture_version_invalid"),
-                      ("capture_site", "budget_evidence_capture_site_invalid")):
-        val = evidence.get(key)
-        if not isinstance(val, str) or not val.strip():
-            r.append(code)
+    # F-05：版本/站点必须落在闭集里，不是「任意非空字符串」。
+    if evidence.get("capture_version") not in BUDGET_CAPTURE_VERSIONS:
+        r.append("budget_evidence_capture_version_invalid")
+    if evidence.get("capture_site") not in BUDGET_CAPTURE_SITES:
+        r.append("budget_evidence_capture_site_invalid")
     try:
         want = budget_evidence_sha256(bud)
     except (ValueError, TypeError, KeyError):
@@ -942,8 +1070,9 @@ def _chk_budget_evidence(bud: Mapping, evidence: Any) -> list[str]:
         return r
     if evidence.get("evidence_sha256") != want:
         r.append("budget_evidence_sha_mismatch")
+    # F-04：必须是 64 位小写 hex。只校长度会让 'z'*64 / 中文 / 空格蒙混过关。
     es = evidence.get("event_sha256")
-    if not isinstance(es, str) or len(es) != 64:
+    if not isinstance(es, str) or re.fullmatch(r"[0-9a-f]{64}", es) is None:
         r.append("budget_evidence_event_sha_invalid")
     any_recorded = any(isinstance(c, Mapping) and c.get("source") == "recorded"
                        for c in bud.values())
@@ -996,8 +1125,9 @@ def _chk_budget(bud: Mapping, evidence: Any = None) -> list[str]:
         if cell["origin"] not in BUDGET_ORIGINS:
             r.append(f"budget_origin_invalid:{k}")
         v = cell["value"]
-        if isinstance(v, bool) or not isinstance(v, (int, float)) \
-                or not np.isfinite(float(v)):
+        # F-03：类型 + 值域一起校。只校「是有限数」会让 -1 / 0 / 2.5
+        # 这种不可能是采样预算的值照样拿到 R2- 号。
+        if not _budget_value_ok(k, v):
             r.append(f"budget_value_invalid:{k}")
         if not isinstance(cell["transformed"], (list, tuple)):
             r.append(f"budget_transformed_invalid:{k}")
@@ -1030,6 +1160,10 @@ def _chk_retry_kw(wf: Mapping) -> list[str]:
     found = [k for k in BUDGET_KEYS if k in rkw]
     if found:
         return ["retry_kw_budget_keys:" + ",".join(found)]
+    # F-06：顶层干净不代表嵌套里没藏预算键（如 {"outer": {"n_samples": 1000}}）。
+    nested = _budget_keys_in(rkw)
+    if nested:
+        return ["retry_kw_budget_keys:" + ",".join(sorted(set(nested)))]
     return []
 
 
@@ -1352,6 +1486,10 @@ def evaluate(rec: Mapping, *, role: str = "parent") -> dict:
     reasons += _chk_budget(bud, rec.get(BUDGET_EVIDENCE_FIELD))
     # G3：`retry_kw` 含五项预算 ⇒ 错误记录，归入 fatal（unconfirmed 无号）。
     reasons += _chk_retry_kw(wf)
+    # F-06/F-07：workflow 整块字段二次承载预算、children 不是引用 ⇒ 无号。
+    reasons += _chk_workflow(wf)
+    # F-08/F-09：子运行缺父引用 / 缺重跑原因 ⇒ 无号（防撞号）。
+    reasons += _chk_rerun(rec)
     fatal = bool(reasons)
 
     reasons += _chk_config(cfg, rec, role=role)
@@ -1401,6 +1539,10 @@ def make_rerun_record(parent: Mapping, *, attempt: int,
 
     换预算时 `rng.plan.n_chains` 必须与 `budget_params.num_chains.value` 一致，
     由调用方用 `rng=` 显式给；本函数不猜、不自动折算。
+
+    Gate 2A F-08/F-09：调用方**必须**给 `parent_workflow_ref`（合法身份号引用）
+    与非空 `reason`；`_chk_rerun()` 会在算号前拦下缺失者。否则两个不同父工作流
+    的同 attempt 子运行会撞号、失败与成功重跑会同号。
     """
     if isinstance(attempt, bool) or not isinstance(attempt, int) or attempt < 1:
         raise ValueError(f"attempt 必须是 ≥1 的整数，收到 {attempt!r}")

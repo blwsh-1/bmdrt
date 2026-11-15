@@ -16,6 +16,9 @@
   子记录不带父预算/实例、子记录可发号；
 · **G5**（6）版本升级 1.4→1.5：记录字段/载荷/校验三项齐全、跨世代不可比、
   升键表版本必换号。
+· **F 组**（8，Gate 2A 最小修复集 F-03～F-09）值域 / hex 指纹 / 捕获词表闭集 /
+  workflow 禁止二次承载预算 / children 只放引用 / lineage 不撞号 / 重跑原因区分，
+  外加 F-00 主路径未误伤的正对照。
 
     python test_identity_p0.py
 """
@@ -66,11 +69,18 @@ def _evidence(block: dict, **over) -> dict:
     return e
 
 
-def _child(attempt: int, values=(2000, 1000, 2, 0.98, 10)) -> dict:
+#: F-08：子运行必须带合法父工作流引用（否则不同 lineage 会撞号）。
+_PARENT_REF = "W2-" + "a" * 32
+
+
+def _child(attempt: int, values=(2000, 1000, 2, 0.98, 10), *,
+           reason: str | None = "sampler_error",
+           parent_ref: str | None = _PARENT_REF) -> dict:
     bud = TE._budget_cells(values)
     return E.make_rerun_record(
         TE._rec(), attempt=attempt, budget_params=bud,
-        budget_evidence=TE._budget_evidence(bud))
+        budget_evidence=TE._budget_evidence(bud),
+        reason=reason, parent_workflow_ref=parent_ref)
 
 
 def _real_event() -> tuple[dict | None, str]:
@@ -350,7 +360,8 @@ def case_G4_child_has_no_parent_budget_or_instance():
     bud = TE._budget_cells()
     child = E.make_rerun_record(
         parent, attempt=1, budget_params=bud,
-        budget_evidence=TE._budget_evidence(bud))
+        budget_evidence=TE._budget_evidence(bud),
+        reason="sampler_error", parent_workflow_ref=_PARENT_REF)
     assert "instance" not in child
     assert "provenance" not in child
     assert child["workflow"]["retry_kw"] == {}
@@ -442,6 +453,151 @@ def case_G5_identity_module_still_zero_production_import():
     return f"G5⑥ 身份层零生产 import（实际 {sorted(mods)}）"
 
 
+# ---------------------------------------------------------------------------
+# Gate 2A 最小修复集反例：F-03～F-09
+# 每条错误记录都断言 unconfirmed + 两号同时 None（与 G 组同一通过标准）
+# ---------------------------------------------------------------------------
+
+def _with_budget_value(key: str, value) -> dict:
+    """改一个预算值并**同步重算证据指纹**：确保测到的是值域门禁本身。"""
+    bud = TE._budget_cells()
+    bud[key]["value"] = value
+    return _mutate(budget_params=bud,
+                   budget_evidence=TE._budget_evidence(bud))
+
+
+def case_F03_value_domain():
+    for key, val in [("n_warmup", -1), ("n_warmup", 0), ("n_warmup", 2.5),
+                     ("num_chains", 0), ("max_tree_depth", -3),
+                     ("target_accept", 0.0), ("target_accept", 1.0),
+                     ("target_accept", 1.2), ("n_samples", None),
+                     ("n_samples", True), ("n_samples", "1000")]:
+        why = _no_identity(_with_budget_value(key, val))
+        assert any("budget_value_invalid" in x for x in why), (key, val, why)
+    out = _ev(_with_budget_value("n_samples", 1000))
+    assert out["status"] == "recorded" and out["run_id"].startswith("R2-"), out
+    return "F-03 负/零/非整数/越界/类型错误全无号；合法 1000 仍发 R2-"
+
+
+def case_F04_event_sha_is_hex():
+    bud = TE._budget_cells()
+    for tag, es in [("非 hex", "z" * 64), ("中文", "中" * 64),
+                    ("空格", " " * 64), ("63 位", "a" * 63),
+                    ("大写 hex", "A" * 64), ("None", None), ("int", 123)]:
+        evi = TE._budget_evidence(bud)
+        evi["event_sha256"] = es
+        why = _no_identity(_mutate(budget_evidence=evi))
+        assert any("event_sha_invalid" in x for x in why), (tag, why)
+    return "F-04 event_sha256 必须是 64 位小写 hex；只校长度已修"
+
+
+def case_F05_capture_closed_sets():
+    bud = TE._budget_cells()
+    for key, val, code in [("capture_version", "FORGED", "capture_version_invalid"),
+                           ("capture_version", "2.0", "capture_version_invalid"),
+                           ("capture_version", None, "capture_version_invalid"),
+                           ("capture_site", "not.a.real.site", "capture_site_invalid"),
+                           ("capture_site", "", "capture_site_invalid")]:
+        evi = TE._budget_evidence(bud)
+        evi[key] = val
+        why = _no_identity(_mutate(budget_evidence=evi))
+        assert any(code in x for x in why), (key, val, why)
+    import sampler_capture as SC
+    assert set(E.BUDGET_CAPTURE_SITES) == set(SC.CALL_SITES), "站点闭集与捕获层不一致"
+    assert E.BUDGET_CAPTURE_VERSIONS == (SC.CAPTURE_VERSION,), "版本闭集与捕获层不一致"
+    return "F-05 版本/站点只认闭集，且与 sampler_capture 逐项交叉核验"
+
+
+def case_F06_workflow_no_budget_smuggling():
+    base_wid = _ev(TE._rec())["workflow_id"]
+    for f in ("search", "extras", "guards", "gate", "retry"):
+        r = TE._rec()
+        wf = dict(r["workflow"])
+        cur = wf.get(f)
+        val = dict(cur) if isinstance(cur, dict) else {}
+        val["n_samples"] = 1000
+        wf[f] = val
+        why = _no_identity(_mutate(workflow=wf))
+        assert any(f"workflow_budget_keys:{f}" in x for x in why), (f, why)
+    wf = dict(TE._rec()["workflow"])
+    wf["pair_mode"] = "n_samples=1000"
+    why = _no_identity(_mutate(workflow=wf))
+    assert any("workflow_budget_keys:pair_mode" in x for x in why), why
+    wf = dict(TE._rec()["workflow"])
+    wf["retry_kw"] = {"outer": {"n_warmup": 800}}
+    why = _no_identity(_mutate(workflow=wf))
+    assert any("retry_kw_budget_keys" in x for x in why), why
+    wf = dict(TE._rec()["workflow"])
+    wf["retry_kw"] = {"trigger": "acf>0.50", "max_retries": 2}
+    assert _ev(_mutate(workflow=wf))["workflow_id"] == base_wid, "纯策略键不该换号"
+    return "F-06 五个 _plain 整块 + pair_mode + 嵌套 retry_kw 全被拦；策略键不换号"
+
+
+def case_F07_children_reference_only():
+    for ch, code in [(["n_samples=1000"], "workflow_children_not_reference"),
+                     ([{"n_samples": 1000}], "workflow_children_not_reference"),
+                     ([None], "workflow_children_not_reference"),
+                     ("R2-" + "a" * 32, "workflow_children_not_list")]:
+        wf = dict(TE._rec()["workflow"])
+        wf["children"] = ch
+        why = _no_identity(_mutate(workflow=wf))
+        assert any(code in x for x in why), (ch, why)
+    wf = dict(TE._rec()["workflow"])
+    wf["children"] = ["R2-" + "f" * 32]
+    out = _ev(_mutate(workflow=wf))
+    assert out["status"] == "recorded", out["reasons"]
+    assert out["workflow_id"] != _ev(TE._rec())["workflow_id"], "合法引用应改 workflow_id"
+    return "F-07 children 只许身份号引用；合法引用仍正常进 workflow_id"
+
+
+def case_F08_lineage_no_collision():
+    pa, pb = TE._rec(), TE._rec()
+    pa["workflow"]["retry"] = 1
+    pb["workflow"]["retry"] = 3
+    wa, wb = _ev(pa)["workflow_id"], _ev(pb)["workflow_id"]
+    assert wa != wb, "两个父工作流的 workflow_id 本该不同"
+    bud, evi = TE._budget_cells(), None
+    ca = E.make_rerun_record(pa, attempt=1, budget_params=bud,
+                             budget_evidence=TE._budget_evidence(bud),
+                             reason="sampler_error", parent_workflow_ref=wa)
+    cb = E.make_rerun_record(pb, attempt=1, budget_params=bud,
+                             budget_evidence=TE._budget_evidence(bud),
+                             reason="sampler_error", parent_workflow_ref=wb)
+    a, b = _ev(ca, role="child"), _ev(cb, role="child")
+    assert a["status"] == b["status"] == "recorded", (a["reasons"], b["reasons"])
+    assert a["run_id"] != b["run_id"], "F-08 阻断项：不同 lineage 同 attempt 又撞号"
+    # 基础条件仍相同：两载荷除 lineage 外逐位相等
+    la, lb = E.run_id_payload(ca, role="child"), E.run_id_payload(cb, role="child")
+    assert {k: v for k, v in la.items() if k != "rerun_lineage"} == \
+           {k: v for k, v in lb.items() if k != "rerun_lineage"}, \
+        "重跑不该被误认成模型定义不同"
+    _no_identity(_child(1, parent_ref=None))
+    _no_identity(_child(1, parent_ref="n_samples=1000"))
+    return "F-08 不同父工作流同 attempt 子号已分离；缺/假父引用无号；基础条件载荷不变"
+
+
+def case_F09_reason_distinguishes_retries():
+    fail = _ev(_child(1, reason="sampler_error"), role="child")
+    ok = _ev(_child(1, reason="acf_gate_retry"), role="child")
+    assert fail["status"] == ok["status"] == "recorded", (fail, ok)
+    assert fail["run_id"] != ok["run_id"], "F-09：失败重试与门禁重试竟同号"
+    for reason in (None, "", "   "):
+        why = _no_identity(_child(1, reason=reason))
+        assert any("rerun_reason_missing" in x for x in why), (reason, why)
+    return "F-09 重跑原因进号：失败/成功重试不同号，空原因无号"
+
+
+def case_F00_positive_path_intact():
+    r = TE._rec()
+    out = _ev(r)
+    assert out["status"] == "recorded", out["reasons"]
+    assert out["run_id"].startswith("R2-") and out["workflow_id"].startswith("W2-"), out
+    assert E._chk_budget(r["budget_params"], r[E.BUDGET_EVIDENCE_FIELD]) == []
+    assert E._chk_workflow(r["workflow"]) == []
+    assert E._chk_rerun(r) == []
+    return "F-00 修复集未误伤主路径：合规记录仍发 R2-/W2- 号"
+
+
 CASES = [
     ("G1 正例：合规记录", case_G1_positive),
     ("G1① 裸 recorded 块", case_G1_bare_recorded_cells_rejected),
@@ -470,6 +626,14 @@ CASES = [
     ("G5④ 新世代不可比", case_G5_new_generation_not_comparable),
     ("G5⑤ 升版本必换号", case_G5_bumping_keys_version_changes_id),
     ("G5⑥ 身份层零生产 import", case_G5_identity_module_still_zero_production_import),
+    ("F-00 主路径未误伤", case_F00_positive_path_intact),
+    ("F-03 value 值域", case_F03_value_domain),
+    ("F-04 event_sha hex", case_F04_event_sha_is_hex),
+    ("F-05 捕获词表闭集", case_F05_capture_closed_sets),
+    ("F-06 workflow 不承载预算", case_F06_workflow_no_budget_smuggling),
+    ("F-07 children 只放引用", case_F07_children_reference_only),
+    ("F-08 lineage 不撞号", case_F08_lineage_no_collision),
+    ("F-09 重跑原因区分", case_F09_reason_distinguishes_retries),
 ]
 
 
