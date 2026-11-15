@@ -550,6 +550,18 @@ def _selftest() -> bool:
         ok &= bool(cond)
         print(f"[{'ok' if cond else 'FAIL'}] {label}{('：' + str(detail)) if detail else ''}")
 
+    def why_raised(fn):
+        """跑一次，返回异常消息；没 raise 就返回 `None`。
+
+        自检里**不许**写裸 `except ValueError: pass`：只要抛了任何 ValueError
+        都算通过，等于让"别的参数报错"替这条护栏背书。必须连理由一起核。
+        """
+        try:
+            fn()
+        except ValueError as exc:
+            return str(exc)
+        return None
+
     # 适用性
     chk("HMC 上 max_tree_depth 不适用",
         applicability("max_tree_depth", kernel="HMC") ==
@@ -559,17 +571,37 @@ def _selftest() -> bool:
     chk("单链 chain_method 不适用",
         applicability("chain_method", num_chains=1)["reason"] == "single_chain")
     chk("depth 13 vs 10 的预算", tree_budget(13) == 8191 and tree_budget(10) == 1023)
-    # 缺上下文一律 raise：拿不准的适用性不许默认成"适用"
-    for call, label in (
-            (lambda: applicability("target_accept"), "adapt_step_size 缺失"),
-            (lambda: evaluate("target_accept", resolved=_slot(0.9),
-                              observation=observe("target_accept", 0.9)),
-             "evaluate 里 adapt_step_size 缺失")):
-        try:
-            call()
-            chk(f"{label}必须 raise", False)
-        except ValueError:
-            chk(f"{label}必须 raise", True)
+
+    # 缺上下文一律 raise：拿不准的适用性不许默认成"适用"。
+    # 两件事都要核：① 确实 raise 了；② 理由确实是 `adapt_step_size`
+    # （否则签名回退成 `True` 时，这里可能被别的 ValueError 蒙过去）。
+    msg = why_raised(lambda: applicability("target_accept"))
+    chk("applicability 缺 adapt_step_size 必须 raise",
+        msg is not None and "adapt_step_size" in msg, msg or "没有 raise")
+    msg = why_raised(lambda: evaluate("target_accept", resolved=_slot(0.9),
+                                      observation=observe("target_accept", 0.9)))
+    chk("evaluate 缺 adapt_step_size 必须 raise",
+        msg is not None and "adapt_step_size" in msg, msg or "没有 raise")
+
+    # 正对照：两个分支都得走通，否则"删掉整个 target_accept 分支"也会全绿
+    chk("adapt_step_size=True ⇒ target_accept 适用",
+        applicability("target_accept", adapt_step_size=True) ==
+        {"applicable": True, "reason": None})
+    chk("adapt_step_size=False ⇒ 不适用（step_size_not_adapting）",
+        applicability("target_accept", adapt_step_size=False) ==
+        {"applicable": False, "reason": "step_size_not_adapting"})
+
+    r = evaluate("target_accept", resolved=_slot(0.9),
+                 observation=observe("target_accept", 0.9), adapt_step_size=True)
+    chk("evaluate True ⇒ complete", r["status"] == "complete", r["status"])
+
+    # 观测值故意取 0.98 ≠ 0.9：不适用必须**先于**值比较，
+    # 否则这里会报假 mismatch——与 HMC 的 depth=10 是同一个坑
+    r = evaluate("target_accept", resolved=_slot(0.9),
+                 observation=observe("target_accept", 0.98), adapt_step_size=False)
+    chk("evaluate False ⇒ derived/not_applicable，且不产生假 mismatch",
+        r["status"] == "derived" and r["observed_status"] == "not_applicable"
+        and r["reason_code"] == "step_size_not_adapting", r["status"])
 
     # 假 mismatch 必须被拦住：HMC 的 10 不参与比较
     r = evaluate("max_tree_depth", resolved=_slot(7),
@@ -579,14 +611,12 @@ def _selftest() -> bool:
         and r["reason_code"] == "kernel_inapplicable", r["status"])
 
     # 反推不能冒充观测
-    try:
-        evaluate("extra_fields", resolved=_slot(("num_steps",)),
-                 observation=observe("extra_fields", ("num_steps",),
-                                     how="derived",
-                                     where="keys(get_extra_fields)-default_fields"))
-        chk("derived 标 captured 必须 raise", False)
-    except ValueError as exc:
-        chk("derived 标 captured 必须 raise", "captured" in str(exc))
+    msg = why_raised(lambda: evaluate(
+        "extra_fields", resolved=_slot(("num_steps",)),
+        observation=observe("extra_fields", ("num_steps",), how="derived",
+                            where="keys(get_extra_fields)-default_fields")))
+    chk("derived 标 captured 必须 raise",
+        msg is not None and "captured" in msg, msg or "没有 raise")
 
     r = evaluate("extra_fields", resolved=_slot(("num_steps",)),
                  observation=observe("extra_fields", ("num_steps",), how="derived",

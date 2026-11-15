@@ -240,9 +240,63 @@ G 组 5 格（聚合）、X 组 5 格（生产零引用、无重依赖、不改�
 ## 9. 复现
 
 ```bash
-D:/autoeis_env/Scripts/python.exe sampler_provenance.py        # 内置自检
+D:/autoeis_env/Scripts/python.exe sampler_provenance.py        # 内置自检 17 项
 D:/autoeis_env/Scripts/python.exe test_sampler_provenance.py   # 45/45
 ```
 
+两层职责分清楚，**不互相顶替**：
+
+| | 内置自检（17 项） | `test_sampler_provenance.py`（45 格） |
+|---|---|---|
+| 定位 | 不装 pytest 也能跑的最小体检 | 完整反例矩阵 + 接口护栏 |
+| 失败时 | 只报"哪条最核心的规则破了" | 精确到哪一格、期望与实际 |
+| 覆盖 | 适用性三条规则、缺上下文 raise（**核理由**）、`True`/`False` 两条正路、假 `mismatch` 两处（HMC depth、`adapt_step_size=False`）、八项聚合三档 | P 17 / M 18 / G 5 / X 5，117 条断言 |
+
+自检里**禁止**写裸 `except ValueError: pass`：只要抛了任何 `ValueError` 就算通过，
+等于让"别的参数报错"替这条护栏背书。统一走 `why_raised()`——返回异常消息再核关键词，
+没 raise 返回 `None`。缺参检查还必须配正对照，否则"整个分支被删掉"也会全绿。
+
 回归不受影响（本层零耦合）：identity 68/68、capture 31/31、bundle 25/25、
 stage0 冻结 9/9、`map_stage0_records --check` rc=0（239/239，严格 237）。
+
+---
+
+## 10. 夹具与覆盖审计（阶段 B 收口前）
+
+审的是"测试自己会不会骗人"，不是判定逻辑。三条结论都有计数支撑。
+
+**① 夹具复用：22/45 格拿整份 `_recs()`**
+
+`_recs(**over)` 造八项齐全的一致记录，45 格里 22 格直接复用。`_slot = S._slot`
+是**同一个对象不是副本**——模块自检与 pytest 共用一个构造器，不存在两份悄悄走样。
+
+代价与对策：复用让"八项齐全"有单点保证，但夹具**自身**的一致性没有第二个人签字。
+它靠 M1（8/8 `complete`）反证——夹具里任一处 `resolved` 与 `observed` 写得不等，M1 立刻红。
+这不是循环论证：M1 断言的是**聚合结果**，夹具写错只能让它失败，不能让它通过。
+
+**② 两处刻意手写（不是漏改）**
+
+| 用例 | 为什么不能复用 `_recs()` |
+|---|---|
+| G1（顺序无关） | 必须手排 8 条并让状态混合（`n_samples` 走 `default`、`num_chains` 走 `resolved=None`）；复用一份全 `complete` 的夹具备，等于测"8 个 complete 的顺序无关"，最弱项逻辑根本没被激活 |
+| M2（八项全默认） | 数值与 `_recs()` 完全重合、只差 `origin`。**这是真重复**，但它同时是 M1 的对照（8 `complete` vs 8 `defaulted`）；合并会把两格的差异藏进参数，读代码的人看不出"这一格换了什么" |
+
+**③ `_must_raise` 的单一依赖：37 次调用全部带 `needle`**（AST 核过，裸调用 0 次）
+
+单一 helper 的风险是"它自己写错，37 格同时失守"。现在 helper 内部是
+`assert needle in msg`——helper 失效表现为 AssertionError，不会退化成"返回 False 被忽略"。
+
+**④ 自检 vs pytest 的差异（修前 → 修后）**
+
+| | 修前 | 修后 |
+|---|---|---|
+| 缺参检查 | 裸 `except ValueError` ⇒ 只判"有没有抛"，不核理由 | `why_raised()` 取消息再核 `adapt_step_size` |
+| 正对照 | 无 ⇒ 删掉整个 `target_accept` 分支也全绿 | `True`⇒适用、`False`⇒`step_size_not_adapting` 各一条 |
+| `evaluate` 两条路 | 无 | `True`⇒`complete`、`False`⇒`derived`，且**观测值故意取 0.98≠0.9** 确认不适用先于值比较 |
+| 变异验证 | — | 四种改法（两处默认值回退、报错换词、`adapt_step_size` 被无视）自检全部 rc=1 |
+
+仍只在 pytest 里的（**有意不搬**）：`where` 通道（P1/P2/P11）、原因码闭集（P5）、
+自报不适用（P6）、`bool`/`None` 边界（P13/P14）、以及 M/G/X 全部。
+自检的定位是"没有 pytest 的环境也能跑的最小体检"，不是矩阵的子集副本。
+
+**不做**：不合并 G1/M2 与 `_recs()`，不把 45 格压成参数化表——这两处的"手写"本身就是被测性质。
