@@ -16,7 +16,7 @@
       ],
       "process_entry": "bmdrt.py",
       "closure_source": "audit_source_profiles.closure (AST，含函数体内导入)",
-      "n_files": 15,
+      "n_files": 17,
       "declared_source_set": [
         {
           "path": "bm_ad.py",
@@ -79,13 +79,21 @@
         {
           "path": "fit_store.py",
           "role": "module"
+        },
+        {
+          "path": "sampler_capture.py",
+          "role": "module"
+        },
+        {
+          "path": "sampler_provenance.py",
+          "role": "module"
         }
       ],
       "digest_preview": {
         "note": "审阅快照，不是身份；身份由 runner 在运行点重算（§3.1.1）",
-        "declared": "ccc207002556ef362cb258aebc59ddc86bab282e3fc55ba146358ce32c075c66",
-        "numeric": "bb98ed4cf1182443bd8be750e18bd90452cf983bb93a05128f1cb718fb76c583",
-        "workflow": "67ffe9886927240ec9664c22bc9dd94126db24dfcc6777528d980b77830ddea6"
+        "declared": "ca57c502fe6b551b1740302315a297294c3ef2bc93c672c6dfa7723a511a8880",
+        "numeric": "fa54f3be012acd53badf7c8bf783165c077279bf3b95af7b80aa77a817da34be",
+        "workflow": "c2202f356f1dbfdcd96c7e5fdaab7e26a9d29247e85a8c71538b688fa4cdd752"
       }
     },
     "B": {
@@ -95,7 +103,7 @@
       ],
       "process_entry": "bmdrt.py",
       "closure_source": "audit_source_profiles.closure (AST，含函数体内导入)",
-      "n_files": 19,
+      "n_files": 21,
       "declared_source_set": [
         {
           "path": "bm_ad.py",
@@ -174,13 +182,21 @@
         {
           "path": "nested_fit.py",
           "role": "entry"
+        },
+        {
+          "path": "sampler_capture.py",
+          "role": "module"
+        },
+        {
+          "path": "sampler_provenance.py",
+          "role": "module"
         }
       ],
       "digest_preview": {
         "note": "审阅快照，不是身份；身份由 runner 在运行点重算（§3.1.1）",
-        "declared": "fa11cef38840edaff18580f76cece4a0562b539ea214805f3d4437c905ed77f2",
-        "numeric": "6c043abcd406cf4e792fe2dc67bf337809cba3620f27138dc486b86580d9f141",
-        "workflow": "11a4b18919ae6e1935f999fc90267311b6f941cdb265760c672b077405e8611a"
+        "declared": "35281ab583dde62dd31082eb7cff1cf0fa96552ef859f4a6ae6c16fd7bae3058",
+        "numeric": "d6ac6eaa6e6211ae5ff7ea01c8a67087e5b965d689dbbb3704c45f614d325ca4",
+        "workflow": "61b900d7a7692ba29d5920ad0ea32506e1d8e3423c9a35ab3b94145407c6997b"
       }
     },
     "C": {
@@ -190,7 +206,7 @@
       ],
       "process_entry": "bmdrt.py",
       "closure_source": "audit_source_profiles.closure (AST，含函数体内导入)",
-      "n_files": 18,
+      "n_files": 20,
       "declared_source_set": [
         {
           "path": "bm_ad.py",
@@ -265,13 +281,21 @@
         {
           "path": "fit_store.py",
           "role": "module"
+        },
+        {
+          "path": "sampler_capture.py",
+          "role": "module"
+        },
+        {
+          "path": "sampler_provenance.py",
+          "role": "module"
         }
       ],
       "digest_preview": {
         "note": "审阅快照，不是身份；身份由 runner 在运行点重算（§3.1.1）",
-        "declared": "2fdbd9df943bf8de8b678c6eaceff18a21e5a7b35226b82192fcec684407a338",
-        "numeric": "8388216953f2218d333bc2e77059cd80cd3ae10ac0468d82a71bfb73afb82741",
-        "workflow": "689284d24b9c054c52cf0868d881604dc3346170c8953ba77f789ff0350a720c"
+        "declared": "a93daf98da0d88a26cea73eee100b291757b08f8f6024341963b5e3f4325fc06",
+        "numeric": "6d06d8ba0e2c97727844d24ab5cae94195c0e77561d4daa74c7c0e72198e905a",
+        "workflow": "e6e69056cfa3ed1aeb84dd8f89f78e579422aaeffd6439ea0f36056b902cb5e5"
       }
     }
   },

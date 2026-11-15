@@ -78,6 +78,10 @@ jax.config.update("jax_enable_x64", True)
 
 import jax.numpy as jnp
 
+# 采样参数来源捕获（阶段 C）：只记录"构造实参 → 对象属性"这一段，不改采样行为、
+# 不构造 run_id（但本模块字节会由 runner 声明集计入）。内核类型采集时才判，放 try 外。
+import sampler_capture as SC
+
 # numpyro 只在**采样**时需要；DRT 解析式、后处理、bm_diff 的自检都是纯 numpy。
 # 所以放在 try 里：没装 numpyro 的环境仍能 import bm_core、跑 bm_check /
 # bm_diff / bm_circuit，只有真正调用 fit() 时才会报错。
@@ -606,6 +610,15 @@ def fit(f, Z, K: int = 10, alpha: float | None = 1.0, sigma: tuple | None = None
     mc = MCMC(kern, num_warmup=n_warmup, num_samples=n_samples,
               num_chains=num_chains, progress_bar=progress)
     mc.run(jax.random.PRNGKey(seed), f, Z.real, Z.imag, extra_fields=extra_fields)
+    # 一次采样一条事件，挂到 mc 上随返回值带走。这里**不判断对错**：判定全在
+    # 判定全由捕获层转交的纯函数判定器给出，本调用只提供"请求值 + 契约点观测值"。
+    # 采不到不抛异常（记 capture_error），但也不会被悄悄吞掉——事件里数得出来。
+    mc.provenance = SC.capture_at_construction(
+        mc, site="bm_core.fit",
+        passed=dict(n_warmup=n_warmup, n_samples=n_samples, num_chains=num_chains,
+                    target_accept=target_accept, max_tree_depth=max_tree_depth,
+                    progress_bar=progress, extra_fields=extra_fields),
+        run_call=dict(extra_fields=extra_fields))
     s = samples_to_np(mc.get_samples())
     # ζ 被钉死时模型不采样 zeta，样本里没有这个键；但下游（drt_band、
     # z_chain_diag、match_components）都假设它存在。在这里补成常数数组，

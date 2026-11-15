@@ -137,9 +137,27 @@
 "适用"——等于替调用方假定自适应已开，R1 明说不能这么假定。反过来默认 `False` 也不行：
 那会把每一次都判成 `step_size_not_adapting`，是另一个方向的假结论。**不知道就是不知道。**
 
-> 对阶段 C 的硬要求：捕获层必须给出**真实**的 `adapt_step_size`（如
-> `isinstance(mcmc.sampler, NUTS) and mcmc.sampler.adapt_step_size`，或构造实参里的同名值），
-> 不能依赖本层默认值，也不能在调用点写死 `True` —— 那等于把这道护栏又关掉。
+> 对阶段 C 的硬要求：捕获层必须给出**真实**的 `adapt_step_size`，不能依赖本层默认值，
+> 也不能在调用点写死 `True`——那等于把这道护栏又关掉。
+>
+> **两个捕获量必须分开取**，不能合成一个表达式：
+>
+> | 捕获量 | 取法 | 不能写成 |
+> |---|---|---|
+> | `kernel` | `isinstance(sampler, NUTS)` → `"NUTS"`；否则 `isinstance(sampler, HMC)` → `"HMC"` | `hasattr(sampler, "_max_tree_depth")` |
+> | `adapt_step_size` | `sampler._adapt_step_size`（两内核都有，如实反映构造实参） | `isinstance(sampler, NUTS) and sampler.adapt_step_size` |
+>
+> 上一版本条写成后者，**两个错都犯**（阶段 C 第一轮实测）：
+>
+> 1. `isinstance(sampler, NUTS)` 是**内核判别**，不是自适应开关。实际用 HMC 时即使
+>    `adapt_step_size=True`，这条也会得 `False`，凭空造出一个 `step_size_not_adapting`
+>    ——正是 R1 想避免的"不知道却当成关了"。
+> 2. 属性名根本没有 `adapt_step_size`：两个内核 `getattr(k, "adapt_step_size")` 都
+>    `AttributeError`。真实属性是 **`_adapt_step_size`**。
+>
+> 另一个实测陷阱：**`isinstance(nuts_instance, HMC)` 是 `True`**（`NUTS` 继承 `HMC`）。
+> 所以内核判别必须**先判 NUTS**；反过来先把 `isinstance(..., HMC)` 当 HMC 会让每一条
+> NUTS 记录都错标内核，而 `max_tree_depth` 的适用性直接跟着错。
 
 ---
 

@@ -88,6 +88,9 @@ from __future__ import annotations
 
 import numpy as np
 
+# 采样参数来源捕获（阶段 C）：只记录不改行为；不构造 run_id，但字节由声明集计入。
+import sampler_capture as SC
+
 try:                                   # jax 只在前向计算时需要
     import jax
     import jax.numpy as jnp
@@ -1004,6 +1007,15 @@ def fit_top(f, Z, *, branch: str = "parallel", layers: int = 2,
                 num_chains=num_chains, progress_bar=progress)
     mcmc.run(jax.random.PRNGKey(seed), f, Z.real, Z.imag,
              extra_fields=("diverging",), init_params=init_values)
+    # 一次采样一条事件。注意 `fit_top` **没有** `extra_fields` 形参、run 里硬编码
+    # ("diverging",) ⇒ 这一项只有观测值、没有声明值，记录会落 derived/resolved_missing。
+    # 这是如实记账（F-6），不是漏接：要闭就得给 fit_top 加形参，不在本轮范围。
+    mcmc.provenance = SC.capture_at_construction(
+        mcmc, site="bm_top.fit_top",
+        passed=dict(n_warmup=n_warmup, n_samples=n_samples, num_chains=num_chains,
+                    target_accept=target_accept, max_tree_depth=max_tree_depth,
+                    progress_bar=progress),
+        run_call=dict(extra_fields=("diverging",)))
 
     s_ch = {k: np.asarray(v) for k, v in mcmc.get_samples(group_by_chain=True).items()}
     if branch == "series" and "L_ad" not in s_ch:
@@ -1065,6 +1077,8 @@ def fit_top(f, Z, *, branch: str = "parallel", layers: int = 2,
                  else float(zmax_override)),
         "zmax_override": (None if zmax_override is None else float(zmax_override)),
         "prior_scale_data_dependent": zmax_override is None,
+        # 采样参数来源（阶段 C 第一轮）。只增一个键：下游按名取键，不受影响。
+        "provenance": mcmc.provenance,
     }
 
 
