@@ -7,9 +7,11 @@
 
 四组：
 
-· **P**（15 格）纯函数契约：通道白名单、契约观测点、origin 必填、NaN、原因码闭集…
+· **P**（17 格）纯函数契约：通道白名单、契约观测点、origin 必填、NaN、原因码闭集…
   后 5 格（P11–P15）是审后修复：`evaluate` 自己复核 `where`、不适用不许声明偏移、
-  `bool` 不是正整数、`tree_budget` 拒 `bool`、`adapt_step_size` 严格布尔
+  `bool` 不是正整数、`tree_budget` 拒 `bool`、`adapt_step_size` 严格布尔；
+  末 2 格（P16/P17）是审二轮修复：**不传** `adapt_step_size` 与传 `None` 同罚——
+  `applicability("target_accept")` / `evaluate("target_accept")` 缺参直接 raise
 · **M**（18 格）反例矩阵：M1–M13 是约定的 15 格（M5 拆成 a/b/c/d 四种改法），
   M14/M15 是矩阵外追加的两条语义锁（`origin=default` 不吸收 `mismatch`；
   偏移声明不许跨字段、不许无值、不许值没变）
@@ -61,7 +63,7 @@ def _recs(**over) -> list[dict]:
             observation=S.observe("num_chains", 2), num_chains=2),
         "target_accept": S.evaluate(
             "target_accept", resolved=_slot(0.9, "tier", "BUDGETS['quick']"),
-            observation=S.observe("target_accept", 0.9)),
+            observation=S.observe("target_accept", 0.9), adapt_step_size=True),
         "max_tree_depth": S.evaluate(
             "max_tree_depth", resolved=_slot(10, "tier", "BUDGETS['quick']"),
             observation=S.observe("max_tree_depth", 10), kernel="NUTS"),
@@ -135,7 +137,8 @@ def case_P3_origin_required():
 def case_P4_observed_nan():
     """采到 NaN 是采集问题，不是"值不一致"。"""
     r = S.evaluate("target_accept", resolved=_slot(0.9),
-                   observation=S.observe("target_accept", float("nan")))
+                   observation=S.observe("target_accept", float("nan")),
+                   adapt_step_size=True)
     assert r["status"] == "incomplete", r["status"]
     assert r["reason_code"] == "observed_nan", r["reason_code"]
     return "NaN 落 incomplete/observed_nan"
@@ -286,6 +289,42 @@ def case_P15_adapt_step_size_strict():
     return "只收 True/False"
 
 
+def case_P16_applicability_default_missing():
+    """P16 **完全不传** `adapt_step_size` 也必须 raise。
+
+    P15 只证明显式 `None` 被拒。真正危险的是签名里的默认值：如果默认 `True`，
+    `applicability("target_accept")` 会**静默**返回"适用"，等于替调用方
+    假定自适应已开启——R1 明说"不知道是否启用时不能假定为 True"。
+    """
+    msg = _must_raise(lambda: S.applicability("target_accept"), "adapt_step_size")
+    assert "True" in msg and "False" in msg, msg      # 两个方向都别猜
+    # 正对照：显式给就照常
+    assert S.applicability("target_accept",
+                           adapt_step_size=True)["applicable"] is True
+    assert S.applicability("target_accept",
+                           adapt_step_size=False)["applicable"] is False
+    return "缺参即 raise，显式 True/False 正常"
+
+
+def case_P17_evaluate_default_missing():
+    """P17 `evaluate()` 同理：缺 `adapt_step_size` 不许自己补 `True`。"""
+    _must_raise(lambda: S.evaluate(
+        "target_accept", resolved=_slot(0.9, "tier", "BUDGETS['quick']"),
+        observation=S.observe("target_accept", 0.9)), "adapt_step_size")
+    # 正对照：显式 True ⇒ 正常走值比较；显式 False ⇒ 不适用且不产生 mismatch
+    ok = S.evaluate("target_accept", resolved=_slot(0.9),
+                    observation=S.observe("target_accept", 0.9),
+                    adapt_step_size=True)
+    assert ok["status"] == "complete", ok["status"]
+    na = S.evaluate("target_accept", resolved=_slot(0.9),
+                    observation=S.observe("target_accept", 0.98),
+                    adapt_step_size=False)
+    assert na["status"] == "derived", na["status"]
+    assert na["observed_status"] == "not_applicable", na["observed_status"]
+    assert na["reason_code"] == "step_size_not_adapting", na["reason_code"]
+    return "缺参即 raise；True⇒complete、False⇒derived 不比较"
+
+
 # ---------------------------------------------------------------------------
 # M：15 格反例矩阵
 # ---------------------------------------------------------------------------
@@ -318,7 +357,8 @@ def case_M2_all_default():
                    observation=S.observe(
                        f, v, how=("call_arg" if f == "extra_fields" else "attr")),
                    num_chains=nc,
-                   kernel="NUTS" if f == "max_tree_depth" else None)
+                   kernel="NUTS" if f == "max_tree_depth" else None,
+                   adapt_step_size=True if f == "target_accept" else None)
         for f, v, nc in (
             ("n_warmup", 600, None), ("n_samples", 1200, None),
             ("num_chains", 1, 1), ("target_accept", 0.9, None),
@@ -664,7 +704,8 @@ def case_G1_weakest_independent_of_order():
         S.evaluate("num_chains", resolved=None, num_chains=2,
                    observation=S.observe("num_chains", 2)),
         S.evaluate("target_accept", resolved=_slot(0.9),
-                   observation=S.observe("target_accept", 0.98)),
+                   observation=S.observe("target_accept", 0.98),
+                   adapt_step_size=True),
         S.evaluate("max_tree_depth", resolved=_slot(10), observation=None,
                    kernel="NUTS"),
         S.evaluate("chain_method", resolved=_slot("parallel", "default", "lib"),
@@ -822,6 +863,8 @@ CASES = [
     ("P13 bool 不是正整数", case_P13_bool_is_not_number),
     ("P14 tree_budget 拒 bool", case_P14_tree_budget_bool),
     ("P15 adapt_step_size 严格", case_P15_adapt_step_size_strict),
+    ("P16 缺参不许默认 True", case_P16_applicability_default_missing),
+    ("P17 evaluate 缺参不许补 True", case_P17_evaluate_default_missing),
     # M
     ("M1 八项全显式", case_M1_all_explicit),
     ("M2 八项全默认", case_M2_all_default),

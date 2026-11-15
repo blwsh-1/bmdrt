@@ -1,7 +1,7 @@
 # 采样参数来源契约（sampler provenance）v1.0
 
 > 实现：`sampler_provenance.py`（纯函数层，**不被生产模块 import**）
-> 反例矩阵：`test_sampler_provenance.py`（**43/43**，其中 15 格是裁决过的矩阵，另 2 格为矩阵外追加、5 格为审后修复的护栏）
+> 反例矩阵：`test_sampler_provenance.py`（**45/45**，其中 15 格是裁决过的矩阵，另 2 格为矩阵外追加、5 格为审后修复的护栏、2 格为「缺参不许默认」）
 > 上游：`docs/round_2026-11-14/SAMPLER_PROVENANCE_AUDIT.md`（阶段 A）、
 > `SAMPLER_PROVENANCE_AUDIT_B.md`（补充审计：三执行字段 + 内核适用性）
 >
@@ -120,16 +120,22 @@
 
 | 规则 | 内容 | 实现 |
 |---|---|---|
-| R1 | `target_accept` 两内核都有，但只在 `adapt_step_size=True` 时被消费 | `applicability(..., adapt_step_size=)` |
+| R1 | `target_accept` 两内核都有，但只在 `adapt_step_size=True` 时被消费 | `applicability(..., adapt_step_size=)`，**无默认值**，缺参 raise |
 | R2 | `max_tree_depth` **仅 NUTS**；HMC 上是字面量 10 | `applicability(..., kernel=)` |
 | R3 | 判别**不许用 `hasattr`**——HMC 也有 `_max_tree_depth` | `kernel` 必须显式传，`None` 直接 raise |
 | R4 | 命中不适用：`not_applicable`→`derived`，**跳过值比较**，不记 `mismatch` | 判定顺序 ① |
 | R5 | `num_chains == 1` 时 `chain_method` 不适用（`run` 不读它） | `applicability(..., num_chains=)` |
 | R6 | depth 是轨迹预算：上界 `2**d - 1` ⇒ 13 vs 10 是 8191 vs 1023 | `tree_budget()` |
 
-`applicability()` 缺上下文时**直接 raise**，不给默认值：默认值在这里正好是错的那一边。
+`applicability()` 与 `evaluate()` 缺上下文时**直接 raise**，签名里**一个默认值都不给**
+（`kernel` / `num_chains` / `adapt_step_size` 全是 `None`）：默认值在这里正好是错的那一边。
 类型边界也封闭：`num_chains` 显式拒 `bool`（`True` 会被当成 1）、`adapt_step_size` 只收
 `True/False`（`None` 不能被读成"关闭自适应"）、`tree_budget` 拒 `bool`（`True` 会算出 1）。
+
+`adapt_step_size` 这条是审后补的第二道：**显式传 `None`** 与**干脆不传**必须**同罚**。
+早先签名写成 `adapt_step_size=True`，于是 `applicability("target_accept")` 会静默返回
+"适用"——等于替调用方假定自适应已开，R1 明说不能这么假定。反过来默认 `False` 也不行：
+那会把每一次都判成 `step_size_not_adapting`，是另一个方向的假结论。**不知道就是不知道。**
 
 ---
 
@@ -209,10 +215,12 @@
 | 12 | `num_chains=1` | `chain_method` = `not_applicable` | M12 |
 | 13 | B 路径声明 `num_steps` | 实为 `("diverging",)` ⇒ `mismatch`/`declared_not_delivered` | M13 |
 
-另有 P 组 **15 格**（通道白名单、契约观测点、origin 必填、NaN、原因码闭集、不许自报不适用、
+另有 P 组 **17 格**（通道白名单、契约观测点、origin 必填、NaN、原因码闭集、不许自报不适用、
 元组无序比较、树深预算、适用性缺上下文、`where` 必填，加审后 5 格：`evaluate` 复核 `where`、
-不适用不许声明偏移、`bool` 不是正整数、`tree_budget` 拒 `bool`、`adapt_step_size` 严格）、G 组 5 格（聚合）、
-X 组 5 格（生产零引用、无重依赖、不改入参、JSON 直出、字段顺序稳定）。
+不适用不许声明偏移、`bool` 不是正整数、`tree_budget` 拒 `bool`、`adapt_step_size` 严格，
+再加 2 格「缺参不许默认」：P16 `applicability("target_accept")` 直接 raise、P17 `evaluate()` 同罪，
+两格都带正对照证明 `True`⇒`complete`、`False`⇒`derived`/`step_size_not_adapting` 照旧）、
+G 组 5 格（聚合）、X 组 5 格（生产零引用、无重依赖、不改入参、JSON 直出、字段顺序稳定）。
 
 **矩阵外追加 2 格**（不改动上面 15 格的编号）：
 
@@ -221,7 +229,7 @@ X 组 5 格（生产零引用、无重依赖、不改入参、JSON 直出、字�
 | 14 | `origin=default` 且值被改；A 路径（3 链 / 1 设备）整体 | `status=mismatch` 但 `resolved.origin` 仍为 `default`；聚合 `mismatch`，**不是** `defaulted` | M14 |
 | 15 | 四类假的偏移声明 + 同一差异带码/不带码 | 四处 raise；带码进 `override_fields`，不带码落 `value_differs` | M15 |
 
-合计 **43/43**。
+合计 **45/45**。
 
 ---
 
@@ -229,7 +237,7 @@ X 组 5 格（生产零引用、无重依赖、不改入参、JSON 直出、字�
 
 ```bash
 D:/autoeis_env/Scripts/python.exe sampler_provenance.py        # 内置自检
-D:/autoeis_env/Scripts/python.exe test_sampler_provenance.py   # 43/43
+D:/autoeis_env/Scripts/python.exe test_sampler_provenance.py   # 45/45
 ```
 
 回归不受影响（本层零耦合）：identity 68/68、capture 31/31、bundle 25/25、

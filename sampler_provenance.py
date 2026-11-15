@@ -146,7 +146,7 @@ OVERRIDE_FIELD = {
 
 def applicability(name: str, *, kernel: str | None = None,
                   num_chains: int | None = None,
-                  adapt_step_size: bool | None = True) -> dict:
+                  adapt_step_size: bool | None = None) -> dict:
     """该字段在当前配置下**是否适用**。返回 `{applicable, reason}`。
 
     · `max_tree_depth`（R2/R3）：只在 NUTS 上适用。HMC 没有这个形参，
@@ -155,7 +155,8 @@ def applicability(name: str, *, kernel: str | None = None,
     · `chain_method`（R5）：`num_chains == 1` 时 `MCMC.run` 走单链分支，
       根本不读它 ⇒ `single_chain`。属性读得出 `parallel`，但没有语义。
     · `target_accept`（R1）：只在步长自适应开启时被消费；关掉后属性还在 ⇒
-      `step_size_not_adapting`。
+      `step_size_not_adapting`。`adapt_step_size` 必须显式给（`None` 直接 raise）：
+      不知道是否启用时，读成 `True` 会假适用、读成 `False` 会假不适用，两边都是错的。
     · 其余四项恒适用。
     """
     if name not in FIELDS:
@@ -184,7 +185,8 @@ def applicability(name: str, *, kernel: str | None = None,
         if not isinstance(adapt_step_size, bool):
             raise ValueError(
                 f"applicability: adapt_step_size 必须是 bool，收到 "
-                f"{adapt_step_size!r}——`None` 不能被读成'关闭自适应'，"
+                f"{adapt_step_size!r}——`None` 表示\"不知道是否启用自适应\"，"
+                "既不能读成 True（会假适用），也不能读成 False（会假不适用）；"
                 "缺失是缺失，不是有效的关闭")
         ok = adapt_step_size
         return {"applicable": ok,
@@ -316,7 +318,7 @@ def evaluate(name: str, *, resolved: Mapping | None = None,
              observation: Mapping | None = None,
              observed_status: str = "captured",
              kernel: str | None = None, num_chains: int | None = None,
-             adapt_step_size: bool = True,
+             adapt_step_size: bool | None = None,
              reason_code: str | None = None,
              why: str | None = None) -> dict:
     """判定单项，返回一条记录。**顺序固定，不许调换**。
@@ -333,6 +335,11 @@ def evaluate(name: str, *, resolved: Mapping | None = None,
     为什么 ① 在 ④ 前面：HMC 的 `_max_tree_depth` 恒为 10，先比数值就会把
     "换了内核"报成"传递链被篡改"。为什么 ② 在 ③④ 前面：采集中断时手上有
     `resolved`，拿它顶替会让"没采到"变成"采到了且一致"。
+
+    `kernel` / `num_chains` / `adapt_step_size` **没有默认值**（都是 `None`），
+    缺上下文时由 ① 里的 `applicability()` 直接 raise。这里不给 `True` 之类的
+    "顺手默认"：拿不准的适用性一旦被默认成适用，后面值比较就会给出一个看起来
+    正常的 `complete`。
     """
     if name not in FIELDS:
         raise ValueError(f"evaluate: 未知字段 {name!r}，可选 {FIELDS}")
@@ -552,6 +559,17 @@ def _selftest() -> bool:
     chk("单链 chain_method 不适用",
         applicability("chain_method", num_chains=1)["reason"] == "single_chain")
     chk("depth 13 vs 10 的预算", tree_budget(13) == 8191 and tree_budget(10) == 1023)
+    # 缺上下文一律 raise：拿不准的适用性不许默认成"适用"
+    for call, label in (
+            (lambda: applicability("target_accept"), "adapt_step_size 缺失"),
+            (lambda: evaluate("target_accept", resolved=_slot(0.9),
+                              observation=observe("target_accept", 0.9)),
+             "evaluate 里 adapt_step_size 缺失")):
+        try:
+            call()
+            chk(f"{label}必须 raise", False)
+        except ValueError:
+            chk(f"{label}必须 raise", True)
 
     # 假 mismatch 必须被拦住：HMC 的 10 不参与比较
     r = evaluate("max_tree_depth", resolved=_slot(7),
@@ -584,7 +602,8 @@ def _selftest() -> bool:
         evaluate("num_chains", resolved=_slot(2),
                  observation=observe("num_chains", 2), num_chains=2),
         evaluate("target_accept", resolved=_slot(0.98),
-                 observation=observe("target_accept", 0.98)),
+                 observation=observe("target_accept", 0.98),
+                 adapt_step_size=True),
         evaluate("max_tree_depth", resolved=_slot(10),
                  observation=observe("max_tree_depth", 10), kernel="NUTS"),
         evaluate("chain_method", resolved=_slot("parallel"),

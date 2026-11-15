@@ -1167,7 +1167,7 @@ W1；`bm_select` 选择/重跑变 → W2（入口）；`kk_mode` 门禁变 → T
 | 2 | 路径规范化（C-2） | ✅ 规则 + 参考实现 + 10 反例（§3） |
 | 3 | 采样事件归属（C-3） | ✅ 规则 + 参考实现 + 8 反例（§4） |
 | ② | 补丁包重建（`pb1`） | ✅ 规则 + 纯函数层 + I/O 层 + 25 反例（`PATCH_BUNDLE.md`）：干净树与脏克隆均能在独立目录重建，三层摘要逐位相同；缺文件 `incomplete` 且拒绝重建 |
-| ③ | 参数捕获作为身份来源 | 🔶 **审计 + 纯函数层完成，捕获层未接**。审计（`round_2026-11-14/SAMPLER_PROVENANCE_AUDIT.md` + `_B.md`）：三处 MCMC 构造点、三条生产路径、9 项发现 + 三执行字段传递链 + 内核适用性 R1–R6；五点**值层面 `Resolved==Effective==Observed`**（3 工况 × 5 参数全等），但 `chain_method`/`progress_bar` 的**请求值不在对象里**、`extra_fields` **没有属性**（F-3/F-8 已定性）。纯函数层 `sampler_provenance.py` + **43/43**（`SAMPLER_PROVENANCE_CONTRACT.md`，含审后 5 格护栏：`evaluate` 复核 `where`、不适用禁声明偏移、`bool`/`None` 类型边界）：八项、观测三分 `attr/call_arg/derived`、双状态字段、判定序把**适用性放在值比较之前**、15 格反例 + 矩阵外 2 格（`origin=default` 不吸收 `mismatch`；偏移声明四条护栏）。**未做**：真实构造/调用边界的捕获（钩子）、`budget_params` 产出、`origin` 落盘、runner |
+| ③ | 参数捕获作为身份来源 | 🔶 **审计 + 纯函数层完成，捕获层未接**。审计（`round_2026-11-14/SAMPLER_PROVENANCE_AUDIT.md` + `_B.md`）：三处 MCMC 构造点、三条生产路径、9 项发现 + 三执行字段传递链 + 内核适用性 R1–R6；五点**值层面 `Resolved==Effective==Observed`**（3 工况 × 5 参数全等），但 `chain_method`/`progress_bar` 的**请求值不在对象里**、`extra_fields` **没有属性**（F-3/F-8 已定性）。纯函数层 `sampler_provenance.py` + **45/45**（`SAMPLER_PROVENANCE_CONTRACT.md`，含审后 5 格护栏：`evaluate` 复核 `where`、不适用禁声明偏移、`bool`/`None` 类型边界；另 2 格：`kernel`/`num_chains`/`adapt_step_size` **签名无默认值**，缺上下文一律 raise）：八项、观测三分 `attr/call_arg/derived`、双状态字段、判定序把**适用性放在值比较之前**、15 格反例 + 矩阵外 2 格（`origin=default` 不吸收 `mismatch`；偏移声明四条护栏）。**未做**：真实构造/调用边界的捕获（钩子）、`budget_params` 产出、`origin` 落盘、runner |
 | ④ | 最小 runner | ⛔ 待授权 |
 
 采集口径那一轮的意义是**把"能不能采"和"采到了怎么算"分开**；补丁包这一轮的意义是
