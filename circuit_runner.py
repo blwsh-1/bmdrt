@@ -120,6 +120,27 @@ SAMPLING_RHAT_MAX = 1.05   # 与 bm_select 的 rhat 判据同值；此处只标 
 # --------------------------------------------------------------------------
 # 统一指标：所有族共用这一份，不读各族自报
 # --------------------------------------------------------------------------
+def _jsonable(x):
+    """递归转成 `json.dump(..., allow_nan=False)` 能吃的形状。
+
+    `bool` 必须先于 `int` 判断（`numpy.bool_` 是 `int` 的子类之外的另一路，
+    但 Python `bool` 是 `int` 的子类，顺序反了会把 True 写成 1）。
+    """
+    if isinstance(x, dict):
+        return {str(k): _jsonable(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [_jsonable(v) for v in x]
+    if isinstance(x, np.ndarray):
+        return [_jsonable(v) for v in x.tolist()]
+    if isinstance(x, (bool, np.bool_)):
+        return bool(x)
+    if isinstance(x, (np.integer, int)):
+        return int(x)
+    if isinstance(x, (np.floating, float)):
+        return float(x)
+    return x
+
+
 def metrics(f, Z, Zm) -> dict:
     """与 `evidence/nested_topology/m4_holdout2.py::_metrics` 逐字同式（§14 口径）。
 
@@ -166,8 +187,13 @@ def build_candidates(ks=DEFAULT_KS, layers=DEFAULT_LAYERS,
             raise ValueError(f"branch={b!r} 不在 {sorted(BRANCH_ELEMENT)}")
     out = []
     for K in ks:
+        # include_L=True 时 registry 要求**恰好一个** `series_inductor` 槽位挂
+        # `rl_series`；漏了会在 make_candidate 处直接 raise（自检覆盖这条）。
+        els = [("relaxation_unit", "hn")] * int(K)
+        if include_L:
+            els.append(("series_inductor", "rl_series"))
         out.append(CR.make_candidate(
-            "voigt", [("relaxation_unit", "hn")] * int(K),
+            "voigt", els,
             {"K": int(K), "include_L": bool(include_L), "adsorption": None},
             init_profile=init_profile, budget_profile=budget_profile,
             likelihood_profile="perpoint-2pct"))
@@ -279,8 +305,13 @@ def _median_params_nested(o: dict, branch: str, layers: int) -> dict:
     return {k: float(np.median(o["s"][k])) for k in T.sampled_keys(branch, layers)}
 
 
+#: `perpoint` 口径的逐点相对标准差（与 §14 / `nested_fit --sigma perpoint` 同值）
+SIGMA_PCT_PERP0INT = 0.02
+
+
 def fit_candidate(cand, f, Z, *, seed: int = 0, budget_profile: str = "quick",
-                  sigma_floor: float | None = None) -> dict:
+                  sigma_floor: float | None = None,
+                  likelihood: str = "free") -> dict:
     """调现有入口拟合一个候选，返回统一形状的观测（不含 registry 校验）。
 
     **不复制任何拟合逻辑**：voigt 走 `bm_select.fit_voigt`（其内部是
@@ -293,6 +324,15 @@ def fit_candidate(cand, f, Z, *, seed: int = 0, budget_profile: str = "quick",
 
     kw = dict(BUDGETS[budget_profile])
     sf = SEL.SIGMA_FLOOR if sigma_floor is None else float(sigma_floor)
+    # 噪声口径：`free` = σ 被采样（旧行为，逐位不变）；`perpoint` = 固定 2%·|Z|。
+    # 两者不能混报：同一候选在两种口径下的 rms/elpd 不可直接比较。
+    if likelihood == "perpoint":
+        sig = SIGMA_PCT_PERP0INT * np.abs(Z)
+        sigma = (sig, sig)
+    elif likelihood == "free":
+        sigma = None
+    else:
+        raise ValueError(f"未知 likelihood={likelihood!r}（可用 free / perpoint）")
     cfg = dict(cand.config)
     t0 = time.time()
 
@@ -301,7 +341,7 @@ def fit_candidate(cand, f, Z, *, seed: int = 0, budget_profile: str = "quick",
         c = SEL.fit_voigt(f, Z, K, seed=seed,
                           include_L=bool(cfg.get("include_L", False)),
                           adsorption=cfg.get("adsorption"),
-                          sigma_floor=sf, kw=kw)
+                          sigma_floor=sf, kw=kw, sigma=sigma)
         raw = c["raw"]
         params = _median_params_voigt(raw)
         Zm = B.model_z(f, params, include_L=bool(cfg.get("include_L", False)))
@@ -311,7 +351,7 @@ def fit_candidate(cand, f, Z, *, seed: int = 0, budget_profile: str = "quick",
         layers = int(cfg["layers"])
         branch = str(cfg["branch"])
         c = SEL.fit_nested(f, Z, layers, branch=branch, seed=seed,
-                           sigma_floor=sf, kw=kw)
+                           sigma_floor=sf, kw=kw, sigma=sigma)
         raw = c["raw"]
         params = _median_params_nested(raw, branch, layers)
         Zm = T.z_nested(f, params, branch=branch, layers=layers)
@@ -338,7 +378,7 @@ def fit_candidate(cand, f, Z, *, seed: int = 0, budget_profile: str = "quick",
         elpd_se=float(raw.get("elpd_se", c["se"])),
         n_draw=int(raw.get("n_draw") or 0),
         elapsed_s=round(time.time() - t0, 2),
-        budget=dict(kw, sigma_floor=sf),
+        budget=dict(kw, sigma_floor=sf), likelihood=likelihood,
         family_ok=bool(c.get("ok")),
     )
 
@@ -405,9 +445,13 @@ def sha256_file(path: str) -> str:
     return h.hexdigest()
 
 
-def cache_key(candidate_id: str, data_sha: str, seed: int, budget_profile: str) -> str:
-    return hashlib.sha256(
-        f"{candidate_id}|{data_sha}|{seed}|{budget_profile}".encode()).hexdigest()[:32]
+def cache_key(candidate_id: str, data_sha: str, seed: int,
+              budget_profile: str, likelihood: str = "free") -> str:
+    """缓存键。`free` 保持旧式四段（历史缓存不失效）；其它口径追加一段。"""
+    base = f"{candidate_id}|{data_sha}|{seed}|{budget_profile}"
+    if likelihood != "free":
+        base += f"|{likelihood}"
+    return hashlib.sha256(base.encode()).hexdigest()[:32]
 
 
 def load_done(path: str) -> dict:
@@ -443,7 +487,7 @@ def append_jsonl(path: str, rec: dict) -> None:
 # --------------------------------------------------------------------------
 def run(data_path: str, *, seed: int = 0, budget_profile: str = "quick",
         out_dir: str | None = None, max_candidates: int | None = None,
-        **plan_kw) -> dict:
+        likelihood: str = "free", **plan_kw) -> dict:
     """候选集 → 预检 → 逐候选拟合 → 落观测。返回本次运行的摘要。"""
     import bm_real as R
     f, Z = R.load_spectrum(data_path)
@@ -466,6 +510,11 @@ def run(data_path: str, *, seed: int = 0, budget_profile: str = "quick",
         json.dump(scr, fh, ensure_ascii=False, indent=1)
 
     jpath = os.path.join(out_dir, "observations.jsonl")
+    # 逐候选的拟合结果（参数 / 90% 区间 / 指标）单独落一份：
+    # `observation_block` 按 schema 只放"可比较的观测"，不放参数；
+    # 但画图、复核、二次分析都需要参数，所以另开 `fits/`。
+    fit_dir = os.path.join(out_dir, "fits")
+    os.makedirs(fit_dir, exist_ok=True)
     done = load_done(jpath)
 
     rows = []
@@ -476,7 +525,7 @@ def run(data_path: str, *, seed: int = 0, budget_profile: str = "quick",
                              run_status="skipped_excluded",
                              reason=rec["precheck_reason"]))
             continue
-        key = cache_key(cand.candidate_id, dsha, seed, budget_profile)
+        key = cache_key(cand.candidate_id, dsha, seed, budget_profile, likelihood)
         if key in done:
             rows.append(dict(candidate_id=cand.candidate_id, precheck=state,
                              run_status="cached", cache_key=key,
@@ -485,7 +534,8 @@ def run(data_path: str, *, seed: int = 0, budget_profile: str = "quick",
             continue
         try:
             obs = fit_candidate(cand, f, Z, seed=seed,
-                               budget_profile=budget_profile)
+                               budget_profile=budget_profile,
+                               likelihood=likelihood)
             ob = to_observation(cand, obs, f=f, Z=Z, seed=seed)
             rec_out = dict(cache_key=key, data_sha256=dsha, seed=seed,
                            budget_profile=budget_profile,
@@ -496,6 +546,18 @@ def run(data_path: str, *, seed: int = 0, budget_profile: str = "quick",
                            fit_observation=dict(rms_rel=ob["fit_observation"]["rms_rel"],
                                                 acf=ob["fit_observation"]["acf"]))
             append_jsonl(jpath, rec_out)
+            with open(os.path.join(fit_dir, cand.candidate_id + ".json"),
+                      "w", encoding="utf-8") as fh:
+                json.dump(_jsonable(dict(
+                    candidate_id=cand.candidate_id,
+                    topology_id=cand.topology_id,
+                    config=rec_out["candidate"].get("config"),
+                    params=obs["params"], ci90=obs["ci90"],
+                    metrics=obs["metrics"], rhat_max=obs["rhat_max"],
+                    divergences=obs["divergences"], ess_min=obs["ess_min"],
+                    elpd=obs["elpd"], elpd_se=obs["elpd_se"],
+                    budget_profile=budget_profile, seed=seed)),
+                    fh, ensure_ascii=False, indent=1, allow_nan=False)
             # 观测块的采样诊断在 `sampling_diagnostics` 子键下；顶层没有 rhat_max。
             # 这里曾误读 `ob["fit_observation"]["rhat_max"]` 并抛 KeyError，
             # 导致"记录已落盘、行汇总却标 failed"——自检已加断言防它再回来。
@@ -521,7 +583,7 @@ def run(data_path: str, *, seed: int = 0, budget_profile: str = "quick",
                              error=str(exc)[:200]))
 
     meta = dict(data_path=data_path, data_sha256=dsha, seed=seed,
-                budget_profile=budget_profile,
+                budget_profile=budget_profile, likelihood=likelihood,
                 registry_version=CR.REGISTRY_VERSION,
                 registry_digest=CR.registry_digest(),
                 precheck_states={s: scr[s] for s in CR.PRECHECK_STATES},
@@ -669,6 +731,12 @@ def _selftest() -> int:
     cap = [c for c in build_candidates(branches=("parallel", "capacitive"))
            if "nested" in c.candidate_id or c.topology_id == "nested"]
     c("capacitive 分支候选能通过 registry 一致性校验", len(cap) == 4)
+    withL = build_candidates(ks=(1,), layers=(1,), include_L=True)
+    c("include_L=True 的 voigt 候选能构造（要挂 series_inductor）",
+      len(withL) == 2 and any(x.candidate_id for x in withL))
+    noL = build_candidates(ks=(1,), layers=(1,), include_L=False)
+    c("include_L 变化会改 candidate_id（不是同一个候选）",
+      withL[0].candidate_id != noL[0].candidate_id)
     par_only = build_candidates(branches=("parallel",))
     ids_par = {c.candidate_id for c in par_only}
     ids_cap = {truth_candidate_for(k).candidate_id
@@ -721,7 +789,13 @@ def _selftest() -> int:
         except ValueError:
             raised = True
         c("坏行报错而不是跳过", raised)
-        c("cache_key 对 seed 敏感",
+        c("cache_key 区分噪声口径",
+      cache_key("C-a", "d" * 64, 0, "standard", "free")
+      != cache_key("C-a", "d" * 64, 0, "standard", "perpoint"))
+    c("free 口径的 key 与旧式四段一致（历史缓存不失效）",
+      cache_key("C-a", "d" * 64, 0, "standard", "free")
+      == hashlib.sha256(("C-a|" + "d" * 64 + "|0|standard").encode()).hexdigest()[:32])
+    c("cache_key 对 seed 敏感",
           cache_key("R-x", "a" * 64, 0, "quick") != cache_key("R-x", "a" * 64, 1, "quick"))
 
     print(f"\n自检 {ok}/{total} 通过" if not bad else f"\nFAIL {len(bad)}/{total}: {bad}")

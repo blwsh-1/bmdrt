@@ -45,6 +45,8 @@ ROLE = {
     "circuit_registry.py": ("L0", "候选电路注册表（schema 承载能力）", "opt", "research"),
     "circuit_runner.py": ("L4", "registry 驱动的候选调度：预检→逐候选拟合→观测落盘（研究接口，不改默认族、不接 auto）", "opt", "research"),
     "circuit_evaluator.py": ("L2", "候选观测→evidence 状态的推导层（规则 E1–E7，争议规则显式标 disputed）", "opt", "research"),
+    "bm_figure_unified.py": ("L3", "统一拟合图：一条谱 + 任意多条候选曲线 → 同一张 6 子图（只依赖 f/Z/curves）", "opt", "stable"),
+    "cmd_compare.py": ("L4", "bmdrt compare：多族候选自动并列 → 统一状态 + 统一图（默认 standard / 逐点 σ）", "opt", "research"),
     # ---- L1 ----
     "bm_real.py": ("L1", "真实数据主程序：读谱 / Lin-KK 门禁 / 选 K / 报告（**职责过载，需拆分**）", "core", "frozen"),
     "bm_ref_rwp.py": ("L1", "参考性 Rwp（独立 LS 重拟合，只作对照）", "opt", "frozen"),

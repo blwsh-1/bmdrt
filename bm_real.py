@@ -691,7 +691,11 @@ def loglik_matrix(s, f, Z, include_L, n_max: int = 800, sigma=None):
         if np.ndim(sigma) == 0:
             _sr = _si = float(sigma)
         else:
-            _sr, _si = float(sigma[0]), float(sigma[1])
+            # 逐点数组 σ（2%·|Z|）要保留数组；`float(array)` 会 TypeError。
+            _sr = np.asarray(sigma[0], float)
+            _si = np.asarray(sigma[1], float)
+            if _sr.ndim == 0:
+                _sr, _si = float(_sr), float(_si)
     else:
         _sr = _si = None
     ll = np.empty((idx.size, f.size))
@@ -942,7 +946,8 @@ def _resolve_seed(seed, kw):
 
 
 def fit_one(f, Z, K, include_L, zeta, init=None, seed=None, kw=None, diffusion=None,
-            diag=None, sigma_floor=0.0, adsorption=None, zmax_override=None):
+            diag=None, sigma_floor=0.0, adsorption=None, zmax_override=None,
+            sigma=None):
     """跑一次 NUTS，返回全部指标（不打印、不画图）。
 
     seed：sampler 随机流种子。`None`（默认）= 沿用 `kw["seed"]`，`kw` 里也没有
@@ -955,13 +960,17 @@ def fit_one(f, Z, K, include_L, zeta, init=None, seed=None, kw=None, diffusion=N
     adsorption：None = 基础模型（逐位不变）；"RL" = 采样吸附元件（M2/M4）。
     zmax_override：透传给 `bm_core.fit`。None = 先验尺度取 `max|Z|`（默认，
     逐位不变）；仅诊断脚本用（R21 先验尺度敏感性），生产/验收一律不传。
+
+    sigma：`(σ_re, σ_im)` 逐点标准差。**None = 自由采样 σ（默认，逐位不变）**；
+    传数组则固定为给定值（`compare` 的 perpoint 口径用它）。它只改噪声模型，
+    不改模型结构、不改 K、不改先验尺度。
     """
     diag = diag or {}
     kw = dict(KW) if kw is None else dict(kw)
     seed_used = _resolve_seed(seed, kw)
     kw["seed"] = seed_used
     t0 = time.time()
-    s, mc = B.fit(f, Z, K=K, alpha=0.5, sigma=None, include_L=include_L,
+    s, mc = B.fit(f, Z, K=K, alpha=0.5, sigma=sigma, include_L=include_L,
                   zeta_fixed=(None if zeta == "free" else float(zeta)),
                   init_values=init, diffusion=diffusion,
                   sigma_floor=float(sigma_floor or 0.0),
@@ -1084,10 +1093,19 @@ def fit_one(f, Z, K, include_L, zeta, init=None, seed=None, kw=None, diffusion=N
     rms_re = float(np.sqrt(np.mean(res.real ** 2)))
     rms_im = float(np.sqrt(np.mean(res.imag ** 2)))
     acf = max(acf_max(res.real), acf_max(res.imag))
+    # 固定 σ 路径下样本里没有 s_re/s_im：PPC 与噪声读数都必须由调用方给的 σ
+    # 提供，不能回退到"残差 std"（那会把拟合误差当测量误差，审查 P2-3）。
     pp = B.posterior_predictive_check(s, f, Z, include_L=include_L,
-                                      n_rep=300, level=0.90)
-    s_re = float(np.median(s["s_re"])) if "s_re" in s else np.nan
-    s_im = float(np.median(s["s_im"])) if "s_im" in s else np.nan
+                                      n_rep=300, level=0.90, sigma=sigma)
+    if "s_re" in s and "s_im" in s:
+        s_re = float(np.median(s["s_re"]))
+        s_im = float(np.median(s["s_im"]))
+    elif sigma is not None:
+        sr, si = (sigma if isinstance(sigma, (tuple, list)) else (sigma, sigma))
+        s_re = float(np.median(np.asarray(sr, float)))
+        s_im = float(np.median(np.asarray(si, float)))
+    else:
+        s_re = s_im = float("nan")
     bins = resid_bins(res, f)
     trend = resid_trend(res, f)
     # 按 f 网格分键：watch/auto 在同一进程连续处理不同网格的谱时，不能把
@@ -1124,7 +1142,7 @@ def fit_one(f, Z, K, include_L, zeta, init=None, seed=None, kw=None, diffusion=N
             if DIFF is not None and hasattr(DIFF, "diffusion_resolution") else None)
 
     # ---- 模型比较 ----
-    ll = loglik_matrix(s, f, Z, include_L)
+    ll = loglik_matrix(s, f, Z, include_L, sigma=sigma)
     _loo_error = None
     try:
         idata, elpd, elpd_se, bad_k, pt, pk = loo_pointwise(ll)

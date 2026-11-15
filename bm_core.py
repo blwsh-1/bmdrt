@@ -695,7 +695,12 @@ def posterior_predictive_check(s: dict, f, Z, include_L=True, n_rep: int = 400,
         if np.ndim(sigma) == 0:
             _sr_fix = _si_fix = float(sigma)
         else:
-            _sr_fix, _si_fix = float(sigma[0]), float(sigma[1])
+            # σ 可以是标量对，也可以是**逐点数组**（2%·|Z|）。逐点时要保持数组，
+            # 否则 `float(array)` 直接 TypeError（compare 的 perpoint 口径撞到过）。
+            _sr_fix = np.asarray(sigma[0], float)
+            _si_fix = np.asarray(sigma[1], float)
+            if _sr_fix.ndim == 0:
+                _sr_fix, _si_fix = float(_sr_fix), float(_si_fix)
     else:
         _sr_fix = None
     has_sig = "s_re" in s and "s_im" in s

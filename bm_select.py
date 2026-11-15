@@ -330,7 +330,8 @@ def voigt_can_represent(f, Z, *, include_L=None,
 
 def fit_voigt(f, Z, K: int, *, seed: int = 0, include_L: bool = False,
               adsorption: str | None = None,
-              sigma_floor: float = SIGMA_FLOOR, kw: dict | None = None) -> dict:
+              sigma_floor: float = SIGMA_FLOOR, kw: dict | None = None,
+              sigma=None) -> dict:
     """voigt 族：`bm_real.fit_one`（K 个串联 HN + 可选 L / 吸附支路）。
 
     `include_L` / `adsorption` 是**族能力开关**，默认全关（= A2/B2 基线口径）。
@@ -344,7 +345,8 @@ def fit_voigt(f, Z, K: int, *, seed: int = 0, include_L: bool = False,
     """
     kw = dict(QUICK if kw is None else kw)
     r = R.fit_one(f, Z, K, include_L, "1.0", seed=seed, kw=kw,
-                  sigma_floor=float(sigma_floor), adsorption=adsorption)
+                  sigma_floor=float(sigma_floor), adsorption=adsorption,
+                  sigma=sigma)
     pt = r.get("pointwise_elpd")
     pt = None if pt is None else np.asarray(pt, float)
     caps = _caps_suffix(include_L, adsorption)
@@ -383,7 +385,8 @@ def _caps_suffix(include_L: bool, adsorption: str | None) -> str:
 
 
 def fit_nested(f, Z, layers: int, *, branch: str = BRANCH, seed: int = 0,
-               sigma_floor: float = SIGMA_FLOOR, kw: dict | None = None) -> dict:
+               sigma_floor: float = SIGMA_FLOOR, kw: dict | None = None,
+               sigma=None) -> dict:
     """nested 族：`bm_top.fit_top`（R∥L 支路嵌在两层 R∥CPE 里）。"""
     kw = dict(QUICK if kw is None else kw)
     o = T.fit_top(f, Z, branch=branch, layers=layers, seed=seed,
@@ -391,7 +394,7 @@ def fit_nested(f, Z, layers: int, *, branch: str = BRANCH, seed: int = 0,
                   num_chains=int(kw["num_chains"]),
                   target_accept=float(kw["target_accept"]),
                   max_tree_depth=int(kw["max_tree_depth"]),
-                  sigma=None, sigma_floor=float(sigma_floor), progress=False)
+                  sigma=sigma, sigma_floor=float(sigma_floor), progress=False)
     pt = o.get("pointwise_elpd")
     pt = None if pt is None else np.asarray(pt, float)
     cand = dict(family="nested", dof=layers, branch=branch,

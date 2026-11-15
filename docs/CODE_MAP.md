@@ -33,6 +33,8 @@
 | `circuit_registry.py` | 候选电路注册表（schema 承载能力） | opt |
 | `circuit_runner.py` | registry 驱动的候选调度：预检→逐候选拟合→观测落盘（研究接口，不改默认族、不接 `auto`） | opt |
 | `circuit_evaluator.py` | 候选观测 → evidence 状态的推导层（E1–E7；争议规则显式标 `disputed`） | opt |
+| `bm_figure_unified.py` | 统一拟合图：一条谱 + 任意多条候选曲线 → 同一张 6 子图（只依赖 f/Z/curves） | opt |
+| `cmd_compare.py` | `bmdrt compare`：多族候选自动并列 → 统一状态 + 统一图（默认 standard / 逐点 σ） | opt |
 | `bm_circuit.py` | 等效电路图绘制 | no |
 
 ### L1 数据与 IO（7）
