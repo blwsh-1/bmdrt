@@ -149,6 +149,20 @@ WORKFLOW_PLAIN_FIELDS = ("search", "extras", "guards", "gate", "retry")
 # 能读源码并主动复刻签发逻辑的内部调用者仍可构造，这一点由审计日志与落盘约束覆盖。
 
 ATTESTATION_FIELD = "capture_attestation"
+#: Gate 2C 版本裁决（`0008635`）：**两层版本分工，不因加门槛而升号世代**。
+#:
+#: · `IDENTITY_CONTRACT_VERSION`（当前 1.5）是「号的计算世代」，进 `run_id_payload["v"]`。
+#:   D-4 的触发条件是**载荷语义变化**：1.4→1.5 时载荷真变了（加
+#:   `config_keys_version` / `rerun_attempt` / `rerun_lineage`、移除 `retry_kw`），所以全换号。
+#: · `ATTESTATION_VERSION`（当前 1）是「准入门槛世代」，在凭证内部、被 HMAC 签名
+#:   覆盖、由 `_chk_attestation()` 校验，改动即零号。它不进哈希载荷，也不该进。
+#:
+#: `e19fe4b → 0008635` 只改了 `evaluate()` 的「能否发号」门槛：实测两个载荷键集与
+#: 内容**逐位相同**、`run_id_digest` / `workflow_id_digest` 均相同。此时把 1.5→1.6
+#: 只会制造一次纯前缀替换的表面换号（零区分力），并重蹈 F-11「keys_version=2 但
+#: 38 键未变」的无意义升版本。故裁决：**保持 1.5 / 键表版本 2**；门槛世代由
+#: `attestation.version` 独立且更强地记录（签名覆盖 > 顶层字段）。
+#: 若将来载荷形状或语义变化，才按 D-4 升 `IDENTITY_CONTRACT_VERSION` 并全换号。
 ATTESTATION_VERSION = "1"
 ATTESTATION_ISSUER = "capture_boundary/v1"
 ATTESTATION_KEYS = ("version", "issued_by", "event_sha256",

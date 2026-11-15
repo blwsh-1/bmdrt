@@ -265,6 +265,31 @@ def case_controlled_issuance_positive():
     return "受控签发正对照：合规记录仍发 R2-/W2-，门槛只拒未签发记录"
 
 
+def case_version_layer_separation():
+    """Gate 2C 版本裁决回归锁：门槛世代独立，号的计算世代不因门槛变化而升。"""
+    r = TE._rec()
+    a = r[E.ATTESTATION_FIELD]
+    body = json.loads(E._attestation_body(a))
+    assert body["version"] == E.ATTESTATION_VERSION, "门槛版本没进签名消息"
+    # 改门槛版本 ⇒ 版本非法 + 签名失配 ⇒ 零号（比顶层版本字段更强）
+    r2 = TE._rec()
+    r2[E.ATTESTATION_FIELD]["version"] = "9"
+    o = E.evaluate(r2)
+    assert o["run_id"] is None and "attestation_version_invalid" in o["reasons"]
+    assert "attestation_signature_invalid" in o["reasons"], o["reasons"]
+    # 两层都不进哈希载荷
+    for payload in (E.run_id_payload(r), E.workflow_payload(r)):
+        assert E.ATTESTATION_FIELD not in payload
+        assert E.EXECUTION_INSTANCE_FIELD not in payload
+    assert set(E.run_id_payload(r)) == {
+        "v", "config_keys_version", "rerun_attempt", "rerun_lineage",
+        "candidate_id", "data", "rng_plan", "budget", "config", "code", "env"}, \
+        "载荷形状变了 ⇒ 必须按 D-4 升契约版本并全换号"
+    assert E.IDENTITY_CONTRACT_VERSION == "1.5" and E.RUN_ID_CONFIG_KEYS_VERSION == 2
+    assert E.evaluate(r)["run_id"].startswith("R2-")
+    return "版本裁决：门槛世代被签名覆盖，载荷形状未变 ⇒ 保持 1.5/2（不做表面换号）"
+
+
 def case_compat_site():
     r = _run("compat", scenario="ok", site="bm_top.fit_top", cfg=_CFG_TOP)
     assert r["event_judged"] is True
@@ -312,6 +337,7 @@ CASES = [
     ("F-01 来源真实性", case_three_parts_authenticity),
     ("F-01 执行关联性", case_three_parts_binding),
     ("受控签发正对照", case_controlled_issuance_positive),
+    ("版本裁决回归锁", case_version_layer_separation),
     ("第二站点兼容验证", case_compat_site),
     ("冻结路径与排除清单", case_frozen_path),
     ("失败不误报成功", case_failures_not_success),
