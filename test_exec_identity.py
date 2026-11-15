@@ -127,14 +127,22 @@ def _budget_evidence(block: dict) -> dict:
             "event_sha256": "a" * 64}
 
 
-def _rec(*, items: list[dict] | None = None) -> dict:
+def _rec(*, items: list[dict] | None = None, nonce: str = "fixture-nonce-0001") -> dict:
     items = list(items if items is not None else _items())
     sig = E.sigma_block(kind="none", mode="free")
     bud = _budget_cells()
+    evi = _budget_evidence(bud)
+    inst = {"data_sha256": _DATA, "candidate_id": "voigt:hn2+rl_parallel",
+            "site": E.FROZEN_PRIMARY_SITE, "nonce": nonce}
+    att = E.issue_capture_attestation(event_sha256=evi["event_sha256"],
+                                      budget_sha256=evi["evidence_sha256"],
+                                      instance=inst)
     return {
         "identity_contract_version": E.IDENTITY_CONTRACT_VERSION,
         E.RUN_ID_CONFIG_KEYS_VERSION_FIELD: E.RUN_ID_CONFIG_KEYS_VERSION,
-        "budget_evidence": _budget_evidence(bud),
+        "budget_evidence": evi,
+        E.EXECUTION_INSTANCE_FIELD: inst,
+        E.ATTESTATION_FIELD: att,
         "candidate_id": "voigt:hn2+rl_parallel",
         "data": {"ref": "a.csv", "sha256": _DATA, "n_points": 50,
                  "subset_sha256": None, "f_min": 0.1, "f_max": 1e5,
@@ -221,15 +229,37 @@ def _val(rec: dict, dotted: str):
     return cur
 
 
+def _resign(rec: dict) -> dict:
+    """合法记录改了绑定锚点后，由受控接口为**本次新条件**重新签发凭证。
+
+    这不是放宽 F-01：门禁拦的是「拿别的执行的凭证冒充本次」，这里是为
+    新条件重新绑定 + 重新签发；instance / attestation 都不进哈希载荷。
+    """
+    evi = rec[E.BUDGET_EVIDENCE_FIELD]
+    inst = dict(rec[E.EXECUTION_INSTANCE_FIELD])
+    inst["data_sha256"] = rec["data"]["sha256"]
+    inst["candidate_id"] = rec["candidate_id"]
+    inst["nonce"] = str(inst["nonce"]) + "-resigned"
+    rec[E.EXECUTION_INSTANCE_FIELD] = inst
+    rec[E.ATTESTATION_FIELD] = E.issue_capture_attestation(
+        event_sha256=evi["event_sha256"],
+        budget_sha256=evi["evidence_sha256"], instance=inst)
+    return rec
+
+
 def _ids(rec: dict, **kw) -> tuple:
     ev = E.evaluate(rec, **kw)
     return ev["run_id"], ev["workflow_id"], ev["status"], ev["reasons"]
 
 
-def _must_change(rec: dict, dotted: str, value, *, field: int = 0, label: str = "") -> str:
+def _must_change(rec: dict, dotted: str, value, *, field: int = 0,
+                 label: str = "", resign: bool = False) -> str:
     """改一处，断言 `run_id`（field=0）或 `workflow_id`（field=1）变。"""
     before = _ids(rec)
-    after = _ids(_set(copy.deepcopy(rec), dotted, value))
+    r2 = _set(copy.deepcopy(rec), dotted, value)
+    if resign:
+        _resign(r2)
+    after = _ids(r2)
     assert before[field] != after[field], f"{label or dotted}：该变号却没变"
     return f"{label or dotted}：{before[field][:12]}… → {after[field][:12]}…"
 
@@ -337,7 +367,9 @@ def case_T11_registry_version():
 # T12–T14 数据身份
 # --------------------------------------------------------------------------
 def case_T12_other_file():
-    return _must_change(_rec(), "data.sha256", _sha("data/b.csv"), label="T12 换文件")
+    # 换了数据 ⇒ 是另一次执行，必须重新绑定实例并重新签发（F-01 执行关联性）
+    return _must_change(_rec(), "data.sha256", _sha("data/b.csv"),
+                        label="T12 换文件", resign=True)
 
 
 def case_T13_subset():
@@ -359,6 +391,7 @@ def case_T15_budget_tier():
     r2 = copy.deepcopy(r)
     r2["budget_params"] = _budget_cells((800, 400, 2, 0.9, 10))  # quick 档数值
     r2["budget_evidence"] = _budget_evidence(r2["budget_params"])
+    _resign(r2)        # 预算证据换了指纹 ⇒ 凭证必须重新签发
     a, b = _ids(r), _ids(r2)
     assert a[0] != b[0], "预算数值变了 run_id 没变（档名冒充数值，F4）"
     assert "standard" not in json.dumps(E.run_id_payload(r2)), "档名混进了载荷"

@@ -77,10 +77,19 @@ def _child(attempt: int, values=(2000, 1000, 2, 0.98, 10), *,
            reason: str | None = "sampler_error",
            parent_ref: str | None = _PARENT_REF) -> dict:
     bud = TE._budget_cells(values)
+    evi = TE._budget_evidence(bud)
+    parent = TE._rec(nonce=f"parent-{attempt}")
+    inst = {"data_sha256": parent["data"]["sha256"],
+            "candidate_id": parent["candidate_id"],
+            "site": E.FROZEN_PRIMARY_SITE,
+            "nonce": f"rerun-attempt-{attempt}"}
+    att = E.issue_capture_attestation(event_sha256=evi["event_sha256"],
+                                      budget_sha256=evi["evidence_sha256"],
+                                      instance=inst)
     return E.make_rerun_record(
-        TE._rec(), attempt=attempt, budget_params=bud,
-        budget_evidence=TE._budget_evidence(bud),
-        reason=reason, parent_workflow_ref=parent_ref)
+        parent, attempt=attempt, budget_params=bud, budget_evidence=evi,
+        reason=reason, parent_workflow_ref=parent_ref,
+        execution_instance=inst, capture_attestation=att)
 
 
 def _real_event() -> tuple[dict | None, str]:
@@ -556,13 +565,24 @@ def case_F08_lineage_no_collision():
     pb["workflow"]["retry"] = 3
     wa, wb = _ev(pa)["workflow_id"], _ev(pb)["workflow_id"]
     assert wa != wb, "两个父工作流的 workflow_id 本该不同"
-    bud, evi = TE._budget_cells(), None
-    ca = E.make_rerun_record(pa, attempt=1, budget_params=bud,
-                             budget_evidence=TE._budget_evidence(bud),
-                             reason="sampler_error", parent_workflow_ref=wa)
-    cb = E.make_rerun_record(pb, attempt=1, budget_params=bud,
-                             budget_evidence=TE._budget_evidence(bud),
-                             reason="sampler_error", parent_workflow_ref=wb)
+    bud = TE._budget_cells()
+    evi = TE._budget_evidence(bud)
+
+    def _signed_child(parent, ref, tag):
+        inst = {"data_sha256": parent["data"]["sha256"],
+                "candidate_id": parent["candidate_id"],
+                "site": E.FROZEN_PRIMARY_SITE, "nonce": tag}
+        att = E.issue_capture_attestation(event_sha256=evi["event_sha256"],
+                                          budget_sha256=evi["evidence_sha256"],
+                                          instance=inst)
+        return E.make_rerun_record(parent, attempt=1, budget_params=bud,
+                                   budget_evidence=evi, reason="sampler_error",
+                                   parent_workflow_ref=ref,
+                                   execution_instance=inst,
+                                   capture_attestation=att)
+
+    ca = _signed_child(pa, wa, "lineage-a")
+    cb = _signed_child(pb, wb, "lineage-b")
     a, b = _ev(ca, role="child"), _ev(cb, role="child")
     assert a["status"] == b["status"] == "recorded", (a["reasons"], b["reasons"])
     assert a["run_id"] != b["run_id"], "F-08 阻断项：不同 lineage 同 attempt 又撞号"

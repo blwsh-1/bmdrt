@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import hmac
 import json
 import pathlib
 import re
@@ -137,6 +138,36 @@ BUDGET_CAPTURE_SITES = ("bm_core.fit", "bm_top.fit_top")
 #: 这些 workflow 整块字段走 `_plain` 进 `workflow_id`，若把五项键塞进去，
 #: 就等于绕开 G3 二次承载预算 ⇒ 算号前必须拒。
 WORKFLOW_PLAIN_FIELDS = ("search", "extras", "guards", "gate", "retry")
+
+# ---------------------------------------------------------------------------
+# Gate 2B / F-01：可信来源三分（内容完整性 / 来源真实性 / 执行关联性）
+# ---------------------------------------------------------------------------
+# 重要边界（不得夸大）：`evaluate()` 吃的是普通 dict，**纯函数层无法密码学地证明**
+# 「证据来自真实 MCMC 构造过程」。这里实现的是工程上的「可信边界签发 + 执行实例
+# 强绑定 + 落盘可审计」：证据必须由受控捕获接口签发、签名可复算、绑定本次执行的
+# 数据身份与候选；跨运行复制 / 错关联会被拒。它不是抗抵赖的密码学证明——
+# 能读源码并主动复刻签发逻辑的内部调用者仍可构造，这一点由审计日志与落盘约束覆盖。
+
+ATTESTATION_FIELD = "capture_attestation"
+ATTESTATION_VERSION = "1"
+ATTESTATION_ISSUER = "capture_boundary/v1"
+ATTESTATION_KEYS = ("version", "issued_by", "event_sha256",
+                    "budget_sha256", "instance_token", "signature")
+
+EXECUTION_INSTANCE_FIELD = "execution_instance"
+EXECUTION_INSTANCE_KEYS = ("data_sha256", "candidate_id", "site", "nonce")
+
+#: 冻结的唯一执行路径；`bm_top.fit_top` 仅作第二站点兼容验证对象。
+#: nested 独立接口 / K3 `m35_cond_n2.py:116` / `bm_select.py` retry / 其余入口
+#: **不纳入、不外推**。
+FROZEN_PRIMARY_SITE = "bm_core.fit"
+FROZEN_COMPAT_SITES = ("bm_top.fit_top",)
+FROZEN_EXECUTION_SITES = (FROZEN_PRIMARY_SITE,) + FROZEN_COMPAT_SITES
+
+#: 项目内受控签发密钥。写在这里意味着验证是**纯函数、可跨进程复现**（落盘后
+#: 重读仍可验证），也意味着它不是私钥：签发能力属于受控捕获接口，不属于记录
+#: 本身。明账为「内部可信边界」，不宣称抗抵赖。
+_ATTESTATION_KEY = b"bmdrt/execution-attestation/v1/project-controlled-boundary"
 
 #: `run_id` 认的是"进似然/进模型的东西"；键名原样，不改写不加前缀。
 #: 值 = (类型标签, `effect`)。类型标签只用于校验，不参与哈希。
@@ -882,6 +913,114 @@ def _chk_workflow(wf: Mapping) -> list[str]:
     return r
 
 
+# ---------------------------------------------------------------------------
+# F-01：可信捕获凭证（受控签发 / 实例绑定 / 签名复算）
+# ---------------------------------------------------------------------------
+
+def _attestation_body(a: Mapping) -> str:
+    """签名覆盖的五个字段；`signature` 自身不进消息。"""
+    return canonical_json({k: a.get(k) for k in ATTESTATION_KEYS
+                           if k != "signature"})
+
+
+def attestation_signature(a: Mapping) -> str:
+    """HMAC-SHA256。纯函数、无 I/O、无时间戳、无环境 ⇒ 落盘后重读可复算。"""
+    return hmac.new(_ATTESTATION_KEY, _attestation_body(a).encode("utf-8"),
+                    hashlib.sha256).hexdigest()
+
+
+def execution_instance_token(inst: Mapping) -> str:
+    """执行实例指纹：数据身份 + 候选 + 站点 + 本次 nonce。"""
+    return hashlib.sha256(
+        canonical_json({k: inst.get(k) for k in EXECUTION_INSTANCE_KEYS}
+                       ).encode("utf-8")).hexdigest()
+
+
+def issue_capture_attestation(*, event_sha256: str, budget_sha256: str,
+                              instance: Mapping) -> dict:
+    """受控签发接口：只能由 harness 在拿到**真实捕获事件**后调用。
+
+    `event_sha256` / `budget_sha256` 必须取自事件的 `budget_evidence`，不许
+    调用者另造；`instance` 绑定本次执行的数据身份、候选、站点与唯一 nonce。
+    """
+    for name, val in (("event_sha256", event_sha256),
+                      ("budget_sha256", budget_sha256)):
+        if not isinstance(val, str) or re.fullmatch(r"[0-9a-f]{64}", val) is None:
+            raise ValueError(f"{name} 必须是 64 位小写 hex")
+    if not isinstance(instance, Mapping):
+        raise ValueError("instance 必须是映射")
+    missing = [k for k in EXECUTION_INSTANCE_KEYS if k not in instance]
+    if missing:
+        raise ValueError(f"execution_instance 缺字段 {missing}")
+    if instance.get("site") not in FROZEN_EXECUTION_SITES:
+        raise ValueError(f"site 不在冻结路径内：{instance.get('site')!r}")
+    a = {"version": ATTESTATION_VERSION, "issued_by": ATTESTATION_ISSUER,
+         "event_sha256": event_sha256, "budget_sha256": budget_sha256,
+         "instance_token": execution_instance_token(instance),
+         "signature": ""}
+    a["signature"] = attestation_signature(a)
+    return a
+
+
+def _chk_attestation(rec: Mapping) -> list[str]:
+    """F-01 三分门槛，缺一即 `unconfirmed` 无号。
+
+    · 内容完整性：`event_sha256` / `budget_sha256` 与 `budget_evidence` 逐位对齐；
+    · 来源真实性：签名由受控接口用项目密钥重算比对（自洽字典签不出来）；
+    · 执行关联性：`instance_token` 与 `execution_instance` 自洽，且实例的
+      `data_sha256` / `candidate_id` / `site` 与**本条记录**一致 ⇒ 把 A 次执行
+      的凭证交给 B 次执行会被拒。
+    """
+    a = rec.get(ATTESTATION_FIELD)
+    if not isinstance(a, Mapping):
+        return ["attestation_missing"]
+    r: list[str] = []
+    missing = [k for k in ATTESTATION_KEYS if k not in a]
+    over = [k for k in a if k not in ATTESTATION_KEYS]
+    if missing:
+        r.append("attestation_missing_fields:" + ",".join(missing))
+    if over:
+        r.append("attestation_unknown_fields:"
+                 + ",".join(sorted(str(k) for k in over)))
+    if a.get("version") != ATTESTATION_VERSION:
+        r.append("attestation_version_invalid")
+    if a.get("issued_by") != ATTESTATION_ISSUER:
+        r.append("attestation_issuer_invalid")
+
+    ev = rec.get(BUDGET_EVIDENCE_FIELD) or {}
+    if a.get("event_sha256") != ev.get("event_sha256"):
+        r.append("attestation_event_sha_mismatch")
+    if a.get("budget_sha256") != ev.get("evidence_sha256"):
+        r.append("attestation_budget_sha_mismatch")
+
+    inst = rec.get(EXECUTION_INSTANCE_FIELD)
+    if not isinstance(inst, Mapping):
+        r.append("execution_instance_missing")
+    else:
+        im = [k for k in EXECUTION_INSTANCE_KEYS if k not in inst]
+        io = [k for k in inst if k not in EXECUTION_INSTANCE_KEYS]
+        if im or io:
+            r.append("execution_instance_shape")
+        if inst.get("data_sha256") != (rec.get("data") or {}).get("sha256"):
+            r.append("attestation_data_binding_mismatch")
+        if inst.get("candidate_id") != rec.get("candidate_id"):
+            r.append("attestation_candidate_binding_mismatch")
+        if inst.get("site") not in FROZEN_EXECUTION_SITES:
+            r.append("attestation_site_not_frozen")
+        n = inst.get("nonce")
+        if not isinstance(n, str) or not n.strip():
+            r.append("execution_instance_nonce_invalid")
+        if not im and not io and \
+                a.get("instance_token") != execution_instance_token(inst):
+            r.append("attestation_instance_token_mismatch")
+
+    sig = a.get("signature")
+    if not isinstance(sig, str) or not hmac.compare_digest(
+            sig, attestation_signature(a)):
+        r.append("attestation_signature_invalid")
+    return r
+
+
 def _budget_payload(bud: Mapping) -> dict:
     out = {}
     for k in BUDGET_KEYS:
@@ -1490,6 +1629,9 @@ def evaluate(rec: Mapping, *, role: str = "parent") -> dict:
     reasons += _chk_workflow(wf)
     # F-08/F-09：子运行缺父引用 / 缺重跑原因 ⇒ 无号（防撞号）。
     reasons += _chk_rerun(rec)
+    # F-01：内容完整性 / 来源真实性 / 执行关联性三分。没有受控签发的
+    # 捕获凭证，自洽字典一律拿不到号（Gate 2A 的 F-01 由此关闭）。
+    reasons += _chk_attestation(rec)
     fatal = bool(reasons)
 
     reasons += _chk_config(cfg, rec, role=role)
@@ -1525,7 +1667,9 @@ def make_rerun_record(parent: Mapping, *, attempt: int,
                       budget_params: Mapping, budget_evidence: Mapping,
                       reason: str | None = None,
                       parent_workflow_ref: str | None = None,
-                      rng: Mapping | None = None) -> dict:
+                      rng: Mapping | None = None,
+                      execution_instance: Mapping | None = None,
+                      capture_attestation: Mapping | None = None) -> dict:
     """生成一次**独立**重跑的子记录（纯函数：不写盘、不改入参、不构造号）。
 
     父记录里保留的是**身份条件**：`candidate_id` / `data` / `rng` / `config` /
@@ -1557,6 +1701,12 @@ def make_rerun_record(parent: Mapping, *, attempt: int,
         out["rng"] = copy.deepcopy(dict(rng))
     out["budget_params"] = copy.deepcopy(dict(budget_params))
     out["budget_evidence"] = copy.deepcopy(dict(budget_evidence))
+    # F-01：子运行是**新的执行实例**，绝不继承父的 instance/attestation
+    # （继承就等于跨运行复用凭证）。必须由调用方为新实例重新签发。
+    if execution_instance is not None:
+        out[EXECUTION_INSTANCE_FIELD] = copy.deepcopy(dict(execution_instance))
+    if capture_attestation is not None:
+        out[ATTESTATION_FIELD] = copy.deepcopy(dict(capture_attestation))
     out[RERUN_FIELD] = {"attempt": attempt, "reason": reason,
                         "parent_workflow_ref": parent_workflow_ref}
     out["workflow"] = {"role": "child", "retry": 0, "retry_kw": {}, "children": []}
