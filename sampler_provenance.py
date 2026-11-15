@@ -173,12 +173,20 @@ def applicability(name: str, *, kernel: str | None = None,
     if name == "chain_method":
         if num_chains is None:
             raise ValueError("applicability: chain_method 必须显式给 num_chains")
-        if not isinstance(num_chains, int) or num_chains < 1:
-            raise ValueError(f"applicability: num_chains 必须是正整数，收到 {num_chains!r}")
+        if isinstance(num_chains, bool) or not isinstance(num_chains, int) \
+                or num_chains < 1:
+            raise ValueError(
+                f"applicability: num_chains 必须是正整数，收到 {num_chains!r}"
+                "（bool 是 int 的子类，`True` 会被当成 1，必须显式拒绝）")
         ok = num_chains > 1
         return {"applicable": ok, "reason": None if ok else "single_chain"}
     if name == "target_accept":
-        ok = bool(adapt_step_size)
+        if not isinstance(adapt_step_size, bool):
+            raise ValueError(
+                f"applicability: adapt_step_size 必须是 bool，收到 "
+                f"{adapt_step_size!r}——`None` 不能被读成'关闭自适应'，"
+                "缺失是缺失，不是有效的关闭")
+        ok = adapt_step_size
         return {"applicable": ok,
                 "reason": None if ok else "step_size_not_adapting"}
     return {"applicable": True, "reason": None}
@@ -189,14 +197,36 @@ def tree_budget(max_tree_depth: int) -> int:
 
     depth 13 与 10 不是"记个数字不同"：8191 vs 1023，轨迹预算差 8 倍。
     """
-    if not isinstance(max_tree_depth, int) or max_tree_depth < 1:
-        raise ValueError(f"tree_budget: 需要正整数，收到 {max_tree_depth!r}")
+    if isinstance(max_tree_depth, bool) or not isinstance(max_tree_depth, int) \
+            or max_tree_depth < 1:
+        raise ValueError(
+            f"tree_budget: 需要正整数，收到 {max_tree_depth!r}"
+            "（bool 是 int 的子类，`True` 会算出 1）")
     return 2 ** max_tree_depth - 1
 
 
 # ---------------------------------------------------------------------------
 # 观测
 # ---------------------------------------------------------------------------
+
+def _chk_where(name: str, how: str, where: Any) -> None:
+    """通道 ↔ 位置的对应关系。观测点不是自由字符串。
+
+    `observe()` 与 `evaluate()` 都调它：前者防自己拼错，后者防**绕过 `observe()`
+    直接构造 Mapping**。判定入口是最后一道，不能假设上游一定走了构造函数。
+    """
+    if not isinstance(where, str) or not where.strip():
+        raise ValueError(f"{name}.observed.where 必须是非空字符串（证据要能指到位置）")
+    if how == "derived":
+        if where == OBSERVE_AT[name]:
+            raise ValueError(
+                f"{name}.observed: derived 的观测点不能写成契约点 {where!r}——"
+                "反推不是在那一点上发生的")
+    elif where != OBSERVE_AT[name]:
+        raise ValueError(
+            f"{name}.observed: {how} 的契约观测点是 {OBSERVE_AT[name]!r}，"
+            f"收到 {where!r}；换了位置就是换了语义（例如从 kw 读冒充从 mc 读）")
+
 
 def observe(name: str, value: Any, *, how: str = "attr",
             where: str | None = None) -> dict:
@@ -219,17 +249,7 @@ def observe(name: str, value: Any, *, how: str = "attr",
             + ("（它没有属性可读）" if name == "extra_fields" and how == "attr" else ""))
     if where is None:
         where = OBSERVE_AT[name]
-    if not isinstance(where, str) or not where.strip():
-        raise ValueError("observe: where 必须是非空字符串（证据要能指到位置）")
-    if how == "derived":
-        if where == OBSERVE_AT[name]:
-            raise ValueError(
-                f"observe: derived 的观测点不能写成契约点 {where!r}——"
-                "反推不是在那一点上发生的")
-    elif where != OBSERVE_AT[name]:
-        raise ValueError(
-            f"observe: {name} 的契约观测点是 {OBSERVE_AT[name]!r}，收到 {where!r}；"
-            "换了位置就是换了语义（例如从 kw 读冒充从 mc 读）")
+    _chk_where(name, how, where)
     return {"value": value, "how": how, "where": where}
 
 
@@ -296,7 +316,7 @@ def evaluate(name: str, *, resolved: Mapping | None = None,
              observation: Mapping | None = None,
              observed_status: str = "captured",
              kernel: str | None = None, num_chains: int | None = None,
-             adapt_step_size: bool | None = True,
+             adapt_step_size: bool = True,
              reason_code: str | None = None,
              why: str | None = None) -> dict:
     """判定单项，返回一条记录。**顺序固定，不许调换**。
@@ -347,6 +367,11 @@ def evaluate(name: str, *, resolved: Mapping | None = None,
                 f"evaluate: {name} 是反推（how=derived），不能标 captured——"
                 '反推要显式降级成 observed_status="hook_not_reached" + '
                 'why="inferred_only"，让它落 incomplete，而不是冒充观测')
+        # `where` 必须在这里复核一遍。`observe()` 会守，但 `evaluate()` 收的是
+        # 任意 Mapping：绕过 `observe()` 直接塞 `{"how":"attr","where":"kw.x"}`
+        # 就能把"从 kw 读"伪装成"从 mc 读"，而这正是 F-4 的错法。
+        # 判定入口不能假设上游一定用了正确的构造函数。
+        _chk_where(name, observation["how"], observation["where"])
 
     supplied = observed_status
     rec = {
@@ -366,6 +391,14 @@ def evaluate(name: str, *, resolved: Mapping | None = None,
     app = applicability(name, kernel=kernel, num_chains=num_chains,
                         adapt_step_size=adapt_step_size)
     if not app["applicable"]:
+        # 不适用时**不许**声明偏移：不适用说的是"这次执行根本不读它"，
+        # 与"读到了、但被改成别的值"是两件事。放行会让调用方用一句
+        # `sequentially_resolved` 把"单链根本不看 chain_method"洗成"偏移"。
+        if reason_code in OVERRIDE_CODES:
+            raise ValueError(
+                f"evaluate: {name} 在当前配置下不适用（{app['reason']}），"
+                f"却声明了 {reason_code!r}——不适用没有「条件偏移」这回事；"
+                "不能声称一个不可能发生的改写")
         rec["applicable"] = False
         rec["observed_status"] = "not_applicable"
         rec["status"] = "derived"

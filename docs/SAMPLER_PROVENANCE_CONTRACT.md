@@ -1,7 +1,7 @@
 # 采样参数来源契约（sampler provenance）v1.0
 
 > 实现：`sampler_provenance.py`（纯函数层，**不被生产模块 import**）
-> 反例矩阵：`test_sampler_provenance.py`（**38/38**，其中 15 格是裁决过的矩阵，另 2 格为矩阵外追加）
+> 反例矩阵：`test_sampler_provenance.py`（**43/43**，其中 15 格是裁决过的矩阵，另 2 格为矩阵外追加、5 格为审后修复的护栏）
 > 上游：`docs/round_2026-11-14/SAMPLER_PROVENANCE_AUDIT.md`（阶段 A）、
 > `SAMPLER_PROVENANCE_AUDIT_B.md`（补充审计：三执行字段 + 内核适用性）
 >
@@ -49,9 +49,13 @@
    ⇒ 请求值必须由构造边界另外提供（`resolved`）；
 3. `extra_fields` **没有属性**（`hasattr=False`），只活在 `MCMC.run` 的栈帧里。
 
-`observe()` 会拒绝把通道和位置混搭：`attr` 的 `where` 必须等于 `OBSERVE_AT`，
-`call_arg` 的必须是 `MCMC.run.extra_fields`，`derived` 的必须**不是**契约点。
-"从 `kw` 读"写成 `attr` 会被直接拒绝——那正是 F-4 的形状。
+`observe()` 与 `evaluate()` **两处都**守通道与位置的对应：`attr` / `call_arg` 的 `where`
+必须等于 `OBSERVE_AT`，`derived` 的必须**不是**契约点。"从 `kw` 读"写成 `attr` 会被直接拒绝
+——那正是 F-4 的形状。
+
+为什么 `evaluate()` 要再查一遍：它收的是**任意 Mapping**，绕过 `observe()` 手写
+`{"value": 800, "how": "attr", "where": "kw.n_warmup"}` 就能拿到 `complete`。
+判定入口是最后一道，不能假设上游一定用了构造函数（P11）。
 
 ---
 
@@ -77,9 +81,11 @@
 
 ```
 ① 适用性     不适用 ⇒ observed_status=not_applicable / status=derived，跳过值比较
+             （不适用 + 声明偏移 ⇒ 当场 raise，不许改写成 single_chain）
 ② 观测通道   attribute_missing|hook_not_reached|capture_error ⇒ incomplete
 ②' 观测缺失  observation=None ⇒ incomplete（resolved 不许顶替）
 ②'' 观测 NaN  observed.value 是 NaN ⇒ incomplete / observed_nan
+②‴ 偏移自洽   声明了 sequentially_resolved|forced_by_env 就必须有一对不同的值
 ③ 解析值缺失 resolved=None（只知道档名）⇒ derived / resolved_missing
 ④ 值不等     ⇒ mismatch
 ⑤ origin=default ⇒ defaulted（**不是** derived）
@@ -90,6 +96,10 @@
   设置。先比数值会把"换了内核"报成"传递链被篡改"（假 `mismatch`）。这条是本轮特意
   锁死的实现细节。
 - **② 在 ③④ 之前**：采集中断时手上有 `resolved`，拿它顶替会把"没采到"变成"采到了且一致"。
+- **① 里的偏移禁用**：不适用说的是"这次执行根本不读它"，与"读到了、被改成别的值"
+  是两件事。单链下声明 `sequentially_resolved` 描述的是一个**不可能发生的改写**
+  ⇒ raise，不静默降级成 `single_chain`（P12）。
+- **②‴ 偏移自洽**：偏移是两值之比，见 §6 的五条护栏。
 - **⑤ 用 `defaulted` 不用 `derived`**：默认值是**生效值**，与"只知道档名"不是一回事。
   区别在捕获位置——在调用点把默认值物化成实参并记下来算"记录实际值"；
   事后从源码读默认值算"猜"，不行。
@@ -118,6 +128,8 @@
 | R6 | depth 是轨迹预算：上界 `2**d - 1` ⇒ 13 vs 10 是 8191 vs 1023 | `tree_budget()` |
 
 `applicability()` 缺上下文时**直接 raise**，不给默认值：默认值在这里正好是错的那一边。
+类型边界也封闭：`num_chains` 显式拒 `bool`（`True` 会被当成 1）、`adapt_step_size` 只收
+`True/False`（`None` 不能被读成"关闭自适应"）、`tree_budget` 拒 `bool`（`True` 会算出 1）。
 
 ---
 
@@ -149,6 +161,7 @@
 | 2 | 值没变却声称偏移 | 偏移是两值之比，两值相等就没有"偏移"这回事 |
 | 3 | 没采到值却声称偏移（`attribute_missing` / `None` / NaN） | `incomplete` 想借"环境干的"洗白，正好是这轮要防的静默 |
 | 4 | 只知道档名（`resolved=None`）却声称偏移 | 没有请求值就没有比较对象 |
+| 5 | 字段本身**不适用**却声明偏移（单链声 `sequentially_resolved`） | 不适用是"不会被读"，不是"被改成别的值"；放行等于把"没看"洗成"看过且被改" |
 
 反过来，**漏声明**不会让记录变好看：同一处差异不带码就落 `value_differs`，计入
 `mismatch` 但不计入 `n_override`。"漏声明"只会让整体看起来更糟，不会更干净——
@@ -196,8 +209,9 @@
 | 12 | `num_chains=1` | `chain_method` = `not_applicable` | M12 |
 | 13 | B 路径声明 `num_steps` | 实为 `("diverging",)` ⇒ `mismatch`/`declared_not_delivered` | M13 |
 
-另有 P 组 10 格（通道白名单、契约观测点、origin 必填、NaN、原因码闭集、不许自报不适用、
-元组无序比较、树深预算、适用性缺上下文、`where` 必填）、G 组 5 格（聚合）、
+另有 P 组 **15 格**（通道白名单、契约观测点、origin 必填、NaN、原因码闭集、不许自报不适用、
+元组无序比较、树深预算、适用性缺上下文、`where` 必填，加审后 5 格：`evaluate` 复核 `where`、
+不适用不许声明偏移、`bool` 不是正整数、`tree_budget` 拒 `bool`、`adapt_step_size` 严格）、G 组 5 格（聚合）、
 X 组 5 格（生产零引用、无重依赖、不改入参、JSON 直出、字段顺序稳定）。
 
 **矩阵外追加 2 格**（不改动上面 15 格的编号）：
@@ -207,7 +221,7 @@ X 组 5 格（生产零引用、无重依赖、不改入参、JSON 直出、字�
 | 14 | `origin=default` 且值被改；A 路径（3 链 / 1 设备）整体 | `status=mismatch` 但 `resolved.origin` 仍为 `default`；聚合 `mismatch`，**不是** `defaulted` | M14 |
 | 15 | 四类假的偏移声明 + 同一差异带码/不带码 | 四处 raise；带码进 `override_fields`，不带码落 `value_differs` | M15 |
 
-合计 **38/38**。
+合计 **43/43**。
 
 ---
 
@@ -215,7 +229,7 @@ X 组 5 格（生产零引用、无重依赖、不改入参、JSON 直出、字�
 
 ```bash
 D:/autoeis_env/Scripts/python.exe sampler_provenance.py        # 内置自检
-D:/autoeis_env/Scripts/python.exe test_sampler_provenance.py   # 38/38
+D:/autoeis_env/Scripts/python.exe test_sampler_provenance.py   # 43/43
 ```
 
 回归不受影响（本层零耦合）：identity 68/68、capture 31/31、bundle 25/25、

@@ -7,7 +7,9 @@
 
 四组：
 
-· **P**（10 格）纯函数契约：通道白名单、契约观测点、origin 必填、NaN、原因码闭集…
+· **P**（15 格）纯函数契约：通道白名单、契约观测点、origin 必填、NaN、原因码闭集…
+  后 5 格（P11–P15）是审后修复：`evaluate` 自己复核 `where`、不适用不许声明偏移、
+  `bool` 不是正整数、`tree_budget` 拒 `bool`、`adapt_step_size` 严格布尔
 · **M**（18 格）反例矩阵：M1–M13 是约定的 15 格（M5 拆成 a/b/c/d 四种改法），
   M14/M15 是矩阵外追加的两条语义锁（`origin=default` 不吸收 `mismatch`；
   偏移声明不许跨字段、不许无值、不许值没变）
@@ -184,6 +186,104 @@ def case_P10_where_required():
     _must_raise(lambda: S.evaluate("n_warmup", resolved=_slot(800, where=""),
                                    observation=S.observe("n_warmup", 800)), "where")
     return "证据要能指到位置"
+
+
+def case_P11_where_checked_in_evaluate():
+    """P11 绕过 `observe()` 直接塞错误 `where` ⇒ `evaluate()` 自己必须拦住。
+
+    `evaluate()` 收的是任意 Mapping，不能假设上游一定调了 `observe()`。
+    否则 `{"how":"attr","where":"kw.n_warmup"}` 这种"从 kw 读冒充从 mc 读"
+    （F-4 的错法）能拿到 `complete`——本层最重要的那条边界就白写了。
+    """
+    # attr 但位置在 kw 上
+    _must_raise(lambda: S.evaluate(
+        "n_warmup", resolved=_slot(800, "cli", "CLI"),
+        observation={"value": 800, "how": "attr", "where": "kw.n_warmup"}),
+        "契约观测点")
+    # call_arg 但位置编造
+    _must_raise(lambda: S.evaluate(
+        "extra_fields", resolved=_slot(("num_steps",), "tier", "BUDGETS"),
+        observation={"value": ("num_steps",), "how": "call_arg",
+                     "where": "MCMC.run.return"}),
+        "契约观测点")
+    # derived 但位置写成契约点
+    _must_raise(lambda: S.evaluate(
+        "extra_fields", resolved=_slot(("num_steps",), "tier", "BUDGETS"),
+        observation={"value": ("num_steps",), "how": "derived",
+                     "where": S.OBSERVE_AT["extra_fields"]},
+        observed_status="hook_not_reached"),
+        "不能写成契约点")
+    # 空/非字符串
+    _must_raise(lambda: S.evaluate(
+        "n_warmup", resolved=_slot(800, "cli", "CLI"),
+        observation={"value": 800, "how": "attr", "where": 7}),
+        "非空字符串")
+
+    # 正对照：不经 `observe()` 但位置正确 ⇒ 照常 complete（护栏不是"一律拒绝"）
+    ok = S.evaluate("n_warmup", resolved=_slot(800, "cli", "CLI"),
+                    observation={"value": 800, "how": "attr",
+                                 "where": S.OBSERVE_AT["n_warmup"]})
+    assert ok["status"] == "complete", ok["status"]
+    return "四处错误 where 被拦；正确手写 Mapping 仍通过"
+
+
+def case_P12_override_not_applicable():
+    """P12 不适用时声明偏移 ⇒ raise，不许静默改写成 `single_chain`。
+
+    单链 `MCMC.run` 根本不读 `chain_method`，所以"被设备数改成 sequential"
+    这个声明在这个配置下**不可能成立**。放行等于让人用一句
+    `sequentially_resolved` 把"根本不看"洗成"看过且被改了"。
+    """
+    _must_raise(lambda: S.evaluate(
+        "chain_method",
+        resolved=_slot("parallel", "default", "lib"),
+        observation=S.observe("chain_method", "parallel"),
+        num_chains=1, reason_code="sequentially_resolved"),
+        "不适用")
+
+    # 对照 1：单链但不说偏移 ⇒ 正常落 single_chain
+    ok = S.evaluate("chain_method",
+                    resolved=_slot("parallel", "default", "lib"),
+                    observation=S.observe("chain_method", "parallel"),
+                    num_chains=1)
+    assert ok["reason_code"] == "single_chain" and ok["status"] == "derived", ok
+    # 对照 2：多链（适用）下同一个声明照常成立
+    two = S.evaluate("chain_method",
+                     resolved=_slot("parallel", "default", "lib"),
+                     observation=S.observe("chain_method", "sequential"),
+                     num_chains=2, reason_code="sequentially_resolved")
+    assert two["status"] == "mismatch", two["status"]
+    return "不适用 ⇒ raise；单链无声明 / 多链有声明 都照旧"
+
+
+def case_P13_bool_is_not_number():
+    """P13 `bool` 是 `int` 的子类：`num_chains=True` 必须拒绝，不能当 1 用。"""
+    assert S.applicability("num_chains")["applicable"] is True    # 正向对照
+    _must_raise(lambda: S.applicability("chain_method", num_chains=True), "bool")
+    _must_raise(lambda: S.evaluate(
+        "chain_method", resolved=_slot("parallel", "default", "lib"),
+        observation=S.observe("chain_method", "parallel"), num_chains=True), "bool")
+    return "True 当不了 1"
+
+
+def case_P14_tree_budget_bool():
+    """P14 `tree_budget(True)` 会算出 1 ⇒ 必须拒绝。"""
+    assert S.tree_budget(10) == 1023 and S.tree_budget(13) == 8191
+    _must_raise(lambda: S.tree_budget(True), "bool")
+    _must_raise(lambda: S.tree_budget(0), "正整数")
+    return "1023/8191 不变，True/0 被拒"
+
+
+def case_P15_adapt_step_size_strict():
+    """P15 `adapt_step_size=None` 不能被读成"关闭自适应"。"""
+    assert S.applicability("target_accept", adapt_step_size=True)["applicable"] is True
+    assert S.applicability("target_accept",
+                           adapt_step_size=False)["applicable"] is False
+    _must_raise(lambda: S.applicability("target_accept", adapt_step_size=None), "bool")
+    _must_raise(lambda: S.evaluate(
+        "target_accept", resolved=_slot(0.9, "tier", "BUDGETS"),
+        observation=S.observe("target_accept", 0.9), adapt_step_size=None), "bool")
+    return "只收 True/False"
 
 
 # ---------------------------------------------------------------------------
@@ -717,6 +817,11 @@ CASES = [
     ("P8 树深预算", case_P8_tree_budget),
     ("P9 适用性缺上下文", case_P9_applicability_needs_context),
     ("P10 where 必填", case_P10_where_required),
+    ("P11 where 在 evaluate 复核", case_P11_where_checked_in_evaluate),
+    ("P12 不适用不许声明偏移", case_P12_override_not_applicable),
+    ("P13 bool 不是正整数", case_P13_bool_is_not_number),
+    ("P14 tree_budget 拒 bool", case_P14_tree_budget_bool),
+    ("P15 adapt_step_size 严格", case_P15_adapt_step_size_strict),
     # M
     ("M1 八项全显式", case_M1_all_explicit),
     ("M2 八项全默认", case_M2_all_default),
