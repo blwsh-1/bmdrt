@@ -137,6 +137,10 @@
 "适用"——等于替调用方假定自适应已开，R1 明说不能这么假定。反过来默认 `False` 也不行：
 那会把每一次都判成 `step_size_not_adapting`，是另一个方向的假结论。**不知道就是不知道。**
 
+> 对阶段 C 的硬要求：捕获层必须给出**真实**的 `adapt_step_size`（如
+> `isinstance(mcmc.sampler, NUTS) and mcmc.sampler.adapt_step_size`，或构造实参里的同名值），
+> 不能依赖本层默认值，也不能在调用点写死 `True` —— 那等于把这道护栏又关掉。
+
 ---
 
 ## 6. 原因码（闭集，12 个）
