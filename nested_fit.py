@@ -251,68 +251,27 @@ def write_curve(path: str, f, Z, Zm, Zv=None) -> None:
                fmt="%.10g")
 
 
-def write_plot(path: str, f, Z, Zm, m: dict, Zv=None, tag: str = "") -> None:
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    from matplotlib import font_manager
+def write_plot(path: str, f, Z, Zm, m: dict, Zv=None, m_v: dict | None = None,
+               tag: str = "") -> None:
+    """委托 `bm_figure_unified.plot_fit`（**唯一 2×3 实现**）。
 
-    cn = any(x.name in ("Microsoft YaHei", "SimHei")
-             for x in font_manager.fontManager.ttflist)
-    if cn:
-        plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "DejaVu Sans"]
-        plt.rcParams["axes.unicode_minus"] = False
-    L = (lambda a, b: a) if cn else (lambda a, b: b)
-    c_data, c_n, c_v = "#1f2d3d", "#c0392b", "#2e86c1"
+    2026-11-16 之前这里是自己画 1×3（Nyquist / Bode 幅值 / 相对残差），
+    `bmdrt compare` 用的却是 2×3，两套图不一致。现在统一：nested 也走
+    `plot_fit`，六个子图（+Bode 相位 +Re/Im 残差）与 `compare` 完全同构。
+    """
+    from bm_figure_unified import plot_fit
 
-    fig, ax = plt.subplots(1, 3, figsize=(16.5, 5.2))
-    a = ax[0]
-    a.plot(Z.real, -Z.imag, "o", ms=5, mfc="none", mec=c_data, mew=1.2,
-           label=L("实测", "data"))
-    a.plot(Zm.real, -Zm.imag, "-", lw=1.9, color=c_n,
-           label=f"nested ({m['rms_rel']:.1f}%)")
+    curves = [dict(label="nested", Zc=Zm, color="#c0392b",
+                   rms=m["rms_rel"])]
     if Zv is not None:
-        a.plot(Zv.real, -Zv.imag, "--", lw=1.6, color=c_v, label="voigt")
-    a.axhline(0, color="0.6", lw=0.8, zorder=0)
-    a.set_xlabel(L("Z′ / Ω", "Z' / Ohm"))
-    a.set_ylabel(L("−Z″ / Ω", "-Z'' / Ohm"))
-    a.set_title(L("① Nyquist", "(1) Nyquist"))
-    a.legend(fontsize=9)
-    a.grid(alpha=0.25)
-
-    a = ax[1]
-    a.loglog(f, np.abs(Z), "o", ms=5, mfc="none", mec=c_data, mew=1.2,
-             label=L("实测", "data"))
-    a.loglog(f, np.abs(Zm), "-", lw=1.9, color=c_n, label="nested")
-    if Zv is not None:
-        a.loglog(f, np.abs(Zv), "--", lw=1.6, color=c_v, label="voigt")
-    a.set_xlabel(L("频率 / Hz", "f / Hz"))
-    a.set_ylabel(L("|Z| / Ω", "|Z| / Ohm"))
-    a.set_title(L("② Bode 幅值", "(2) Bode magnitude"))
-    a.legend(fontsize=9)
-    a.grid(alpha=0.25, which="both")
-
-    a = ax[2]
-    a.semilogx(f, np.abs(Zm - Z) / np.abs(Z), "-o", ms=3.5, lw=1.5,
-               color=c_n, label=f"nested rms {m['rms_rel']:.1f}%")
-    a.axhline(0.10, color="#7f8c8d", ls=":", lw=1.2)
-    a.set_xlabel(L("频率 / Hz", "f / Hz"))
-    a.set_ylabel(L("|ΔZ| / |Z|", "|dZ| / |Z|"))
-    a.set_yscale("log")
-    a.set_title(L("③ 相对残差", "(3) relative residual"))
-    a.legend(fontsize=9)
-    a.grid(alpha=0.25, which="both")
-
-    fig.suptitle(L(f"{tag}  nested 拟合（研究性，未过 §13/§14 验收线）",
-                   f"{tag}  nested fit (exploratory; validation NOT passed)"),
-                 fontsize=12)
-    fig.text(0.5, 0.015,
-             f"rms_rel={m['rms_rel']:.2f}%   acf={m['acf']:.3f}   "
-             f"acf_mag={m['acf_mag']:.3f}   1e5Hz endpoint={m['top_rel_pct']:.1f}%",
-             ha="center", fontsize=9, color="0.3")
-    fig.tight_layout(rect=(0, 0.04, 1, 0.95))
-    fig.savefig(path, dpi=150)
-    plt.close(fig)
+        curves.append(dict(label="voigt", Zc=Zv, color="#2e86c1", style="--",
+                           rms=(m_v["rms_rel"] if m_v else None)))
+    head = f"{tag}  nested 拟合（研究性，未过 §13/§14 验收线）" if tag \
+        else "nested 拟合（研究性，未过 §13/§14 验收线）"
+    meta = (f"rms_rel={m['rms_rel']:.2f}%   acf={m['acf']:.3f} "
+            f"(re/im {m['acf_re']:.3f}/{m['acf_im']:.3f})   "
+            f"acf_mag={m['acf_mag']:.3f}   1e5Hz 端点={m['top_rel_pct']:.1f}%")
+    plot_fit(path, f, Z, curves, title=head, meta=meta)
 
 
 # ---------------------------------------------------------------------------
@@ -383,10 +342,23 @@ def run(input_path: str | os.PathLike, *, outdir: str = DEFAULT_OUT,
     json_path = os.path.join(outdir, stem + ".nested.json")
     csv_path = os.path.join(outdir, stem + ".nested_curve.csv")
     png_path = os.path.join(outdir, stem + ".nested.png")
+    circ_path = os.path.join(outdir, stem + ".nested_circuit.png")
 
     write_curve(csv_path, f, Z, Zm, Zv)
     if plot:
-        write_plot(png_path, f, Z, Zm, m, Zv, tag=stem)
+        write_plot(png_path, f, Z, Zm, m, Zv, m_v=vref, tag=stem)
+        # 并联电路图：只画 `z_nested` 这一族（`bm_circuit.draw` 只认 voigt
+        # 串联骨架，画不了梯形网络）。失败只记 warning，不拦拟合结果。
+        try:
+            import bm_circuit_nested as CN
+            CN.draw_nested(p, branch=branch, layers=layers,
+                           f_ref=float(np.sqrt(f.min() * f.max())),
+                           path=circ_path, name=stem,
+                           admission_state=AD.STATE)
+        except Exception as exc:                       # noqa: BLE001
+            notes.append(f"电路图失败（不影响拟合结果）："
+                         f"{type(exc).__name__}: {exc}")
+            circ_path = None
 
     result = dict(
         status="exploratory", warning=WARNING, notes=notes,
@@ -424,7 +396,8 @@ def run(input_path: str | os.PathLike, *, outdir: str = DEFAULT_OUT,
                          elpd_note=o.get("elpd_note")),
         voigt_reference=vref,
         files=dict(json=json_path, curve_csv=csv_path,
-                   plot=png_path if plot else None),
+                   plot=png_path if plot else None,
+                   circuit=circ_path if plot else None),
         elapsed_s=round(time.time() - t0, 1))
     with open(json_path, "w", encoding="utf-8") as fh:
         json.dump(result, fh, ensure_ascii=False, indent=1)
@@ -450,7 +423,7 @@ def run(input_path: str | os.PathLike, *, outdir: str = DEFAULT_OUT,
         for n in notes:
             print(f"  [!] {n}")
         print(f"  产物：{json_path}\n        {csv_path}"
-              + (f"\n        {png_path}" if plot else ""))
+              + (f"\n        {png_path}\n        {circ_path}" if plot else ""))
     return result
 
 

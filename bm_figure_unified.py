@@ -35,6 +35,13 @@ def _setup_cn():
     return (lambda zh, en: zh) if cn else (lambda zh, en: en)
 
 
+def _resid_label(c: dict) -> str:
+    """残差子图的图例：`label` 有 rms 就带上，没有（None/缺失）就不加，
+    避免打出 `rms=nan%` 这种没有信息量的后缀。"""
+    r = c.get("rms")
+    return c["label"] if r is None else f"{c['label']}  rms={r:.2f}%"
+
+
 def plot_fit(path, f, Z, curves, *, title: str = "", meta: str = "",
              dpi: int = 140, ref_pct: float = 2.0):
     """画 2×3：Nyquist / Bode 幅值 / Bode 相位 / 相对残差 / Re 残差 / Im 残差。
@@ -96,7 +103,7 @@ def plot_fit(path, f, Z, curves, *, title: str = "", meta: str = "",
     for c in curves:
         rel = np.abs(c["Zc"] - Z) / np.abs(Z)
         a.loglog(f, np.maximum(rel, 1e-6), c["style"], lw=c["lw"],
-                 color=c["color"], label=f"{c['label']}  rms={c.get('rms', float('nan')):.2f}%")
+                 color=c["color"], label=_resid_label(c))
     a.axhline(ref_pct / 100.0, color="#7f8c8d", lw=1.0, ls="--",
               label=L(f"{ref_pct:g}% 参考", f"{ref_pct:g}% ref"))
     a.set_xlabel(L("频率 / Hz", "f / Hz"))

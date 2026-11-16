@@ -20,7 +20,7 @@
 
 层次是**逻辑分层**，不代表当前代码已经遵守（见 §4 的 11 处反向依赖）。
 
-### L0 数值内核（8）——纯数学，无文件 IO
+### L0 数值内核（9）——纯数学，无文件 IO
 
 | 模块 | 职责 | 产品 |
 |---|---|---|
@@ -35,7 +35,8 @@
 | `circuit_evaluator.py` | 候选观测 → evidence 状态的推导层（E1–E7；争议规则显式标 `disputed`） | opt |
 | `bm_figure_unified.py` | 统一拟合图：一条谱 + 任意多条候选曲线 → 同一张 6 子图（只依赖 f/Z/curves） | opt |
 | `cmd_compare.py` | `bmdrt compare`：多族候选自动并列 → 统一状态 + 统一图（默认 standard / 逐点 σ） | opt |
-| `bm_circuit.py` | 等效电路图绘制 | no |
+| `bm_circuit.py` | 等效电路图绘制（voigt 串联骨架） | no |
+| `bm_circuit_nested.py` | nested 梯形网络电路图（只画 `z_nested`；符号复用 `bm_circuit`） | no |
 
 ### L1 数据与 IO（7）
 

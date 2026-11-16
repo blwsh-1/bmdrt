@@ -554,11 +554,61 @@ def t8_provisional_admission():
     c("bmdrt.bat 指向 bmdrt.py", "bmdrt.py" in bat)
 
 
+def t10_nested_circuit_figure():
+    print("\nT10 并联电路图 + 输出统一 2×3（能接上、且不改拟合路径）")
+    import numpy as np
+    import bm_top as T
+    import bm_circuit_nested as CN
+
+    # 1) 图上参数集合 == 采样参数集合（拟合采什么、图上画什么）
+    for br in CN.VALID_BRANCHES:
+        for ly in (1, 2):
+            got = {k for e in CN.elements(br, ly) for k in e["params"]}
+            got |= {k for e in CN.elements(br, ly) for k in e.get("derived", ())}
+            want = set(T.sampled_keys(br, ly))
+            if br != "capacitive":
+                want |= {"L_ad"}
+            c(f"{br}/L={ly} 图上参数 == 采样参数", got == want)
+
+    # 2) layers=1 不画 R2/CPE2
+    for br in CN.VALID_BRANCHES:
+        ids = {e["id"] for e in CN.elements(br, 1)}
+        c(f"{br}/L=1 无 R2/CPE2", not ({"R2", "CPE2"} & ids))
+
+    # 3) 落一张真实尺寸的并联图（不跑 MCMC，只验绘图路径）
+    import tempfile
+    p = dict(Rs=12.0, R1=180.0, Q1=95.0, n1=0.86, R2=42.0, Q2=18.0,
+             n2=0.74, R_ad=26.0, tau_ad=1.4e-3)
+    with tempfile.TemporaryDirectory() as td:
+        fp = CN.draw_nested(p, branch="parallel", layers=2, f_ref=31.6,
+                            path=f"{td}/c.png")
+        c("draw_nested 写出非零 PNG", os.path.exists(fp)
+          and os.path.getsize(fp) > 20_000)
+
+    # 4) nested_fit 的 2×3 图委托 bm_figure_unified（不再各写一份）
+    src_nf = (ROOT / "nested_fit.py").read_text(encoding="utf-8")
+    c("write_plot 委托 plot_fit（2×3 唯一实现）",
+      "from bm_figure_unified import plot_fit" in src_nf
+      and "plot_fit(path, f, Z, curves" in src_nf)
+    c("nested_fit.run 写 .nested_circuit.png",
+      ".nested_circuit.png" in src_nf and "CN.draw_nested(" in src_nf)
+
+    # 5) bm_figure_unified 的残差图例能优雅处理 None rms（不给 nan%）
+    src_fig = (ROOT / "bm_figure_unified.py").read_text(encoding="utf-8")
+    c("plot_fit 残差图例对 None rms 不打印 nan",
+      "def _resid_label" in src_fig and "float('nan')" not in src_fig)
+
+    # 6) bm_circuit 仍是 voigt 专用（没被嵌套图污染它的契约）
+    src_bc = (ROOT / "bm_circuit.py").read_text(encoding="utf-8")
+    c("bm_circuit 不 import 嵌套绘图器（图跟着方程走，各管各的）",
+      "bm_circuit_nested" not in src_bc)
+
+
 def main() -> int:
     for fn in (t1_single_metrics, t2_metrics_parity, t3_sigma_parity,
                t4_elpd_semantics, t5_budget_source, t6_sampler_args,
                t7_diff_same_input, t8_provisional_admission,
-               t9_family_dispatch):
+               t9_family_dispatch, t10_nested_circuit_figure):
         fn()
     print(f"\n验收 {ok}/{total} 通过" if not bad
           else f"\nFAIL {len(bad)}/{total}: {bad}")

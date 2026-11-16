@@ -1,14 +1,15 @@
 {
  "generated_by": "tools/repo_map.py",
- "n_modules": 70,
+ "n_modules": 71,
  "n_tests": 20,
- "total_lines": 44270,
+ "total_lines": 45018,
  "layers": {
   "L0": {
    "desc": "数值内核：纯数学/模型定义，无文件 IO",
    "modules": [
     "bm_ad.py",
     "bm_circuit.py",
+    "bm_circuit_nested.py",
     "bm_core.py",
     "bm_diff.py",
     "bm_top.py",
@@ -150,6 +151,7 @@
  "not_for_product": [
   "batch_2e.py",
   "bm_circuit.py",
+  "bm_circuit_nested.py",
   "bm_ident.py",
   "bm_top_gen.py",
   "bm_zhit.py",
@@ -241,6 +243,7 @@
    "bm_ad.py",
    "bm_bench.py",
    "bm_check.py",
+   "bm_circuit_nested.py",
    "bm_core.py",
    "bm_corr.py",
    "bm_dash.py",
@@ -316,14 +319,14 @@
    ],
    [
     "bm_top",
-    9
-   ],
-   [
-    "bm_ad",
-    6
+    10
    ],
    [
     "bmdrt",
+    7
+   ],
+   [
+    "bm_ad",
     6
    ],
    [
@@ -335,11 +338,11 @@
     5
    ],
    [
-    "bm_diff",
-    4
+    "circuit_registry",
+    5
    ],
    [
-    "circuit_registry",
+    "admission",
     4
    ]
   ]
@@ -427,7 +430,7 @@
    "uses_out": false,
    "sys_path_hack": false,
    "hardcwd": false,
-   "imported_by": 2
+   "imported_by": 4
   },
   {
    "file": "batch_2e.py",
@@ -509,7 +512,7 @@
   {
    "file": "bm_circuit.py",
    "layer": "L0",
-   "role": "等效电路图绘制（模式 A）",
+   "role": "等效电路图绘制（模式 A：voigt 串联骨架）",
    "product": "no",
    "stability": "stable",
    "module": "bm_circuit",
@@ -523,7 +526,26 @@
    "uses_out": false,
    "sys_path_hack": false,
    "hardcwd": false,
-   "imported_by": 1
+   "imported_by": 2
+  },
+  {
+   "file": "bm_circuit_nested.py",
+   "layer": "L0",
+   "role": "nested 梯形网络电路图（只画 z_nested；符号复用 bm_circuit）",
+   "product": "no",
+   "stability": "research",
+   "module": "bm_circuit_nested",
+   "lines": 463,
+   "doc": "nested 拓扑的等效电路图（只画 `bm_top.z_nested` 这一个拓扑族）。",
+   "deps": [
+    "bm_circuit",
+    "bm_top"
+   ],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 2
   },
   {
    "file": "bm_core.py",
@@ -662,14 +684,14 @@
    "product": "opt",
    "stability": "stable",
    "module": "bm_figure_unified",
-   "lines": 138,
+   "lines": 145,
    "doc": "统一拟合图：一条谱 + 任意多个候选曲线 → 同一张 6 子图。",
    "deps": [],
    "has_main": false,
    "uses_out": false,
    "sys_path_hack": false,
    "hardcwd": false,
-   "imported_by": 1
+   "imported_by": 2
   },
   {
    "file": "bm_grade.py",
@@ -842,7 +864,7 @@
    "uses_out": false,
    "sys_path_hack": false,
    "hardcwd": false,
-   "imported_by": 9
+   "imported_by": 10
   },
   {
    "file": "bm_top_gen.py",
@@ -903,18 +925,22 @@
    "product": "core",
    "stability": "stable",
    "module": "bmdrt",
-   "lines": 872,
+   "lines": 1008,
    "doc": "bmdrt —— BM-DRT 的唯一入口。",
    "deps": [
+    "admission",
     "bm_bench",
     "bm_check",
-    "bm_real"
+    "bm_real",
+    "circuit_registry",
+    "circuit_runner",
+    "nested_fit"
    ],
    "has_main": true,
    "uses_out": true,
    "sys_path_hack": false,
    "hardcwd": false,
-   "imported_by": 6
+   "imported_by": 7
   },
   {
    "file": "budget_capture_adapter.py",
@@ -996,7 +1022,7 @@
    "uses_out": false,
    "sys_path_hack": false,
    "hardcwd": false,
-   "imported_by": 4
+   "imported_by": 5
   },
   {
    "file": "circuit_runner.py",
@@ -1019,7 +1045,7 @@
    "uses_out": true,
    "sys_path_hack": true,
    "hardcwd": false,
-   "imported_by": 2
+   "imported_by": 3
   },
   {
    "file": "cmd_compare.py",
@@ -1088,7 +1114,7 @@
    "product": "opt",
    "stability": "stable",
    "module": "cmd_status",
-   "lines": 141,
+   "lines": 145,
    "doc": "cmd_status —— 看 out/ 里所有跑过的结果，不用重跑。",
    "deps": [
     "bmdrt"
@@ -1188,12 +1214,14 @@
    "product": "opt",
    "stability": "research",
    "module": "nested_fit",
-   "lines": 532,
-   "doc": "nested_fit.py —— nested 拓扑的**独立研究性接口**（不接 `bmdrt.py` 主流程）。",
+   "lines": 515,
+   "doc": "nested_fit.py —— nested 拓扑的研究接口（**`bmdrt nested` 的实现体**）。",
    "deps": [
     "admission",
+    "bm_circuit_nested",
     "bm_core",
     "bm_experiments",
+    "bm_figure_unified",
     "bm_real",
     "bm_select",
     "bm_top",
@@ -1203,7 +1231,7 @@
    "uses_out": true,
    "sys_path_hack": true,
    "hardcwd": false,
-   "imported_by": 3
+   "imported_by": 4
   },
   {
    "file": "patch_bundle.py",
@@ -1579,12 +1607,15 @@
    "product": "no",
    "stability": "stable",
    "module": "test_entry_parity",
-   "lines": 465,
+   "lines": 620,
    "doc": "T1–T6 验收 + 两入口差分测试（2026-11-16 口径合并）。",
    "deps": [
+    "admission",
+    "bm_circuit_nested",
     "bm_experiments",
     "bm_select",
     "bm_top",
+    "bmdrt",
     "circuit_runner",
     "nested_fit",
     "spectrum_metrics"

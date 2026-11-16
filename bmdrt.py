@@ -307,6 +307,7 @@ def _run_nested_branch(path: Path, cfg: dict, outdir: Path, rec: dict,
         admission_state=AD.STATE,
         K=None, grade=None,                 # 这两个字段对 nested 不适用
         json=r["files"]["json"], fig=r["files"]["plot"],
+        circuit=r["files"].get("circuit"),
         elpd=r["diagnostics"]["elpd"],
         acf=r["metrics"]["acf"],
         rms_rel=r["metrics"]["rms_rel"],
