@@ -295,21 +295,22 @@ def t6_sampler_args():
       sig.parameters["sigma_from_data"].default is False)
     c("fit_nested.sigma 默认 None（旧行为）",
       sig.parameters["sigma"].default is None)
-    # 生产路径的调用点不许传 sigma_from_data
+    # 生产路径的调用点不许传 sigma_from_data（fit_nested 与 fit_adr 各透传一次）
     src = (ROOT / "bm_select.py").read_text(encoding="utf-8")
     n_def = src.count("sigma_from_data: bool = False")
     n_use = src.count("sigma_from_data=bool(sigma_from_data)")
-    c("bm_select 里只有一处定义、一处透传",
-      n_def == 1 and n_use == 1, f"def={n_def} use={n_use}")
+    c("bm_select 两个族适配器各定义/透传一次 sigma_from_data",
+      n_def == 2 and n_use == 2, f"def={n_def} use={n_use}")
     c("bm_select 没有别的调用点传这个开关",
-      src.count("sigma_from_data=") == 1)
+      src.count("sigma_from_data=") == 2)
     # 默认路径的预算常量没被改
     c("bm_select.QUICK 未被改（800/400/2/0.9/10）",
       SEL.QUICK["n_warmup"] == 800 and SEL.QUICK["n_samples"] == 400
       and SEL.QUICK["target_accept"] == 0.9 and SEL.QUICK["max_tree_depth"] == 10)
     c("bm_select.BUDGETS['standard'] 仍是 A2 档 ta=0.9（没被 standard 口径污染）",
       SEL.BUDGETS["standard"]["target_accept"] == 0.9)
-    # 不许改的四个文件
+    # 不许改的文件：bm_core/bm_real 生产内核。bm_top 允许**纯新增**（adr 拓扑的
+    # z_resistor/z_adr/j_z_adr/fit_adr），但不许删改现有函数（diff 里不得有删除行）。
     import subprocess
     try:
         out = subprocess.run(["git", "diff", "--name-only", "HEAD"],
@@ -317,9 +318,18 @@ def t6_sampler_args():
                              timeout=20).stdout.split()
     except Exception:                             # noqa: BLE001
         out = []
-    forbidden = {"bm_core.py", "bm_top.py", "bm_real.py"}
-    c("bm_core / bm_top / bm_real 未修改", not (forbidden & set(out)),
+    forbidden = {"bm_core.py", "bm_real.py"}
+    c("bm_core / bm_real 未修改", not (forbidden & set(out)),
       f"改了 {forbidden & set(out)}")
+    try:
+        ns = subprocess.run(["git", "diff", "--numstat", "bm_top.py"],
+                            cwd=str(ROOT), capture_output=True, text=True,
+                            timeout=20).stdout.split()
+        d_top = int(ns[1]) if len(ns) >= 2 and ns[1].isdigit() else 0
+    except Exception:                             # noqa: BLE001
+        d_top = 0
+    c("bm_top 只新增不删改（adr 正演是纯新增，不动 fit_top/z_nested）",
+      d_top == 0, f"bm_top 删除行={d_top}")
     c("bm_select 只有 fit_nested 一处改动",
       [x for x in out if x == "bm_select.py"] in ([], ["bm_select.py"]))
     # 采样器实参：两族都不许传新的采样参数

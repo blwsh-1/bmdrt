@@ -426,6 +426,37 @@ def _usable(pt, elpd) -> bool:
     return pt is not None and np.isfinite(float(elpd)) and pt.size > 0
 
 
+def fit_adr(f, Z, *, seed: int = 0, sigma_floor: float = SIGMA_FLOOR,
+            kw: dict | None = None, sigma=None,
+            sigma_from_data: bool = False) -> dict:
+    """adr 族：`bm_top.fit_adr`（吸附弛豫三支路并联，6 参数）。
+
+    研究接口，对标外部 adsorption_RQ 模型（`Rs + [CPEdl∥Rct]∥(Rads+Lads)`）。
+    我们的吸附支路用 R∥L（`z_rl_parallel`）而非 R+L——低频感抗回路在物理上
+    对应 R∥L（§9.4.42）。参数口径与 `fit_top` 完全一致（`sigma` /
+    `sigma_from_data` / zmax 先验尺度），结论一律 exploratory。
+
+    与 `fit_voigt`/`fit_nested` 的区别：adr 参数全是标量（无 K 个分量、无
+    layers），没有 `nested_component_spans` 那种分量定位，所以这里不调
+    `guard_detail`（它依赖 voigt/nested 特有的分量统计，对 adr 参数名会 KeyError）。
+    """
+    kw = dict(QUICK if kw is None else kw)
+    o = T.fit_adr(f, Z, seed=seed,
+                  n_warmup=int(kw["n_warmup"]), n_samples=int(kw["n_samples"]),
+                  num_chains=int(kw["num_chains"]),
+                  target_accept=float(kw["target_accept"]),
+                  max_tree_depth=int(kw["max_tree_depth"]),
+                  sigma=sigma, sigma_floor=float(sigma_floor),
+                  sigma_from_data=bool(sigma_from_data), progress=False)
+    pt = o.get("pointwise_elpd")
+    pt = None if pt is None else np.asarray(pt, float)
+    cand = dict(family="adr", dof=None, branch=None, label="adr",
+                elpd=float(o["elpd"]), se=float(o["elpd_se"]), pointwise=pt,
+                div=int(o.get("divergences") or 0), rhat=o.get("rhat_max"),
+                grade=None, ok=_usable(pt, o["elpd"]), raw=o)
+    return cand
+
+
 #: voigt 族的**默认**元件能力，由 `fit_voigt` 的签名默认值推导（见文件上方注释）。
 #: `voigt_can_represent()` 在不传参时用的就是这份。
 _FIT_VOIGT_SIG = inspect.signature(fit_voigt).parameters

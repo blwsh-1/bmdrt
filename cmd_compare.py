@@ -75,12 +75,16 @@ def forward(topo: str, cfg: dict, params: dict, f) -> np.ndarray:
             p["L_ad"] = float(p["R_L"]) * float(p["tau_L"])
         return T.z_nested(f, p, branch=str(cfg["branch"]),
                           layers=int(cfg["layers"]))
+    if topo == "adr":
+        return T.z_adr(f, dict(params))
     raise ValueError(f"拓扑 {topo!r} 没有正演适配器")
 
 
 def label_of(topo: str, cfg: dict) -> str:
     if topo == "voigt":
         return f"voigt K={cfg.get('K')}" + ("+L" if cfg.get("include_L") else "")
+    if topo == "adr":
+        return "adr"
     return f"nested L={cfg.get('layers')}/{cfg.get('branch')}"
 
 
@@ -92,7 +96,8 @@ def one(fp: str, a, ks, layers, branches) -> dict:
 
     meta = RU.run(fp, seed=a.seed, budget_profile=a.budget, out_dir=out,
                   ks=ks, layers=layers, include_L=include_L,
-                  branches=branches, likelihood=a.likelihood)
+                  branches=branches, include_adr=a.include_adr,
+                  likelihood=a.likelihood)
     ev = EV.evaluate_run(out)
 
     curves = []
@@ -169,6 +174,9 @@ def run(argv=None) -> int:
     ap.add_argument("--layers", default="1,2", help="nested 层数，默认 1,2")
     ap.add_argument("--branches", default="parallel",
                     help="nested 支路，默认 parallel；research 用 series/capacitive")
+    ap.add_argument("--no-adr", dest="include_adr", action="store_false",
+                    default=True,
+                    help="不追加 adr（吸附弛豫三支路并联）候选，默认追加")
     ap.add_argument("--budget", default="standard",
                     choices=sorted(RU.BUDGETS), help="采样档，默认 standard")
     ap.add_argument("--likelihood", default="perpoint",
@@ -198,7 +206,8 @@ def run(argv=None) -> int:
         files = files[:a.limit_files]
 
     print(f"共 {len(files)} 条谱；预算 {a.budget}；σ={a.likelihood}；"
-          f"voigt K∈{ks}、nested L∈{layers}/{','.join(branches)}")
+          f"voigt K∈{ks}、nested L∈{layers}/{','.join(branches)}"
+          + ("、+adr" if a.include_adr else ""))
     print(AD.banner())
     n_bad = 0
     for i, fp in enumerate(files, 1):
@@ -249,6 +258,14 @@ def selftest() -> int:
       label_of("voigt", dict(K=2, include_L=True)) == "voigt K=2+L")
     c("label：nested 带层数与支路",
       label_of("nested", dict(layers=2, branch="parallel")) == "nested L=2/parallel")
+    c("label：adr 固定名", label_of("adr", {}) == "adr")
+
+    padr = params_from_json("adr", dict(Rs=1.0, Q=2.0, n=0.8, Rct=3.0,
+                                        R_ad=4.0, tau_ad=5.0))
+    c("adr 参数全转 float",
+      all(isinstance(v, float) for v in padr.values()) and len(padr) == 6)
+    Zmadr = forward("adr", {}, padr, f)
+    c("adr 正演形状与频率一致", Zmadr.shape == f.shape and np.isfinite(Zmadr).all())
 
     print(f"\n自检 {ok}/{total} 通过" if not bad else f"\nFAIL {len(bad)}/{total}: {bad}")
     return 0 if not bad else 1

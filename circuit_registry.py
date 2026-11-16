@@ -2005,6 +2005,21 @@ def _nested_consistency(by_slot: Mapping, cfg: Mapping) -> None:
         raise ValueError(f"nested：layers=1 不含第二并联节点，inner_cpe 必须为空，实得 {inner}")
 
 
+def _adr_consistency(by_slot: Mapping, cfg: Mapping) -> None:
+    """adr 的结构约束：单节点三支路并联，三个槽位各恰好一个、类型固定。
+
+    `Z = Rs + [CPE ∥ Rct ∥ Z_ad]`，其中 Z_ad 是 R∥L 吸附电感。这里只校验
+    元件挂载，不校验 Rs（Rs 是拓扑固有参数，不进槽位，与 nested 的 Rs 同例）。
+    """
+    for slot_id, expect in (("cpe_branch", "cpe"),
+                            ("charge_transfer", "resistor"),
+                            ("adsorption_branch", "rl_parallel")):
+        got = by_slot.get(slot_id, [])
+        if got != [expect]:
+            raise ValueError(
+                f"adr：槽位 {slot_id} 要求恰好挂一个 {expect!r}，实得 {got}")
+
+
 register_topology(TopologySpec(
     id="voigt",
     name="串联 HN 弛豫叠加",
@@ -2093,6 +2108,45 @@ register_topology(TopologySpec(
     ),
 ))
 
+register_topology(TopologySpec(
+    id="adr",
+    name="吸附弛豫三支路并联",
+    skeleton="Z = Rs + [ CPE ∥ Rct ∥ Z_ad ]，Z_ad = R_ad·jωτ_ad/(1+jωτ_ad)（R∥L）",
+    forward_ref="bm_top:z_adr",
+    param_space=("Rs", "Q", "n", "Rct", "R_ad", "tau_ad"),
+    derived=(),
+    priors={
+        "Rs": "LogNormal(log(0.2·zmax), 1.0)",
+        "Q": "LogNormal(log(zmax), 2.0)，Q=|Z(ω_ref)|",
+        "n": "Uniform(0,1) 截断",
+        "Rct": "LogNormal(log(0.1·zmax), 2.0)，纯电阻并联支路",
+        "R_ad/tau_ad": "R∥L 吸附电感，同 nested 的 rl_parallel",
+    },
+    init_profiles={
+        "uniform": "init_to_uniform（同 nested/voigt 默认）",
+        "data_driven": "Rs=min|Z|、Q=zmax、Rct≈低频实部、τ 窗内均铺（研究用）",
+        "value": "init_to_value，需要调用方给物理值",
+    },
+    slots=(
+        SlotSpec("cpe_branch", "双电层 CPE 并联支路", ("cpe",), min_count=1, max_count=1),
+        SlotSpec("charge_transfer", "电荷转移电阻并联支路", ("resistor",), min_count=1, max_count=1),
+        SlotSpec("adsorption_branch", "吸附感抗并联支路", ("rl_parallel",), min_count=1, max_count=1),
+    ),
+    maturity="exploratory",
+    min_level="L1",
+    precheck_ref=None,
+    consistency=_adr_consistency,
+    consistency_id="adr_consistency_v1",
+    notes=(
+        "对标外部 adsorption_RQ 模型（Rs+[CPEdl∥Rct]∥(Rads+Lads)）；差异在吸附支路用"
+        "R∥L 而非 R+L——低频感抗回路物理上对应 R∥L（§9.4.42 两者低频极限方向相反）",
+        "AZ31-12Li_5 上 nested 未收敛（R̂=22.07）而 adr 收敛到 R̂≈1.002、rms 7.10%，"
+        "但 acf 仍 >0.50（M-b 未过），未过 §13/§14 验收线，不接 bmdrt.py 主流程",
+        "未登记确定性预检：unknown 不等于 not_excluded",
+        "研究接口：`resistor`/`cpe` 元件为 exploratory，结论一律 exploratory，不得当物理量",
+    ),
+))
+
 register_element(ElementSpec(
     id="hn",
     name="Havriliak-Negami 弛豫单元",
@@ -2131,6 +2185,16 @@ register_element(ElementSpec(
     maturity="exploratory",
     formula="Z = R_L + jωL，L = R_L·τ_L",
     notes=("与 rl_parallel 不等价：只产生高频感抗",),
+))
+
+register_element(ElementSpec(
+    id="resistor",
+    name="纯电阻（电荷转移/并联电阻支路）",
+    forward_ref="bm_top:z_resistor",
+    params=("Rct",),
+    maturity="exploratory",
+    formula="Z = Rct（与频率无关）",
+    notes=("用于 adr 拓扑的 Rct 并联支路；Rs 是拓扑固有参数不在此列",),
 ))
 
 register_element(ElementSpec(

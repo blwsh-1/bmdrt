@@ -58,7 +58,7 @@ OUT_ROOT = os.path.join("out", "circuit_runner")
 #: `w_inf` / `w_open` / `w_short` / `adsorption` 在 registry 里 `wired=False`
 #: 且没有槽位，它们的拓扑根本不存在，所以不能出现在这里 —— 这不是遗漏，
 #: 是 §5/§11 把扩散与吸附接入列为暂缓的如实反映。
-TOPOLOGY_ADAPTERS = ("voigt", "nested")
+TOPOLOGY_ADAPTERS = ("voigt", "nested", "adr")
 
 #: 候选集构造：默认只开基线能力（不带 L、不带吸附），因为打开任一项都是
 #: 新的族能力臂，必须单独预注册（§9.4.11）。要跑扩展臂请显式传 `--include-L`。
@@ -167,7 +167,8 @@ def metrics(f, Z, Zm) -> dict:
 def build_candidates(ks=DEFAULT_KS, layers=DEFAULT_LAYERS,
                      include_L: bool = False, budget_profile: str = "quick",
                      init_profile: str = "uniform",
-                     branches=("parallel",)) -> list:
+                     branches=("parallel",),
+                     include_adr: bool = False) -> list:
     """按 registry 构造候选。
 
     `branches` 默认只有 `parallel`（与 `nested_fit.py` 一致）。**`测试数据/` 的
@@ -176,6 +177,9 @@ def build_candidates(ks=DEFAULT_KS, layers=DEFAULT_LAYERS,
     不会被平均成一个"nested 更好"的结论。
     `series` / `capacitive` 在 admission §4.1.3/§4.1.4 是"参数层未验收"的
     研究接口，结果一律 `exploratory`，不得与 parallel 混报。
+
+    `include_adr=True`（2026-11-16）追加吸附弛豫三支路并联候选（6 参数），
+    对标外部 adsorption_RQ 模型。默认 False，不改变既有调用点的候选集。
     """
     for b in branches:
         if b not in BRANCH_ELEMENT:
@@ -201,6 +205,14 @@ def build_candidates(ks=DEFAULT_KS, layers=DEFAULT_LAYERS,
                 {"layers": int(L), "branch": str(b)},
                 init_profile=init_profile, budget_profile=budget_profile,
                 likelihood_profile="perpoint-2pct"))
+    if include_adr:
+        # adr 无 config（Rs 是拓扑固有参数，不进槽位，同 nested 的 Rs）
+        out.append(CR.make_candidate(
+            "adr", [("cpe_branch", "cpe"), ("charge_transfer", "resistor"),
+                    ("adsorption_branch", "rl_parallel")],
+            {},
+            init_profile=init_profile, budget_profile=budget_profile,
+            likelihood_profile="perpoint-2pct"))
     return out
 
 
@@ -300,6 +312,11 @@ def _median_params_nested(o: dict, branch: str, layers: int) -> dict:
     return {k: float(np.median(o["s"][k])) for k in T.sampled_keys(branch, layers)}
 
 
+def _median_params_adr(o: dict) -> dict:
+    import bm_top as T
+    return {k: float(np.median(o["s"][k])) for k in T.ADR_KEYS}
+
+
 #: `perpoint` 口径的逐点相对标准差，**比例形式**（0.02 = 2%）。
 #: 数值来自 `spectrum_metrics.SIGMA_PCT`（唯一来源，2.0 是百分数），这里只做单位
 #: 换算以保持历史调用点（`SIGMA_PCT_PERP0INT * np.abs(Z)`）不变。
@@ -355,6 +372,14 @@ def fit_candidate(cand, f, Z, *, seed: int = 0, budget_profile: str = "quick",
         raw = c["raw"]
         params = _median_params_nested(raw, branch, layers)
         Zm = T.z_nested(f, params, branch=branch, layers=layers)
+        rhat = float(raw["rhat_max"])
+        div = int(raw["divergences"] or 0)
+    elif cand.topology_id == "adr":
+        c = SEL.fit_adr(f, Z, seed=seed, sigma_floor=sf, kw=kw, sigma=sigma,
+                        sigma_from_data=(likelihood == "perpoint"))
+        raw = c["raw"]
+        params = _median_params_adr(raw)
+        Zm = T.z_adr(f, params)
         rhat = float(raw["rhat_max"])
         div = int(raw["divergences"] or 0)
     else:
@@ -628,7 +653,8 @@ def run(data_path: str, *, seed: int = 0, budget_profile: str = "quick",
                 precheck_states={s: scr[s] for s in CR.PRECHECK_STATES},
                 n_candidates=len(cands), rows=rows,
                 note=("本模块只产出逐候选观测；不排序、不合成总分、不出 evidence 状态。"
-                      "diffusion/adsorption 尚无拓扑，未进入候选集。"))
+                      "diffusion（Warburg）尚无拓扑，未进入候选集；"
+                      "adsorption 已由 adr 拓扑承载（研究接口，exploratory）。"))
     with open(os.path.join(out_dir, "run_meta.json"), "w", encoding="utf-8") as fh:
         json.dump(meta, fh, ensure_ascii=False, indent=1, allow_nan=False)
     return meta
@@ -676,7 +702,8 @@ def _selftest() -> int:
     print("registry 概览")
     reg = describe_registry()
     c("registry 版本非空", bool(reg["registry_version"]))
-    c("只有 voigt/nested 有适配器", set(reg["adapters"]) == {"voigt", "nested"})
+    c("voigt/nested/adr 三个拓扑都有适配器",
+      set(reg["adapters"]) == {"voigt", "nested", "adr"})
     c("扩散元件 wired=False（登记在册但无槽位）",
       all(not e["wired"] for e in reg["elements"]
           if e["id"] in ("w_inf", "w_open", "w_short", "adsorption")))
@@ -705,6 +732,13 @@ def _selftest() -> int:
     c("构造 2 个候选（voigt K=1 + nested L=1）", len(cands) == 2)
     c("candidate_id 前缀 C-（候选定义层，不是执行身份 R-/D-）",
       all(x.candidate_id.startswith("C-") for x in cands))
+    cands_adr = build_candidates(ks=(1,), layers=(1,), include_adr=True,
+                                 budget_profile="quick")
+    c("include_adr=True 追加 1 个 adr 候选", len(cands_adr) == 3)
+    c("adr 候选拓扑正确（三槽位各一）",
+      any(x.topology_id == "adr" and len(x.elements) == 3 for x in cands_adr))
+    adr_c = [x for x in cands_adr if x.topology_id == "adr"][0]
+    c("adr 候选无 config（Rs 是拓扑固有参数不进槽位）", adr_c.config == ())
     scr = CR.precheck_candidates(cands, f, Ztrue)
     by = {r["candidate_id"]: r["precheck_state"] for r in scr["records"]}
     c("voigt 预检 not_excluded", any(v == "not_excluded" for v in by.values()))

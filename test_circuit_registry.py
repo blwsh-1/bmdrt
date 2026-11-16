@@ -71,7 +71,7 @@ def _manifest(cs, **kw):
 # A 定义完整性
 # --------------------------------------------------------------------------
 def case_definitions():
-    assert set(R.list_topologies()) == {"voigt", "nested"}, R.list_topologies()
+    assert set(R.list_topologies()) == {"voigt", "nested", "adr"}, R.list_topologies()
     for tid in R.list_topologies():
         t = R.get_topology(tid)
         assert "Z" in t.skeleton and len(t.skeleton) > 40, tid

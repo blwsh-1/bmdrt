@@ -147,6 +147,11 @@ def j_z_rl_series(omega, R, L):
     return R + 1j * omega * L
 
 
+def z_resistor(f, R):
+    """纯电阻：`Z = R`（与频率无关）。用于 adr 拓扑的电荷转移并联支路 Rct。"""
+    return np.full(np.asarray(f, float).shape, float(R), dtype=float)
+
+
 # --------------------------------------------------------------------------
 # 拓扑
 # --------------------------------------------------------------------------
@@ -252,6 +257,43 @@ def j_z_nested(omega, p: dict, w_ref, branch: str = "parallel", layers: int = 2)
         z_mid = p["R1"] + zb
     z_par1 = 1.0 / (1.0 / zc1 + 1.0 / z_mid)
     return p["Rs"] + z_par1
+
+
+# ---------------------------------------------------------------------------
+# 吸附三支路并联拓扑（adr）：对标外部 adsorption_RQ 模型
+# ---------------------------------------------------------------------------
+
+ADR_KEYS = ("Rs", "Q", "n", "Rct", "R_ad", "tau_ad")
+
+
+def z_adr(f, p: dict, f_ref: float | None = None):
+    """吸附弛豫三支路并联阻抗（**单节点三支路并联**）。
+
+        Z = Rs + [ CPE ∥ Rct ∥ Z_ad ]
+          CPE : Z = Q·(ω_ref/ω)^n·exp(-j nπ/2)    窗口幅值参数化（Ω）
+          Rct : 电荷转移电阻（纯电阻并联支路）
+          Z_ad: R_ad·jωτ_ad/(1+jωτ_ad)            R∥L 吸附电感
+
+    对标外部 `Rs + [CPEdl∥Rct] ∥ (Rads+Lads)`（AZ31-12Li_5 上 Rwp≈8.5%）。
+    差异：吸附支路用 R∥L（`z_rl_parallel` / `bm_ad.z_ad`），不是 R+L 串联——
+    低频感抗回路在物理上对应 R∥L（§9.4.42：两者低频极限方向相反）。
+    参数 6 个：`Rs, Q, n, Rct, R_ad, tau_ad`。
+    """
+    f = np.asarray(f, float)
+    w_ref = 2.0 * np.pi * (f_ref if f_ref is not None
+                           else np.sqrt(f.min() * f.max()))
+    zc = z_cpe(f, float(p["Q"]), float(p["n"]), f_ref=w_ref / (2.0 * np.pi))
+    za = z_rl_parallel(f, float(p["R_ad"]), float(p["tau_ad"]))
+    zpar = 1.0 / (1.0 / zc + 1.0 / float(p["Rct"]) + 1.0 / za)
+    return float(p["Rs"]) + zpar
+
+
+def j_z_adr(omega, p: dict, w_ref):
+    """jax 版 z_adr（omega、w_ref 为角频率）。"""
+    zc = j_z_cpe(omega, p["Q"], p["n"], w_ref)
+    za = j_z_rl_parallel(omega, p["R_ad"], p["tau_ad"])
+    zpar = 1.0 / (1.0 / zc + 1.0 / p["Rct"] + 1.0 / za)
+    return p["Rs"] + zpar
 
 
 def param_spec():
@@ -1079,6 +1121,159 @@ def fit_top(f, Z, *, branch: str = "parallel", layers: int = 2,
         "prior_scale_data_dependent": zmax_override is None,
         # 采样参数来源（阶段 C 第一轮）。只增一个键：下游按名取键，不受影响。
         "provenance": mcmc.provenance,
+    }
+
+
+# ---------------------------------------------------------------------------
+# 吸附三支路并联（adr）采样
+# ---------------------------------------------------------------------------
+
+def adr_prior_table(zmax, w_ref):
+    """adr 六参数先验（单一来源）。尺度与 nested 对齐。"""
+    import numpyro.distributions as dist
+
+    return {
+        "Rs": dist.LogNormal(jnp.log(0.2 * zmax), 1.0),
+        "Q": dist.LogNormal(jnp.log(zmax), 2.0),
+        "n": dist.Uniform(0.5, 1.0),
+        "Rct": dist.LogNormal(jnp.log(0.1 * zmax), 2.0),
+        "R_ad": dist.LogNormal(jnp.log(0.1 * zmax), 2.0),
+        "tau_ad": dist.LogNormal(jnp.log(1.0 / w_ref), 2.0),
+    }
+
+
+def _loglik_adr(s, f, Z, sig_re, sig_im):
+    """`(chain, draw, n_freq)` 同频联合对数似然（与 `_loglik_chained` 同口径）。"""
+    ch, dr = s["Rs"].shape[:2]
+    ll = np.empty((ch, dr, f.size))
+    for c in range(ch):
+        for d in range(dr):
+            p = {k: float(s[k][c, d]) for k in ADR_KEYS}
+            z = z_adr(f, p)
+            if sig_re is None:
+                sr, si = float(s["s_re"][c, d]), float(s["s_im"][c, d])
+            else:
+                sr, si = sig_re, sig_im
+            lr = -0.5 * ((Z.real - z.real) / sr) ** 2 - np.log(sr) - 0.5 * LOG2PI
+            li = -0.5 * ((Z.imag - z.imag) / si) ** 2 - np.log(si) - 0.5 * LOG2PI
+            ll[c, d] = lr + li
+    return ll
+
+
+def fit_adr(f, Z, *, n_warmup: int = 600, n_samples: int = 1200, seed: int = 0,
+            num_chains: int = 4, target_accept: float = 0.9,
+            max_tree_depth: int = 10, sigma=None, sigma_floor: float = 0.0,
+            sigma_from_data: bool = False, zmax_override: float | None = None,
+            init_values: dict | None = None, progress: bool = True) -> dict:
+    """吸附三支路并联拓扑的 NUTS 拟合。返回结构与 `fit_top` **同构**。
+
+    拓扑：`Z = Rs + [CPE ∥ Rct ∥ Z_ad]`，`Z_ad = R∥L` 吸附电感（6 参数）。
+    `sigma`/`sigma_from_data`/`zmax_override` 的语义与 `fit_top` 完全一致
+    （逐点 σ 含被留出点自身 → elpd 不作样本外证据；R21 先验尺度数据依赖）。
+    """
+    from numpyro.infer import MCMC, NUTS
+    import numpyro
+    import numpyro.distributions as dist
+
+    f = np.asarray(f, float)
+    Z = np.asarray(Z, complex)
+    if f.size != Z.size or f.size < 8:
+        raise ValueError("f 与 Z 长度需一致且不少于 8 点")
+    if not np.all(np.isfinite(f)) or f.min() <= 0:
+        raise ValueError("频率必须是有限正数")
+    sig_mode, sig_re, sig_im = _check_sigma(f, sigma, sigma_floor)
+
+    def model(f_arr, Zr, Zi):
+        zmax = (jnp.max(jnp.sqrt(Zr ** 2 + Zi ** 2)) if zmax_override is None
+                else jnp.asarray(float(zmax_override)))
+        w_ref = 2.0 * jnp.pi * jnp.sqrt(jnp.min(f_arr) * jnp.max(f_arr))
+        omega = 2.0 * jnp.pi * f_arr
+        p = {k: numpyro.sample(k, d)
+             for k, d in adr_prior_table(zmax, w_ref).items()}
+        Zt = j_z_adr(omega, p, w_ref)
+
+        if sig_mode == "free":
+            if sigma_floor > 0:
+                floor = sigma_floor * zmax
+                b_re = numpyro.sample("s_re_base",
+                                      dist.LogNormal(jnp.log(0.01 * zmax), 1.0))
+                b_im = numpyro.sample("s_im_base",
+                                      dist.LogNormal(jnp.log(0.01 * zmax), 1.0))
+                s_re = numpyro.deterministic("s_re", b_re + floor)
+                s_im = numpyro.deterministic("s_im", b_im + floor)
+            else:
+                s_re = numpyro.sample("s_re",
+                                      dist.LogNormal(jnp.log(0.01 * zmax), 1.0))
+                s_im = numpyro.sample("s_im",
+                                      dist.LogNormal(jnp.log(0.01 * zmax), 1.0))
+        else:
+            s_re = jnp.asarray(sig_re)
+            s_im = jnp.asarray(sig_im)
+        numpyro.sample("obs_re", dist.Normal(Zt.real, s_re), obs=Zr)
+        numpyro.sample("obs_im", dist.Normal(Zt.imag, s_im), obs=Zi)
+
+    mcmc = MCMC(NUTS(model, target_accept_prob=target_accept,
+                     max_tree_depth=max_tree_depth),
+                num_warmup=n_warmup, num_samples=n_samples,
+                num_chains=num_chains, progress_bar=progress)
+    mcmc.run(jax.random.PRNGKey(seed), f, Z.real, Z.imag,
+             extra_fields=("diverging",), init_params=init_values)
+    # adr 是**研究路径**，不接身份链的 provenance 捕获（`sampler_capture` 只认
+    # `bm_core.fit` 与 `bm_top.fit_top` 两个生产构造点）。这里不登记 CALL_SITES，
+    # 也不写 provenance——身份链已冻结，研究拓扑不该往上面挂。
+    provenance = None
+
+    s_ch = {k: np.asarray(v) for k, v in mcmc.get_samples(group_by_chain=True).items()}
+    s = {k: v.reshape((-1,) + v.shape[2:]) for k, v in s_ch.items()}
+
+    ll = _loglik_adr(s_ch, f, Z, sig_re, sig_im)
+    import arviz as az
+    idata = az.from_dict(posterior=s_ch, log_likelihood={"obs": ll})
+    loo = az.loo(idata)
+    pw = loo.get("loo_i", None)
+    if pw is None:
+        pw = loo.get("elpd_i", None)
+
+    from numpyro.diagnostics import summary
+    st = summary(s_ch, prob=0.9, group_by_chain=True)
+    rhat_map = {k: float(np.nanmax(np.asarray(v["r_hat"]))) for k, v in st.items()}
+    ess_map = {k: float(np.nanmin(np.asarray(v["n_eff"]))) for k, v in st.items()}
+    rhat, ess = list(rhat_map.values()), list(ess_map.values())
+    div = mcmc.get_extra_fields().get("diverging")
+
+    return {
+        "s": s,
+        "elpd": float(loo["elpd_loo"]),
+        "elpd_se": float(loo["se"]),
+        "pointwise_elpd": None if pw is None else np.asarray(pw, float),
+        "pareto_k": np.asarray(loo["pareto_k"], float),
+        "idata": idata,
+        "sigma_mode": sig_mode,
+        "sigma_re": (float(np.median(s["s_re"])) if "s_re" in s
+                     else (sig_re if sig_mode == "scalar" else None)),
+        "sigma_im": (float(np.median(s["s_im"])) if "s_im" in s
+                     else (sig_im if sig_mode == "scalar" else None)),
+        "sigma_re_perpoint": (None if sig_mode != "perpoint"
+                              else np.asarray(sig_re, float)),
+        "sigma_im_perpoint": (None if sig_mode != "perpoint"
+                              else np.asarray(sig_im, float)),
+        "elpd_valid_for_predictive_comparison": not sigma_from_data,
+        "elpd_note": (None if not sigma_from_data else
+                      "σ_j 由同一批观测的 |Z_j| 算出：留出 j 后尺度会变，"
+                      "elpd_loo 不是 p(Z_j|Z_{-j}) 的估计；"
+                      "pareto_k 同源，均不作预测诊断或验收判据"),
+        "divergences": int(np.sum(div)) if div is not None else None,
+        "rhat_max": max(rhat) if rhat else None,
+        "ess_min": min(ess) if ess else None,
+        "rhat_by_param": rhat_map,
+        "ess_by_param": ess_map,
+        "branch": "adr", "layers": None,
+        "f_ref": float(np.sqrt(f.min() * f.max())),
+        "zmax": (float(np.max(np.abs(Z))) if zmax_override is None
+                 else float(zmax_override)),
+        "zmax_override": (None if zmax_override is None else float(zmax_override)),
+        "prior_scale_data_dependent": zmax_override is None,
+        "provenance": provenance,
     }
 
 
