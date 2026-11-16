@@ -50,7 +50,7 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import circuit_registry as CR                                   # noqa: E402
-import bm_experiments as E                                      # noqa: E402
+import spectrum_metrics as SM                                   # noqa: E402
 
 OUT_ROOT = os.path.join("out", "circuit_runner")
 
@@ -98,13 +98,20 @@ BRANCH_ELEMENT = {"parallel": "rl_parallel", "series": "rl_series",
 #: 漏掉它不会报"缺参数"，而是让 `tds` 变成 None、随后在 `grade` 里抛
 #: `TypeError: 'NoneType' object is not subscriptable`——离病因很远。
 #: `bm_select.QUICK` 里本来就带这一项，这里必须对齐。
+#:
+#: `standard` **不再自己写一份数值**，直接引用 `spectrum_metrics.STANDARD`
+#: （§13/§14 冻结档 2000/1000/2 + ta=0.98 的唯一来源）。`nested_fit.py` 也引用
+#: 同一个常量，所以"standard 档"在两个入口下确实是同一件事。
+#:
+#: `quick` **保留各自历史数值、不追溯修改**：本模块是 300/300/8，
+#: `nested_fit` 走 `bm_select.QUICK` 是 800/400/10。两者同名不同值，所以任何产物
+#: 都必须落 `budget_actual(...)` 的五个数值 + `tier_shared_across_entries=False`，
+#: 不许靠档名 `"quick"` 推断"两次是同预算"。
 BUDGETS = {
     "quick": dict(n_warmup=300, n_samples=300, num_chains=2,
                   target_accept=0.9, max_tree_depth=8,
                   extra_fields=("num_steps",)),
-    "standard": dict(n_warmup=2000, n_samples=1000, num_chains=2,
-                     target_accept=0.98, max_tree_depth=10,
-                     extra_fields=("num_steps",)),
+    "standard": dict(SM.STANDARD, extra_fields=("num_steps",)),
 }
 
 #: 正确的 R21 理由。**不要写成 `sigma_from_data=True`**：`fit_top` 只有在显式传
@@ -142,28 +149,16 @@ def _jsonable(x):
 
 
 def metrics(f, Z, Zm) -> dict:
-    """与 `evidence/nested_topology/m4_holdout2.py::_metrics` 逐字同式（§14 口径）。
+    """委托 `spectrum_metrics.metrics`（**唯一实现**，两入口共用）。
 
-    为什么要抄一份而不是 import：那个文件在 `.gitignore` 覆盖的 evidence/ 下，
-    生产侧不能依赖它；抄一份并把等式写进 `--selftest` 的断言里，比隐式依赖安全。
+    历史上的两份抄写（本模块 5 键、`nested_fit` 13 键）都是
+    `evidence/nested_topology/m4_holdout2.py::_metrics` 的转写，公式相同但字段
+    集合不同。2026-11-16 收敛成一份超集，**每个字段的公式、分母、频段边界未变**
+    （逐字段数值回归见 `test_entry_parity.py`）。
+
+    保留本函数名是为了 `cmd_compare.py` / 历史探针的 `RU.metrics(...)` 调用不变。
     """
-    w = np.abs(Z)
-    res = np.asarray(Zm) - Z
-    rel = np.abs(res) / w
-    d = res / w
-    bands = []
-    for lo, hi in ((0.01, 1), (1, 100), (100, 1e5)):
-        m = (f >= lo) & (f < hi)
-        bands.append(float(np.sqrt(np.mean(np.abs(d)[m] ** 2))) * 100
-                     if m.any() else None)
-    return dict(
-        rms_rel=float(np.sqrt(np.mean(np.concatenate([d.real, d.imag]) ** 2))) * 100,
-        bands=bands,
-        acf=float(max(E.acf_max(res.real), E.acf_max(res.imag))),
-        acf_re=float(E.acf_max(res.real)),
-        acf_im=float(E.acf_max(res.imag)),
-        acf_mag=float(E.acf_max(rel)),
-    )
+    return SM.metrics(f, Z, Zm)
 
 
 # --------------------------------------------------------------------------
@@ -305,8 +300,11 @@ def _median_params_nested(o: dict, branch: str, layers: int) -> dict:
     return {k: float(np.median(o["s"][k])) for k in T.sampled_keys(branch, layers)}
 
 
-#: `perpoint` 口径的逐点相对标准差（与 §14 / `nested_fit --sigma perpoint` 同值）
-SIGMA_PCT_PERP0INT = 0.02
+#: `perpoint` 口径的逐点相对标准差，**比例形式**（0.02 = 2%）。
+#: 数值来自 `spectrum_metrics.SIGMA_PCT`（唯一来源，2.0 是百分数），这里只做单位
+#: 换算以保持历史调用点（`SIGMA_PCT_PERP0INT * np.abs(Z)`）不变。
+#: 新代码请直接用 `spectrum_metrics.sigma_perpoint(Z)`，别再乘一遍。
+SIGMA_PCT_PERP0INT = SM.SIGMA_PCT / 100.0
 
 
 def fit_candidate(cand, f, Z, *, seed: int = 0, budget_profile: str = "quick",
@@ -327,8 +325,7 @@ def fit_candidate(cand, f, Z, *, seed: int = 0, budget_profile: str = "quick",
     # 噪声口径：`free` = σ 被采样（旧行为，逐位不变）；`perpoint` = 固定 2%·|Z|。
     # 两者不能混报：同一候选在两种口径下的 rms/elpd 不可直接比较。
     if likelihood == "perpoint":
-        sig = SIGMA_PCT_PERP0INT * np.abs(Z)
-        sigma = (sig, sig)
+        sigma = SM.sigma_perpoint(Z, SM.SIGMA_PCT)
     elif likelihood == "free":
         sigma = None
     else:
@@ -351,7 +348,10 @@ def fit_candidate(cand, f, Z, *, seed: int = 0, budget_profile: str = "quick",
         layers = int(cfg["layers"])
         branch = str(cfg["branch"])
         c = SEL.fit_nested(f, Z, layers, branch=branch, seed=seed,
-                           sigma_floor=sf, kw=kw, sigma=sigma)
+                           sigma_floor=sf, kw=kw, sigma=sigma,
+                           # 与 `nested_fit.run` 传给 `fit_top` 的同名实参一致：
+                           # perpoint 的 σ 由本批观测算出 ⇒ 标注 σ 泄漏。
+                           sigma_from_data=(likelihood == "perpoint"))
         raw = c["raw"]
         params = _median_params_nested(raw, branch, layers)
         Zm = T.z_nested(f, params, branch=branch, layers=layers)
@@ -370,6 +370,14 @@ def fit_candidate(cand, f, Z, *, seed: int = 0, budget_profile: str = "quick",
             continue
         ci[str(k)] = [float(np.percentile(arr, 5)), float(np.percentile(arr, 95))]
     ess = raw.get("ess_min")
+    # ELPD 可比性判定：口径说了算，但**底层自报的值要参与核对**。
+    # nested 现在会把 `sigma_from_data` 透传给 `fit_top`，所以两边应当一致；
+    # voigt 走 `bm_real.fit_one`，底层**没有**这个字段（返回 None）⇒ 按口径推导。
+    # 若哪天又不一致了，`elpd_validity` 会记 `derived_mismatch=True` 并落盘，
+    # 不会静默通过。
+    _sfd_raw = (None if "elpd_valid_for_predictive_comparison" not in raw
+                else (not bool(raw["elpd_valid_for_predictive_comparison"])))
+    _ev = SM.elpd_validity(likelihood=likelihood, sigma_from_data=_sfd_raw)
     return dict(
         params=params, metrics=met, ci90=ci,
         rhat_max=rhat, divergences=div,
@@ -379,6 +387,10 @@ def fit_candidate(cand, f, Z, *, seed: int = 0, budget_profile: str = "quick",
         n_draw=int(raw.get("n_draw") or 0),
         elapsed_s=round(time.time() - t0, 2),
         budget=dict(kw, sigma_floor=sf), likelihood=likelihood,
+        # 预算归一化：五项数值 + 档名 + 是否与其他入口共享。
+        # `quick` 两个入口数值不同，所以必须靠这个块而不是档名来判断"同预算"。
+        budget_actual=SM.budget_actual(kw, tier=budget_profile),
+        elpd_validity=_ev,
         family_ok=bool(c.get("ok")),
     )
 
@@ -417,20 +429,41 @@ def to_observation(cand, obs: dict, *, f, Z, seed: int) -> dict:
                "n_usable": int(f.size),
                "noise_floor_source": "same_data_estimate"},
         predictive={"elpd": obs["elpd"], "se": obs["elpd_se"],
-                    "valid_for_comparison": False, "reason": R21_REASON},
+                    # `valid_for_comparison` 与 registry 的定义对齐：「能不能当
+                    # 样本外证据」。两层理由独立，任一层成立就不行：
+                    #   L1 perpoint 的 σ_j 含被留出点自身 ⇒ 不是 p(Z_j|Z_-j)
+                    #   L2 R21 先验尺度 zmax 由本批观测算出（两口径都成立）
+                    # 所以是 **`sigma_leak` 或 `R21` 任一为真 ⇒ False**，而不是
+                    # 取 `elpd_validity()["valid_for_predictive_..."]`（那个只答
+                    # L1，free 口径下会给 True）。
+                    "valid_for_comparison": bool(
+                        not obs["elpd_validity"]["sigma_leak"]
+                        and not obs["elpd_validity"]["prior_scale_data_dependent"]),
+                    "reason": obs["elpd_validity"]["reason"]},
         budget_params={"source": "recorded",
-                       "n_warmup": obs["budget"]["n_warmup"],
-                       "n_samples": obs["budget"]["n_samples"],
-                       "num_chains": obs["budget"]["num_chains"],
-                       "target_accept": obs["budget"]["target_accept"],
-                       "max_tree_depth": obs["budget"]["max_tree_depth"],
+                       # registry 的 budget_params 是**五键白名单**（`tier` 只在
+                       # `derived_from_tier` 下保留），所以「档名 + 是否与其他入口
+                       # 共享」不能放这里——它们落在 `fits/<cid>.json` 的
+                       # `budget_actual` 与下方 notes 里，不丢。
+                       "n_warmup": obs["budget_actual"]["n_warmup"],
+                       "n_samples": obs["budget_actual"]["n_samples"],
+                       "num_chains": obs["budget_actual"]["num_chains"],
+                       "target_accept": obs["budget_actual"]["target_accept"],
+                       "max_tree_depth": obs["budget_actual"]["max_tree_depth"],
                        # extra_fields 不是预算数值，不进 registry 的五个核心键
                        }, 
         execution=None,               # 不伪造身份：run_id 会如实记 None/unconfirmed
         truth_known=False,
         interpretation=None if passed else "descriptive_only",
         notes=(f"seed={seed}", f"elapsed_s={obs['elapsed_s']}",
-               f"bands={obs['metrics']['bands']}"),
+               f"bands={obs['metrics']['bands']}",
+               # 档名 + 是否与其他入口共享：registry 的 budget_params 是五键
+               # 白名单放不下，但"quick 两个入口数值不同"这件事必须跟着数字走。
+               f"budget_tier={obs['budget_actual']['tier']}",
+               "budget_tier_shared_across_entries="
+               f"{obs['budget_actual']['tier_shared_across_entries']}",
+               f"elpd_comparison_scope={obs['elpd_validity']['comparison_scope']}",
+               f"likelihood={obs['likelihood']}"),
     )
 
 
@@ -556,6 +589,12 @@ def run(data_path: str, *, seed: int = 0, budget_profile: str = "quick",
                     metrics=obs["metrics"], rhat_max=obs["rhat_max"],
                     divergences=obs["divergences"], ess_min=obs["ess_min"],
                     elpd=obs["elpd"], elpd_se=obs["elpd_se"],
+                    # 这两块不受 registry schema 约束（registry 的 predictive /
+                    # budget_params 都是白名单），所以完整版本落在这里：
+                    # `budget_actual` 含档名与"是否与其他入口共享"，
+                    # `elpd_validity` 含 σ 泄漏 / R21 / comparison_scope 三层。
+                    budget_actual=obs["budget_actual"],
+                    elpd_validity=obs["elpd_validity"],
                     budget_profile=budget_profile, seed=seed)),
                     fh, ensure_ascii=False, indent=1, allow_nan=False)
             # 观测块的采样诊断在 `sampling_diagnostics` 子键下；顶层没有 rhat_max。
@@ -678,7 +717,12 @@ def _selftest() -> int:
     cd = cands[0]
     obs = dict(metrics=m2, rhat_max=1.001, divergences=0, ess_min=500.0,
                ci90={"R_inf": [1.0, 2.0]}, elpd=-10.0, elpd_se=0.5, n_draw=100,
-               elapsed_s=1.0, budget=dict(BUDGETS["quick"], sigma_floor=0.02))
+               elapsed_s=1.0, budget=dict(BUDGETS["quick"], sigma_floor=0.02),
+               # `fit_candidate` 的返回里必须带这两块；自检里手工造 obs 也要补齐，
+               # 否则 `to_observation` 会在真跑和自检之间出现两套形状（曾发生）。
+               budget_actual=SM.budget_actual(BUDGETS["quick"], tier="quick"),
+               likelihood="perpoint",
+               elpd_validity=SM.elpd_validity(likelihood="perpoint"))
     ob = to_observation(cd, obs, f=f, Z=Ztrue, seed=0)
     c("合法观测：sampling_status=passed", ob["sampling_status"] == "passed")
     c("execution 如实 unconfirmed、run_id=None",
@@ -687,8 +731,18 @@ def _selftest() -> int:
     c("elpd 标 valid_for_comparison=False 且带 reason",
       ob["predictive"]["valid_for_comparison"] is False
       and bool(ob["predictive"]["reason"]))
-    c("ratio 的 n_used/n_total 都给了", ob["ratio"]["n_used"] == f.size)
+    c("perpoint 的 reason 同时含 σ 泄漏与 R21 两层",
+      "含被留出点自身" in ob["predictive"]["reason"]
+      and "R21" in ob["predictive"]["reason"])
     c("budget_params 是数值不是档名", isinstance(ob["budget_params"]["n_warmup"], int))
+    c("ratio 的 n_used/n_total 都给了", ob["ratio"]["n_used"] == f.size)
+    c("档名与共享标记落在 notes（registry 白名单放不下）",
+      any("budget_tier=quick" in n for n in ob["notes"])
+      and any("budget_tier_shared_across_entries=False" in n for n in ob["notes"]))
+    c("comparison_scope 落在 notes",
+      any("elpd_comparison_scope=relative_only" in n for n in ob["notes"]))
+    c("sampling_failed 之外：free 口径下 valid 仍 False（R21 恒成立）",
+      SM.elpd_validity(likelihood="free")["prior_scale_data_dependent"] is True)
     c("采样档带 extra_fields=('num_steps',)（否则 bm_real.grade 的 tds=None 崩）",
       BUDGETS["quick"].get("extra_fields") == ("num_steps",)
       and BUDGETS["standard"].get("extra_fields") == ("num_steps",))

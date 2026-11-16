@@ -1,8 +1,8 @@
 {
  "generated_by": "tools/repo_map.py",
- "n_modules": 62,
- "n_tests": 19,
- "total_lines": 41119,
+ "n_modules": 68,
+ "n_tests": 20,
+ "total_lines": 44017,
  "layers": {
   "L0": {
    "desc": "数值内核：纯数学/模型定义，无文件 IO",
@@ -42,7 +42,9 @@
     "bm_identifiability.py",
     "bm_kk.py",
     "bm_top_gen.py",
-    "bm_zhit.py"
+    "bm_zhit.py",
+    "circuit_evaluator.py",
+    "spectrum_metrics.py"
    ]
   },
   "L3": {
@@ -50,6 +52,7 @@
    "modules": [
     "bm_dash.py",
     "bm_figure.py",
+    "bm_figure_unified.py",
     "bm_result.py"
    ]
   },
@@ -58,6 +61,8 @@
    "modules": [
     "bm_select.py",
     "bmdrt.py",
+    "circuit_runner.py",
+    "cmd_compare.py",
     "cmd_diff.py",
     "cmd_status.py",
     "nested_fit.py",
@@ -92,6 +97,7 @@
     "test_contract.py",
     "test_drt_signed.py",
     "test_ecm.py",
+    "test_entry_parity.py",
     "test_exec_identity.py",
     "test_identity_p0.py",
     "test_include_L.py",
@@ -121,16 +127,21 @@
   "bm_corr.py",
   "bm_evidence.py",
   "bm_experiments.py",
+  "bm_figure_unified.py",
   "bm_grade.py",
   "bm_identifiability.py",
   "bm_ref_rwp.py",
   "bm_select.py",
+  "circuit_evaluator.py",
   "circuit_registry.py",
+  "circuit_runner.py",
+  "cmd_compare.py",
   "cmd_status.py",
   "convert_2e.py",
   "convert_3e.py",
   "drt.py",
-  "nested_fit.py"
+  "nested_fit.py",
+  "spectrum_metrics.py"
  ],
  "not_for_product": [
   "batch_2e.py",
@@ -162,6 +173,7 @@
   "test_contract.py",
   "test_drt_signed.py",
   "test_ecm.py",
+  "test_entry_parity.py",
   "test_exec_identity.py",
   "test_identity_p0.py",
   "test_include_L.py",
@@ -175,6 +187,8 @@
    "batch_2e.py",
    "bm_figure.py",
    "bmdrt.py",
+   "circuit_runner.py",
+   "cmd_compare.py",
    "cmd_status.py",
    "nested_fit.py",
    "report_2e.py",
@@ -184,11 +198,15 @@
    "test_contract.py",
    "test_drt_signed.py",
    "test_ecm.py",
+   "test_entry_parity.py",
    "test_include_L.py",
    "test_patch_bundle.py"
   ],
   "sys_path_hack": [
    "bm_zhit.py",
+   "circuit_evaluator.py",
+   "circuit_runner.py",
+   "cmd_compare.py",
    "nested_fit.py",
    "patch_bundle_io.py",
    "sweep_sigma_floor.py",
@@ -203,6 +221,7 @@
    "test_circuit_registry.py",
    "test_contract.py",
    "test_drt_signed.py",
+   "test_entry_parity.py",
    "test_exec_identity.py",
    "test_identity_p0.py",
    "test_include_L.py",
@@ -239,6 +258,9 @@
    "budget_capture_adapter.py",
    "budget_params.py",
    "capture_contract.py",
+   "circuit_evaluator.py",
+   "circuit_runner.py",
+   "cmd_compare.py",
    "convert_2e.py",
    "convert_3e.py",
    "drt.py",
@@ -249,6 +271,7 @@
    "report_2e.py",
    "sampler_capture.py",
    "sampler_provenance.py",
+   "spectrum_metrics.py",
    "sweep_sigma_floor.py",
    "test_ad_gate.py",
    "test_ad_gate_synth.py",
@@ -262,6 +285,7 @@
    "test_contract.py",
    "test_drt_signed.py",
    "test_ecm.py",
+   "test_entry_parity.py",
    "test_exec_identity.py",
    "test_identity_p0.py",
    "test_include_L.py",
@@ -273,22 +297,22 @@
   "most_depended": [
    [
     "bm_core",
-    17
+    19
    ],
    [
     "bm_real",
-    13
+    15
    ],
    [
     "bm_experiments",
-    8
-   ],
-   [
-    "bm_ad",
-    6
+    10
    ],
    [
     "bm_top",
+    9
+   ],
+   [
+    "bm_ad",
     6
    ],
    [
@@ -300,15 +324,15 @@
     6
    ],
    [
+    "bm_select",
+    5
+   ],
+   [
     "bm_diff",
     4
    ],
    [
-    "sampler_capture",
-    4
-   ],
-   [
-    "sampler_provenance",
+    "circuit_registry",
     4
    ]
   ]
@@ -485,7 +509,7 @@
    "product": "core",
    "stability": "frozen",
    "module": "bm_core",
-   "lines": 807,
+   "lines": 812,
    "doc": "BM-DRT：用贝叶斯混合自动定弛豫峰数（对齐 Liu & Ciucci 2025 原方案）",
    "deps": [
     "bm_ad",
@@ -496,7 +520,7 @@
    "uses_out": false,
    "sys_path_hack": false,
    "hardcwd": false,
-   "imported_by": 17
+   "imported_by": 19
   },
   {
    "file": "bm_corr.py",
@@ -588,7 +612,7 @@
    "uses_out": false,
    "sys_path_hack": false,
    "hardcwd": false,
-   "imported_by": 8
+   "imported_by": 10
   },
   {
    "file": "bm_figure.py",
@@ -604,6 +628,22 @@
    ],
    "has_main": true,
    "uses_out": true,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 1
+  },
+  {
+   "file": "bm_figure_unified.py",
+   "layer": "L3",
+   "role": "统一拟合图：一条谱 + 任意多条候选曲线 → 同一张 6 子图（只依赖 f/Z/curves）",
+   "product": "opt",
+   "stability": "stable",
+   "module": "bm_figure_unified",
+   "lines": 138,
+   "doc": "统一拟合图：一条谱 + 任意多个候选曲线 → 同一张 6 子图。",
+   "deps": [],
+   "has_main": false,
+   "uses_out": false,
    "sys_path_hack": false,
    "hardcwd": false,
    "imported_by": 1
@@ -683,7 +723,7 @@
    "product": "core",
    "stability": "frozen",
    "module": "bm_real",
-   "lines": 3123,
+   "lines": 3141,
    "doc": "真实 EIS 数据主程序：DRT 只做预判断，K 由证据选，不由 DRT 定。",
    "deps": [
     "bm_ad",
@@ -702,7 +742,7 @@
    "uses_out": false,
    "sys_path_hack": false,
    "hardcwd": false,
-   "imported_by": 13
+   "imported_by": 15
   },
   {
    "file": "bm_ref_rwp.py",
@@ -749,7 +789,7 @@
    "product": "opt",
    "stability": "research",
    "module": "bm_select",
-   "lines": 1748,
+   "lines": 1761,
    "doc": "M4 跨族选择器（骨架）：voigt 族（`bm_core`）vs nested 族（`bm_top`）。",
    "deps": [
     "bm_core",
@@ -761,7 +801,7 @@
    "uses_out": false,
    "sys_path_hack": false,
    "hardcwd": false,
-   "imported_by": 3
+   "imported_by": 5
   },
   {
    "file": "bm_top.py",
@@ -779,7 +819,7 @@
    "uses_out": false,
    "sys_path_hack": false,
    "hardcwd": false,
-   "imported_by": 6
+   "imported_by": 9
   },
   {
    "file": "bm_top_gen.py",
@@ -902,6 +942,24 @@
    "imported_by": 3
   },
   {
+   "file": "circuit_evaluator.py",
+   "layer": "L2",
+   "role": "候选观测→evidence 状态的推导层（规则 E1–E7，争议规则显式标 disputed）",
+   "product": "opt",
+   "stability": "research",
+   "module": "circuit_evaluator",
+   "lines": 684,
+   "doc": "候选观测 → evidence 状态的**推导层**（registry 的 `evidence_block` 只做校验，不做推导）。",
+   "deps": [
+    "circuit_registry"
+   ],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": true,
+   "hardcwd": false,
+   "imported_by": 1
+  },
+  {
    "file": "circuit_registry.py",
    "layer": "L0",
    "role": "候选电路注册表（schema 承载能力）",
@@ -915,7 +973,53 @@
    "uses_out": false,
    "sys_path_hack": false,
    "hardcwd": false,
+   "imported_by": 4
+  },
+  {
+   "file": "circuit_runner.py",
+   "layer": "L4",
+   "role": "registry 驱动的候选调度：预检→逐候选拟合→观测落盘（研究接口，不改默认族、不接 auto）",
+   "product": "opt",
+   "stability": "research",
+   "module": "circuit_runner",
+   "lines": 966,
+   "doc": "registry 驱动的候选电路统一调度器。",
+   "deps": [
+    "bm_core",
+    "bm_real",
+    "bm_select",
+    "bm_top",
+    "circuit_registry",
+    "spectrum_metrics"
+   ],
+   "has_main": true,
+   "uses_out": true,
+   "sys_path_hack": true,
+   "hardcwd": false,
    "imported_by": 2
+  },
+  {
+   "file": "cmd_compare.py",
+   "layer": "L4",
+   "role": "bmdrt compare：多族候选自动并列 → 统一状态 + 统一图（默认 standard / 逐点 σ）",
+   "product": "opt",
+   "stability": "research",
+   "module": "cmd_compare",
+   "lines": 264,
+   "doc": "bmdrt compare —— 一条谱、多个族的候选、一张图、一个状态。",
+   "deps": [
+    "bm_core",
+    "bm_figure_unified",
+    "bm_real",
+    "bm_top",
+    "circuit_evaluator",
+    "circuit_runner"
+   ],
+   "has_main": true,
+   "uses_out": true,
+   "sys_path_hack": true,
+   "hardcwd": false,
+   "imported_by": 0
   },
   {
    "file": "cmd_diff.py",
@@ -1042,20 +1146,21 @@
    "product": "opt",
    "stability": "research",
    "module": "nested_fit",
-   "lines": 516,
+   "lines": 523,
    "doc": "nested_fit.py —— nested 拓扑的**独立研究性接口**（不接 `bmdrt.py` 主流程）。",
    "deps": [
     "bm_core",
     "bm_experiments",
     "bm_real",
     "bm_select",
-    "bm_top"
+    "bm_top",
+    "spectrum_metrics"
    ],
    "has_main": true,
    "uses_out": true,
    "sys_path_hack": true,
    "hardcwd": false,
-   "imported_by": 1
+   "imported_by": 2
   },
   {
    "file": "patch_bundle.py",
@@ -1143,6 +1248,24 @@
    "sys_path_hack": false,
    "hardcwd": false,
    "imported_by": 4
+  },
+  {
+   "file": "spectrum_metrics.py",
+   "layer": "L2",
+   "role": "两入口共用的残差指标/逐点 σ/ELPD 可比性判定/预算归一（纯函数）",
+   "product": "opt",
+   "stability": "stable",
+   "module": "spectrum_metrics",
+   "lines": 350,
+   "doc": "两入口共用的残差指标、逐点噪声与 ELPD 可比性判定。",
+   "deps": [
+    "bm_experiments"
+   ],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 3
   },
   {
    "file": "sweep_sigma_floor.py",
@@ -1405,6 +1528,29 @@
    "sys_path_hack": false,
    "hardcwd": false,
    "imported_by": 2
+  },
+  {
+   "file": "test_entry_parity.py",
+   "layer": "L6",
+   "role": "两入口口径合并 T1–T6 + 差分（不跑 MCMC）",
+   "product": "no",
+   "stability": "stable",
+   "module": "test_entry_parity",
+   "lines": 453,
+   "doc": "T1–T6 验收 + 两入口差分测试（2026-11-16 口径合并）。",
+   "deps": [
+    "bm_experiments",
+    "bm_select",
+    "bm_top",
+    "circuit_runner",
+    "nested_fit",
+    "spectrum_metrics"
+   ],
+   "has_main": true,
+   "uses_out": true,
+   "sys_path_hack": true,
+   "hardcwd": false,
+   "imported_by": 0
   },
   {
    "file": "test_exec_identity.py",

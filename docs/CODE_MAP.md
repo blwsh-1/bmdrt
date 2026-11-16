@@ -47,12 +47,13 @@
 | `fit_store.py` | `drt` 命令行兼容读取器 | no |
 | `batch_2e.py` / `report_2e.py` | 2E 批处理调度与交付说明 | no |
 
-### L2 分析与诊断（11）
+### L2 分析与诊断（12）
 
 | 模块 | 职责 | 产品 |
 |---|---|---|
 | `bm_kk.py` | 拟合前 Lin-KK 门禁（gate / warn / off） | **core** |
 | `bm_experiments.py` | 实验脚本分发；`acf_max` 等验收指标也在这里 | opt |
+| `spectrum_metrics.py` | 两入口共用的残差指标 / 逐点 σ / ELPD 可比性判定 / 预算归一（纯函数，2026-11-16 收敛） | opt |
 | `bm_identifiability.py` | 统一可辨识性报告（六类诊断 / 三态） | opt |
 | `bm_corr.py` | 全参数后验相关矩阵 + 置信区间 | opt |
 | `bm_bench.py` / `bm_check.py` | 合成 benchmark / 端到端 PASS-FAIL | opt |
@@ -87,14 +88,14 @@
 补丁包重建），不是拟合能力。产品若要「可复现认证」再单独接，且**必须保持不变式**：
 `upstream_origin_captured=False` 时不得产出有效号（当前真实执行仍是 `unconfirmed` 零号）。
 
-### L6 测试（19）
+### L6 测试（20）
 
 `test_exec_identity.py`(1293 行) / `test_circuit_registry.py`(1262) / `test_contract.py`(1222) /
 `test_sampler_provenance.py`(927) / `test_budget_params.py` / `test_capture_contract.py` /
 `test_sampler_capture.py` / `test_patch_bundle.py` / `test_identity_p0.py` / `test_ecm.py` /
 `test_ad_gate.py` / `test_ad_gate_synth.py` / `test_bm_ad_e2e.py` / `test_bm_ad_sampler.py` /
 `test_bm_ad_select.py` / `test_drt_signed.py` / `test_audit_findings.py` / `test_include_L.py` /
-`test_seed.py`
+`test_seed.py` / `test_entry_parity.py`
 
 ## 3. 产品候选与依赖闭包
 

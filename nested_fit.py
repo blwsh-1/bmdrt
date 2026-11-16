@@ -70,6 +70,7 @@ if str(_ROOT) not in sys.path:
 import bm_experiments as E          # noqa: E402
 import bm_real as R                # noqa: E402
 import bm_top as T                 # noqa: E402
+import spectrum_metrics as SM      # noqa: E402  两入口共用的指标/σ/预算
 from bm_select import BUDGETS      # noqa: E402  只读常量，不改口径
 
 WARNING = (
@@ -90,8 +91,11 @@ DEFAULT_OUT = str(_ROOT / "out" / "nested_fit")
 # （`evidence/nested_topology/m4_holdout2.py::BUDGET`，预注册口径）；
 # `bm_select.BUDGETS["standard"]` 是 §9.4.4 的 2000/1000/2 + 0.9（A2 档）。
 # 两者同名但不同，这里显式分开，避免接口悄悄用了另一套口径。
-VALIDATION_STANDARD = dict(n_warmup=2000, n_samples=1000, num_chains=2,
-                           target_accept=0.98, max_tree_depth=10)
+#
+# 2026-11-16 起数值**只从 `spectrum_metrics.STANDARD` 取**（唯一来源），
+# `circuit_runner.BUDGETS["standard"]` 也引用同一个常量——两个入口的
+# "standard 档"从此是同一件事，不是两份碰巧相同的字面量。
+VALIDATION_STANDARD = dict(SM.STANDARD)
 
 
 # ---------------------------------------------------------------------------
@@ -115,14 +119,16 @@ def budget_kw(name: str) -> dict:
 def make_sigma(Z: np.ndarray, mode: str, pct: float, abs_val: float | None):
     """返回 `(sigma_for_fit_top, sigma_from_data, 说明)`。
 
-    `perpoint` 必须是 `(2, n_freq)` 数组；`(n_freq,)` 会被 `_check_sigma`
-    明确拒绝（防与标量对混淆）。
+    `perpoint` 的数值由 `spectrum_metrics.sigma_perpoint` 生成（**唯一实现**，
+    与 `circuit_runner` 同一份）。返回形状是 `(2, n_freq)` 的二维数组而不是
+    `(arr, arr)` tuple：`_check_sigma` 两种写法等价，但数组能避免调用方各自
+    决定容器类型，差分测试里不会因为容器不同被误报。
+
+    `free` / `scalar` 两支不走那个函数（口径不同，不是"逐点相对噪声"），
+    但 `sigma_from_data` 的语义统一由 `spectrum_metrics.elpd_validity` 判定。
     """
     if mode == "perpoint":
-        s = pct / 100.0 * np.abs(Z)
-        if not np.all(s > 0):
-            raise ValueError("逐点 σ 含非正值，请检查 |Z|")
-        return np.stack([s, s]), True, f"逐点 σ_j={pct:g}%·|Z_j|"
+        return SM.sigma_perpoint(Z, pct), True, f"逐点 σ_j={pct:g}%·|Z_j|"
     if mode == "free":
         return None, False, "σ 由后验采样（项目默认）"
     if mode == "scalar":
@@ -134,29 +140,13 @@ def make_sigma(Z: np.ndarray, mode: str, pct: float, abs_val: float | None):
 
 
 def metrics(f: np.ndarray, Z: np.ndarray, Zm: np.ndarray) -> dict:
-    """§14 `_metrics` 同口径；额外给端点与高频段（只报，不判决）。"""
-    w = np.abs(Z)
-    res = Zm - Z
-    d = res / w
-    rel = np.abs(res) / w
-    bands = []
-    for lo, hi in ((0.01, 1.0), (1.0, 100.0), (100.0, 1e5)):
-        m = (f >= lo) & (f < hi)
-        bands.append(float(np.sqrt(np.mean(np.abs(d[m]) ** 2))) * 100
-                     if m.any() else None)
-    i_top = int(np.argmax(f))
-    return dict(
-        rms_rel=float(np.sqrt(np.mean(np.concatenate([d.real, d.imag]) ** 2))) * 100,
-        rms_re=float(np.sqrt(np.mean(res.real ** 2))),
-        rms_im=float(np.sqrt(np.mean(res.imag ** 2))),
-        rel_median=float(np.median(rel)) * 100,
-        rel_max=float(np.max(rel)) * 100,
-        rel_max_at_Hz=float(f[int(np.argmax(rel))]),
-        bands_pct=bands,
-        acf=float(max(E.acf_max(res.real), E.acf_max(res.imag))),
-        acf_re=float(E.acf_max(res.real)), acf_im=float(E.acf_max(res.imag)),
-        acf_mag=float(E.acf_max(rel)),
-        top_hz=float(f[i_top]), top_rel_pct=float(rel[i_top]) * 100)
+    """委托 `spectrum_metrics.metrics`（**唯一实现**，两入口共用）。
+
+    本函数原来自己算 13 个字段，`circuit_runner.metrics` 另算 5 个，公式相同
+    但字段集合不同。2026-11-16 合并成超集，**本接口原有的 13 个字段一个不少、
+    公式与频段边界逐字未变**（逐字段回归见 `test_entry_parity.py`）。
+    """
+    return SM.metrics(f, Z, Zm)
 
 
 def param_table(o: dict, branch: str, layers: int) -> tuple[dict, dict]:
@@ -343,10 +333,20 @@ def run(input_path: str | os.PathLike, *, outdir: str = DEFAULT_OUT,
     Zm = T.z_nested(f, p, branch=branch, layers=layers)
     m = metrics(f, Z, Zm)
 
+    # ELPD 可比性：**与 `circuit_runner` 调同一个判定函数**。两层理由分开：
+    # L1 perpoint 的 σ_j 含被留出点自身；L2 R21 先验尺度数据依赖（两口径都成立）。
+    # 以前这里只写了 L1（`o["elpd_note"]`），于是同一条谱在 runner 的产物里写的是
+    # R21、在本接口里写的是 σ 泄漏——两句话都对，但都不是完整理由。
+    ev = SM.elpd_validity(likelihood=("perpoint" if sigma_mode == "perpoint"
+                                      else "free"),
+                          sigma_from_data=from_data)
+
     notes = [WARNING]
     if from_data:
         notes.append(o.get("elpd_note") or
                      "逐点 σ 来自同一批观测：elpd_loo 不是标准留一预测，不可用于模型比较")
+    notes.append(f"ELPD 完整性（两层，与 circuit_runner 同一判定）：{ev['reason']}；"
+                 f"comparison_scope={ev['comparison_scope']}")
     if o.get("rhat_max") is not None and o["rhat_max"] > 1.05:
         notes.append(f"R̂_max={o['rhat_max']:.3f} >1.05：本次采样未收敛，"
                      f"建议换 standard 档或换 seed 重跑")
@@ -381,6 +381,10 @@ def run(input_path: str | os.PathLike, *, outdir: str = DEFAULT_OUT,
                    f_min=float(f.min()), f_max=float(f.max()),
                    absZ_max=float(np.abs(Z).max())),
         config=dict(branch=branch, layers=layers, budget=budget, budget_kw=kw,
+                    # 五项数值 + 档名 + 是否与 circuit_runner 共享。`quick` 两个
+                    # 入口数值不同（本接口走 bm_select.QUICK 800/400/10，
+                    # runner 是 300/300/8），所以不许靠档名推断"同预算"。
+                    budget_actual=SM.budget_actual(kw, tier=budget),
                     sigma_mode=sigma_mode, sigma_desc=sigma_desc,
                     sigma_from_data=bool(from_data), sigma_pct=sigma_pct,
                     sigma_abs=sigma_abs, seed=seed,
@@ -395,8 +399,11 @@ def run(input_path: str | os.PathLike, *, outdir: str = DEFAULT_OUT,
                          divergences=o.get("divergences"),
                          sigma_mode=o.get("sigma_mode"),
                          elpd=float(o["elpd"]), elpd_se=float(o["elpd_se"]),
+                         # 这个字段与 `bm_top.fit_top` 同义：**只答 σ 泄漏**，
+                         # 不含 R21。完整的可比性结论在同级的 `elpd_validity`。
                          elpd_valid_for_predictive_comparison=bool(
                              o["elpd_valid_for_predictive_comparison"]),
+                         elpd_validity=ev,
                          elpd_note=o.get("elpd_note")),
         voigt_reference=vref,
         files=dict(json=json_path, curve_csv=csv_path,

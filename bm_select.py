@@ -386,15 +386,25 @@ def _caps_suffix(include_L: bool, adsorption: str | None) -> str:
 
 def fit_nested(f, Z, layers: int, *, branch: str = BRANCH, seed: int = 0,
                sigma_floor: float = SIGMA_FLOOR, kw: dict | None = None,
-               sigma=None) -> dict:
-    """nested 族：`bm_top.fit_top`（R∥L 支路嵌在两层 R∥CPE 里）。"""
+               sigma=None, sigma_from_data: bool = False) -> dict:
+    """nested 族：`bm_top.fit_top`（R∥L 支路嵌在两层 R∥CPE 里）。
+
+    `sigma_from_data`（2026-11-16 新增，**默认 False = 改动前行为逐位不变**）
+        透传给 `fit_top`，只影响它返回的 `elpd_valid_for_predictive_comparison`
+        与 `elpd_note`，不参与采样。存在的理由：`sigma` 若由**同一批观测**算出
+        （逐点 `σ_j = 2%·|Z_j^obs|`），`elpd_loo` 就不是 `p(Z_j|Z_{-j})`，这个
+        事实必须由调用方按口径声明，不能让底层永远拿默认值。
+        `bm_select` 内部的生产路径（`_select_one` 等）**一律不传**，因此行为
+        与加参数之前逐位相同（`test_entry_parity.py` 守着这个默认值）。
+    """
     kw = dict(QUICK if kw is None else kw)
     o = T.fit_top(f, Z, branch=branch, layers=layers, seed=seed,
                   n_warmup=int(kw["n_warmup"]), n_samples=int(kw["n_samples"]),
                   num_chains=int(kw["num_chains"]),
                   target_accept=float(kw["target_accept"]),
                   max_tree_depth=int(kw["max_tree_depth"]),
-                  sigma=sigma, sigma_floor=float(sigma_floor), progress=False)
+                  sigma=sigma, sigma_floor=float(sigma_floor),
+                  sigma_from_data=bool(sigma_from_data), progress=False)
     pt = o.get("pointwise_elpd")
     pt = None if pt is None else np.asarray(pt, float)
     cand = dict(family="nested", dof=layers, branch=branch,

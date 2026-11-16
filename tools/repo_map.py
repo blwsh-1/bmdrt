@@ -67,6 +67,7 @@ ROLE = {
     "bm_zhit.py": ("L2", "Z-HIT 自洽检验一阶形式（离线原型，**已否决不接**）", "no", "research"),
     "bm_top_gen.py": ("L2", "nested 拓扑独立生成器（合成侧）", "no", "research"),
     "bm_experiments.py": ("L2", "全部实验脚本分发（`acf_max` 等指标也在这里）", "opt", "frozen"),
+    "spectrum_metrics.py": ("L2", "两入口共用的残差指标/逐点 σ/ELPD 可比性判定/预算归一（纯函数）", "opt", "stable"),
     # ---- L3 ----
     "bm_result.py": ("L3", "`AnalysisResult` 唯一结果来源与导出包", "core", "stable"),
     "bm_figure.py": ("L3", "出版级静态图（与面板共用同一份数据）", "core", "stable"),
@@ -109,6 +110,7 @@ TEST_NOTE = {
     "test_audit_findings.py": "审查缺陷可复现",
     "test_include_L.py": "`include_L` 对照（单变量）",
     "test_seed.py": "sampler seed 传递链",
+    "test_entry_parity.py": "两入口口径合并 T1–T6 + 差分（不跑 MCMC）",
 }
 
 
