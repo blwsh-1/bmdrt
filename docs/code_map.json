@@ -1,14 +1,15 @@
 {
  "generated_by": "tools/repo_map.py",
- "n_modules": 71,
+ "n_modules": 72,
  "n_tests": 20,
- "total_lines": 45018,
+ "total_lines": 45847,
  "layers": {
   "L0": {
    "desc": "数值内核：纯数学/模型定义，无文件 IO",
    "modules": [
     "bm_ad.py",
     "bm_circuit.py",
+    "bm_circuit_adr.py",
     "bm_circuit_nested.py",
     "bm_core.py",
     "bm_diff.py",
@@ -151,6 +152,7 @@
  "not_for_product": [
   "batch_2e.py",
   "bm_circuit.py",
+  "bm_circuit_adr.py",
   "bm_circuit_nested.py",
   "bm_ident.py",
   "bm_top_gen.py",
@@ -243,6 +245,7 @@
    "bm_ad.py",
    "bm_bench.py",
    "bm_check.py",
+   "bm_circuit_adr.py",
    "bm_circuit_nested.py",
    "bm_core.py",
    "bm_corr.py",
@@ -314,11 +317,11 @@
     15
    ],
    [
-    "bm_experiments",
-    10
+    "bm_top",
+    11
    ],
    [
-    "bm_top",
+    "bm_experiments",
     10
    ],
    [
@@ -330,12 +333,12 @@
     6
    ],
    [
-    "exec_identity",
+    "bm_select",
     6
    ],
    [
-    "bm_select",
-    5
+    "exec_identity",
+    6
    ],
    [
     "circuit_registry",
@@ -526,7 +529,26 @@
    "uses_out": false,
    "sys_path_hack": false,
    "hardcwd": false,
-   "imported_by": 2
+   "imported_by": 3
+  },
+  {
+   "file": "bm_circuit_adr.py",
+   "layer": "L0",
+   "role": "adr 三支路并联电路图（Rs+[CPE∥Rct∥Z_ad]；符号复用 bm_circuit）",
+   "product": "no",
+   "stability": "research",
+   "module": "bm_circuit_adr",
+   "lines": 234,
+   "doc": "等效电路图（adr：吸附弛豫三支路并联）。",
+   "deps": [
+    "bm_circuit",
+    "bm_top"
+   ],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 1
   },
   {
    "file": "bm_circuit_nested.py",
@@ -535,7 +557,7 @@
    "product": "no",
    "stability": "research",
    "module": "bm_circuit_nested",
-   "lines": 463,
+   "lines": 491,
    "doc": "nested 拓扑的等效电路图（只画 `bm_top.z_nested` 这一个拓扑族）。",
    "deps": [
     "bm_circuit",
@@ -684,7 +706,7 @@
    "product": "opt",
    "stability": "stable",
    "module": "bm_figure_unified",
-   "lines": 145,
+   "lines": 157,
    "doc": "统一拟合图：一条谱 + 任意多个候选曲线 → 同一张 6 子图。",
    "deps": [],
    "has_main": false,
@@ -834,7 +856,7 @@
    "product": "opt",
    "stability": "research",
    "module": "bm_select",
-   "lines": 1761,
+   "lines": 1792,
    "doc": "M4 跨族选择器（骨架）：voigt 族（`bm_core`）vs nested 族（`bm_top`）。",
    "deps": [
     "bm_core",
@@ -846,7 +868,7 @@
    "uses_out": false,
    "sys_path_hack": false,
    "hardcwd": false,
-   "imported_by": 5
+   "imported_by": 6
   },
   {
    "file": "bm_top.py",
@@ -855,7 +877,7 @@
    "product": "core",
    "stability": "frozen",
    "module": "bm_top",
-   "lines": 1088,
+   "lines": 1283,
    "doc": "嵌套并联电路拓扑（M1 正演 + `fit_top()` 独立采样路径）。",
    "deps": [
     "sampler_capture"
@@ -864,7 +886,7 @@
    "uses_out": false,
    "sys_path_hack": false,
    "hardcwd": false,
-   "imported_by": 10
+   "imported_by": 11
   },
   {
    "file": "bm_top_gen.py",
@@ -925,13 +947,14 @@
    "product": "core",
    "stability": "stable",
    "module": "bmdrt",
-   "lines": 1008,
+   "lines": 1127,
    "doc": "bmdrt —— BM-DRT 的唯一入口。",
    "deps": [
     "admission",
     "bm_bench",
     "bm_check",
     "bm_real",
+    "bm_select",
     "circuit_registry",
     "circuit_runner",
     "nested_fit"
@@ -1015,7 +1038,7 @@
    "product": "opt",
    "stability": "research",
    "module": "circuit_registry",
-   "lines": 2195,
+   "lines": 2259,
    "doc": "circuit_registry.py —— 候选电路注册表（阶段 0B 最小原型）",
    "deps": [],
    "has_main": false,
@@ -1031,7 +1054,7 @@
    "product": "opt",
    "stability": "research",
    "module": "circuit_runner",
-   "lines": 966,
+   "lines": 1000,
    "doc": "registry 驱动的候选电路统一调度器。",
    "deps": [
     "bm_core",
@@ -1054,7 +1077,7 @@
    "product": "opt",
    "stability": "research",
    "module": "cmd_compare",
-   "lines": 269,
+   "lines": 286,
    "doc": "bmdrt compare —— 一条谱、多个族的候选、一张图、一个状态。",
    "deps": [
     "admission",
@@ -1114,7 +1137,7 @@
    "product": "opt",
    "stability": "stable",
    "module": "cmd_status",
-   "lines": 145,
+   "lines": 147,
    "doc": "cmd_status —— 看 out/ 里所有跑过的结果，不用重跑。",
    "deps": [
     "bmdrt"
@@ -1210,14 +1233,15 @@
   {
    "file": "nested_fit.py",
    "layer": "L4",
-   "role": "nested 独立研究接口（**未接主流程**）",
+   "role": "nested 研究接口（`bmdrt nested` 实现体；含 adsorption 分支＝并入的原 adr）",
    "product": "opt",
    "stability": "research",
    "module": "nested_fit",
-   "lines": 515,
+   "lines": 569,
    "doc": "nested_fit.py —— nested 拓扑的研究接口（**`bmdrt nested` 的实现体**）。",
    "deps": [
     "admission",
+    "bm_circuit_adr",
     "bm_circuit_nested",
     "bm_core",
     "bm_experiments",
@@ -1607,7 +1631,7 @@
    "product": "no",
    "stability": "stable",
    "module": "test_entry_parity",
-   "lines": 620,
+   "lines": 659,
    "doc": "T1–T6 验收 + 两入口差分测试（2026-11-16 口径合并）。",
    "deps": [
     "admission",

@@ -4,8 +4,9 @@
 
 用途
 ----
-给用户拿自己的谱直接跑 `bm_top.fit_top`：一条命令出参数（含 90% 区间）、
-拟合曲线 CSV、Nyquist/Bode/残差三联图、诊断 JSON。也可以当 Python API 用：
+给用户拿自己的谱直接跑 `bm_top.fit_top`（`branch=adsorption` 时走
+`bm_top.fit_adr`）：一条命令出参数（含 90% 区间）、拟合曲线 CSV、
+统一 2×3 六子图、电路图与诊断 JSON。也可以当 Python API 用：
 
     import nested_fit
     r = nested_fit.run("inbox/my_spectrum.csv", budget="standard")
@@ -45,6 +46,11 @@
   只多 `Q_b`/`n_b` 两个参数。用于 `测试数据/` 的涂层（配 `--layers 2`）与
   钝化（配 `--layers 1`）：骨架已对到 1e-15，缺的是容性元件类型。
   **不在 `bm_select.py` 的跨族候选池里**，不得据此改写 §13/§14 判定。
+· `branch=adsorption`（2026-11-16 并入，原独立 `adr`）= 吸附三支路并联
+  `Rs + [CPE ∥ Rct ∥ Z_ad]`，6 参数，对标外部 adsorption_RQ。它不是两层
+  嵌套骨架，底层复用 `bm_top.fit_adr/z_adr`，`layers` 对其无意义（强制 1）；
+  12Li_5 上收敛到 rms 7.10%（nested L=2 采样崩 R̂ 22）。产物后缀 `.adr.*`，
+  与 parallel 的 `.nested.*` 互不覆盖。
 
 用法
 ----
@@ -55,12 +61,14 @@
     bmdrt.bat nested a.csv b.csv --budget quick
     bmdrt.bat nested data.csv --sigma free --branch series --layers 1
     bmdrt.bat nested 涂层.csv --branch capacitive --layers 2
+    bmdrt.bat nested 吸附.csv --branch adsorption  # 原 bmdrt adr，已并入
     bmdrt.bat nested data.csv --with-voigt --no-plot
 
     python nested_fit.py data.csv                 # 直接跑脚本，参数完全相同
 
 输出默认写到 `out/nested_fit/`，每个输入谱一组：
-`<stem>.nested.json` / `<stem>.nested_curve.csv` / `<stem>.nested.png`。
+`<stem>.nested.json` / `<stem>.nested_curve.csv` / `<stem>.nested.png` /
+`<stem>.nested_circuit.png`。`branch=adsorption` 时后缀换成 `.adr.*`。
 """
 from __future__ import annotations
 
@@ -163,8 +171,15 @@ def metrics(f: np.ndarray, Z: np.ndarray, Zm: np.ndarray) -> dict:
 
 
 def param_table(o: dict, branch: str, layers: int) -> tuple[dict, dict]:
-    """后验 → `{name: {median, ci90, rhat, ess}}` + `z_nested` 要的物理参数。"""
-    keys = list(T.sampled_keys(branch, layers))
+    """后验 → `{name: {median, ci90, rhat, ess}}` + 正演要的物理参数。
+
+    `branch="adsorption"` 是 2026-11-16 并入的三支路并联模型
+    （`Rs + [CPE ∥ Rct ∥ Z_ad]`，对标外部 adsorption_RQ）。它不是
+    `bm_top.z_nested` 的两层嵌套骨架，底层走 `fit_adr`/`z_adr`，所以
+    参数集来自 `ADR_KEYS` 而非 `sampled_keys`。其余分支不受影响。
+    """
+    keys = (list(T.ADR_KEYS) if branch == "adsorption"
+            else list(T.sampled_keys(branch, layers)))
     s = o["s"]
     table, p = {}, {}
     for k in keys:
@@ -199,6 +214,14 @@ def derived_quantities(branch: str, p: dict) -> dict:
         # 容性支路没有电感，别硬套感抗公式（会静默给出无意义的 L_ad_H=None）。
         return dict(branch_kind="capacitive", L_ad_H=None, f_ad_Hz=None,
                     Q_b=float(p["Q_b"]), n_b=float(p["n_b"]))
+    if branch == "adsorption":
+        # 三支路并联的吸附电感：L_ad = R_ad·tau_ad（与 parallel 同物理定义），
+        # 但骨架不同（CPE∥Rct∥Z_ad），所以单独标 branch_kind，别混进 nested 统计。
+        R_ad, tau = p["R_ad"], p["tau_ad"]
+        return dict(branch_kind="adsorption",
+                    L_ad_H=float(R_ad * tau),
+                    f_ad_Hz=float(1.0 / (2 * np.pi * tau)),
+                    Rct=float(p["Rct"]))
     if branch == "parallel":
         R_ad, tau = p["R_ad"], p["tau_ad"]
         return dict(L_ad_H=float(R_ad * tau),
@@ -300,11 +323,22 @@ def run(input_path: str | os.PathLike, *, outdir: str = DEFAULT_OUT,
         kw["target_accept"] = float(target_accept)
     sigma_top, from_data, sigma_desc = make_sigma(Z, sigma_mode, sigma_pct, sigma_abs)
     t0 = time.time()
-    o = T.fit_top(f, Z, branch=branch, layers=layers, seed=seed,
-                  sigma=sigma_top, sigma_from_data=from_data,
-                  progress=progress, **kw)
-    table, p = param_table(o, branch, layers)
-    Zm = T.z_nested(f, p, branch=branch, layers=layers)
+    if branch == "adsorption":
+        # 吸附三支路并联（Rs + [CPE ∥ Rct ∥ Z_ad]）——2026-11-16 并入 nested
+        # 的 branch 体系。它不是 z_nested 的两层嵌套骨架，底层走 fit_adr/z_adr；
+        # 采样器/先验/σ 口径与 fit_top 完全一致（两者同构），只是拓扑不同。
+        # layers 对这个拓扑无意义（单节点三支路），强制 1 并记进 config。
+        layers = 1
+        o = T.fit_adr(f, Z, seed=seed, sigma=sigma_top,
+                      sigma_from_data=from_data, progress=progress, **kw)
+        table, p = param_table(o, branch, layers)
+        Zm = T.z_adr(f, p)
+    else:
+        o = T.fit_top(f, Z, branch=branch, layers=layers, seed=seed,
+                      sigma=sigma_top, sigma_from_data=from_data,
+                      progress=progress, **kw)
+        table, p = param_table(o, branch, layers)
+        Zm = T.z_nested(f, p, branch=branch, layers=layers)
     m = metrics(f, Z, Zm)
 
     # ELPD 可比性：**与 `circuit_runner` 调同一个判定函数**。两层理由分开：
@@ -341,10 +375,13 @@ def run(input_path: str | os.PathLike, *, outdir: str = DEFAULT_OUT,
 
     os.makedirs(outdir, exist_ok=True)
     stem = src.stem
-    json_path = os.path.join(outdir, stem + ".nested.json")
-    csv_path = os.path.join(outdir, stem + ".nested_curve.csv")
-    png_path = os.path.join(outdir, stem + ".nested.png")
-    circ_path = os.path.join(outdir, stem + ".nested_circuit.png")
+    # 产物后缀：adsorption 用 .adr.*（与原独立 adr_fit 一致，且不与 parallel
+    # 的 .nested.* 互相覆盖——auto 的 adr fallback 要同时保留两份产物）。
+    stem_suffix = "adr" if branch == "adsorption" else "nested"
+    json_path = os.path.join(outdir, stem + f".{stem_suffix}.json")
+    csv_path = os.path.join(outdir, stem + f".{stem_suffix}_curve.csv")
+    png_path = os.path.join(outdir, stem + f".{stem_suffix}.png")
+    circ_path = os.path.join(outdir, stem + f".{stem_suffix}_circuit.png")
 
     write_curve(csv_path, f, Z, Zm, Zv)
     if plot:
@@ -361,14 +398,22 @@ def run(input_path: str | os.PathLike, *, outdir: str = DEFAULT_OUT,
             si = float(np.median(np.asarray(s_["s_im"], float)))
         write_plot(png_path, f, Z, Zm, m, Zv, m_v=vref, tag=stem,
                    sigma_re=sr, sigma_im=si)
-        # 并联电路图：只画 `z_nested` 这一族（`bm_circuit.draw` 只认 voigt
-        # 串联骨架，画不了梯形网络）。失败只记 warning，不拦拟合结果。
+        # 并联电路图：`bm_circuit.draw` 只认 voigt 串联骨架，画不了并联网络。
+        # two nested 骨架各有自己的绘图器：
+        #   · adsorption（三支路并联 Rs+[CPE∥Rct∥Z_ad]）→ bm_circuit_adr
+        #   · 其余（z_nested 两层梯形）→ bm_circuit_nested
+        # 失败只记 warning，不拦拟合结果。
         try:
-            import bm_circuit_nested as CN
-            CN.draw_nested(p, branch=branch, layers=layers,
-                           f_ref=float(np.sqrt(f.min() * f.max())),
-                           path=circ_path, name=stem,
-                           admission_state=AD.STATE)
+            f_ref = float(np.sqrt(f.min() * f.max()))
+            if branch == "adsorption":
+                import bm_circuit_adr as CAD
+                CAD.draw_adr(p, f_ref=f_ref, path=circ_path, name=stem,
+                             admission_state=AD.STATE)
+            else:
+                import bm_circuit_nested as CN
+                CN.draw_nested(p, branch=branch, layers=layers,
+                               f_ref=f_ref, path=circ_path, name=stem,
+                               admission_state=AD.STATE)
         except Exception as exc:                       # noqa: BLE001
             notes.append(f"电路图失败（不影响拟合结果）："
                          f"{type(exc).__name__}: {exc}")
@@ -466,8 +511,11 @@ def main(argv=None) -> int:
         epilog="示例：python nested_fit.py data.csv --budget quick --with-voigt")
     ap.add_argument("inputs", nargs="*", help="谱文件/目录；不给则扫 inbox/")
     ap.add_argument("--out", default=DEFAULT_OUT, help="输出目录")
-    ap.add_argument("--branch", choices=("parallel", "series", "capacitive"),
-                    default="parallel")
+    ap.add_argument("--branch",
+                    choices=("parallel", "series", "capacitive", "adsorption"),
+                    default="parallel",
+                    help="adsorption = 吸附三支路并联 Rs+[CPE∥Rct∥Z_ad]（原 adr，"
+                         "2026-11-16 并入；layers 对其无意义，强制 1）")
     ap.add_argument("--layers", type=int, choices=(1, 2), default=2)
     ap.add_argument("--budget", choices=sorted(BUDGETS), default="standard",
                     help="standard 与 §13/§14 同口径；quick 快但 R̂ 常 >1.05（只作预览）")

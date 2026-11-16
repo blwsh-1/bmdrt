@@ -20,7 +20,7 @@
 
 层次是**逻辑分层**，不代表当前代码已经遵守（见 §4 的 11 处反向依赖）。
 
-### L0 数值内核（9）——纯数学，无文件 IO
+### L0 数值内核（10）——纯数学，无文件 IO
 
 | 模块 | 职责 | 产品 |
 |---|---|---|
@@ -37,6 +37,7 @@
 | `cmd_compare.py` | `bmdrt compare`：多族候选自动并列 → 统一状态 + 统一图（默认 standard / 逐点 σ） | opt |
 | `bm_circuit.py` | 等效电路图绘制（voigt 串联骨架） | no |
 | `bm_circuit_nested.py` | nested 梯形网络电路图（只画 `z_nested`；符号复用 `bm_circuit`） | no |
+| `bm_circuit_adr.py` | adr 三支路并联电路图（`Rs+[CPE∥Rct∥Z_ad]`；符号复用 `bm_circuit`） | no |
 
 ### L1 数据与 IO（7）
 
@@ -70,13 +71,13 @@
 | `bm_dash.py` | 自包含 HTML 交互面板（零运行时依赖） | **core** |
 | `bm_figure.py` | 出版级静态图（与面板共用同一份数据） | **core** |
 
-### L4 编排与入口（8）
+### L4 编排与入口（9）
 
 | 模块 | 职责 | 产品 |
 |---|---|---|
 | `bmdrt.py` | 唯一 CLI 入口；`cmd_*.py` 里写 `run(argv)` 自动注册子命令 | **core** |
 | `bm_select.py` | M4 跨族选择器骨架（voigt vs nested） | opt |
-| `nested_fit.py` | nested 研究接口（**临时准入**：可作 `bmdrt nested` 调用，不改 `auto` 默认族） | opt |
+| `nested_fit.py` | nested 研究接口（`bmdrt nested` 实现体；含 `adsorption` 分支＝并入的原 adr） | opt |
 | `cmd_nested.py` | `bmdrt nested`：薄转发 `nested_fit.main`，零算法、不另写参数表 | opt |
 | `cmd_compare.py` | `bmdrt compare`：多族并列 → 统一状态 + 统一图 | opt |
 | `cmd_status.py` | 子命令：查看 `out/` 里跑过的结果 | opt |

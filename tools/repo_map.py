@@ -43,6 +43,7 @@ ROLE = {
     "drt.py": ("L0", "DRT 粗解（只报过程数/时间常数/电阻）", "opt", "stable"),
     "bm_circuit.py": ("L0", "等效电路图绘制（模式 A：voigt 串联骨架）", "no", "stable"),
     "bm_circuit_nested.py": ("L0", "nested 梯形网络电路图（只画 z_nested；符号复用 bm_circuit）", "no", "research"),
+    "bm_circuit_adr.py": ("L0", "adr 三支路并联电路图（Rs+[CPE∥Rct∥Z_ad]；符号复用 bm_circuit）", "no", "research"),
     "circuit_registry.py": ("L0", "候选电路注册表（schema 承载能力）", "opt", "research"),
     "circuit_runner.py": ("L4", "registry 驱动的候选调度：预检→逐候选拟合→观测落盘（研究接口，不改默认族、不接 auto）", "opt", "research"),
     "circuit_evaluator.py": ("L2", "候选观测→evidence 状态的推导层（规则 E1–E7，争议规则显式标 disputed）", "opt", "research"),
@@ -77,7 +78,7 @@ ROLE = {
     "bm_dash.py": ("L3", "自包含 HTML 交互面板（零运行时依赖）", "core", "stable"),
     # ---- L4 ----
     "bmdrt.py": ("L4", "唯一 CLI 入口（`cmd_*.py` 自动注册子命令）", "core", "stable"),
-    "nested_fit.py": ("L4", "nested 独立研究接口（**未接主流程**）", "opt", "research"),
+    "nested_fit.py": ("L4", "nested 研究接口（`bmdrt nested` 实现体；含 adsorption 分支＝并入的原 adr）", "opt", "research"),
     "bm_select.py": ("L4", "M4 跨族选择器骨架（voigt vs nested）", "opt", "research"),
     "cmd_diff.py": ("L4", "子命令：扩散项数学与可辨识性回归", "no", "stable"),
     "cmd_status.py": ("L4", "子命令：查看 out/ 里跑过的结果", "opt", "stable"),

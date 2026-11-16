@@ -267,6 +267,51 @@ def _voigt_family_verdict(path: Path) -> tuple:
     return str(rec["precheck_state"]), (rec.get("precheck_reason") or "")
 
 
+def _voigt_excluded_only_by_L(path: Path) -> tuple[bool, str]:
+    """voigt 被判 `excluded` 时， True 表示**只是缺高频电感**——不该切族。
+
+    为什么必须做这一步（2026-11-16，3E 谱暴露的真 bug）：
+    `l0_precheck` 是在 `include_L=False` 的候选上跑的（见 `_voigt_family_verdict`
+    的 `build_candidates(include_L=False)`），所以任何「高频感抗」谱都会被判
+    `excluded`，理由是「需 include_L」。但 `include_L` 是 **voigt 顶层槽位**，
+    `bm_real.run` 在 `include_L=None` 时本来就会调 `detect_L()` 自动挂上它
+    （bm_real.py:2714）。此时若一律切到 nested，就会把一个本可表达的高频
+    电感需求丢掉——nested 的支路是低频 R∥L，高频极限是容性，根本没有这个接点。
+
+    实测：3E 谱切 nested 得 rms 10.38%/acf 0.850、高频末点相位 −0.1°（实测 +40°）；
+    留在 voigt 的 `include_L=True` 得 rms 0.78%/acf 0.432、相位 40.5°。
+
+    判定用两条确定性条件，都不跑拟合：
+      1. `voigt_can_represent(include_L=True)` 判 True（打开 L 后结构上能表达）
+      2. `bm_real.detect_L(f, Z)` 判 True（生产路径确实会自动挂 L）
+    两条同时成立才返回 True。低频感抗谱（AZ31-4Li_150 等）在第 1 条就失败
+    —— 打开 include_L 仍表达不了 R∥L 的低频感抗 —— 所以照常切 nested。
+
+    返回 `(是否只缺 L, 说明)`。读谱/预检失败一律返回 `(False, 原因)`：
+    "判不出来" 不等于 "可以留在 voigt"，宁可走原切族路径。
+    """
+    import io
+
+    import numpy as np
+
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            import bm_real as R
+            import bm_select as SEL
+            f, Z = R.load_spectrum(str(path))
+            o = np.argsort(f)
+            f, Z = f[o], Z[o]
+            ok_with_L, why = SEL.voigt_can_represent(
+                f, Z, include_L=True, adsorption=None)
+            detect = bool(R.detect_L(f, Z))
+    except Exception as exc:                      # noqa: BLE001
+        return False, f"判不出是否只缺 L（{type(exc).__name__}: {exc}）"
+    only_L = bool(ok_with_L) and detect
+    note = (f"voigt+include_L 可表达={ok_with_L}（{why or '—'}）；"
+            f"detect_L={detect}")
+    return only_L, note
+
+
 def _run_nested_branch(path: Path, cfg: dict, outdir: Path, rec: dict,
                        why: str) -> dict:
     """voigt 预检 `excluded` 时改跑 nested（临时准入，产物标 provisional）。
@@ -318,6 +363,64 @@ def _run_nested_branch(path: Path, cfg: dict, outdir: Path, rec: dict,
               "nested 结果标 provisional（§13 0/3、§14 4/14、§17 0/10），"
               "不得当验收结论；参数不得当物理量"],
     )
+    # ---- adr fallback（2026-11-16）----
+    # nested 是通用嵌套，对 12Li_5 那种"吸附弛豫"谱采样会崩（R̂=22、rms 30.8%）；
+    # 而 adr（吸附三支路并联）对同一类谱收敛到 7.10%。所以 nested 采样未收敛时
+    # 追加跑 adr 作为专用模型的兜底，主结果换成 adr，nested 结果保留在 `nested` 子键。
+    rhat = r["diagnostics"]["rhat_max"]
+    ndiv = r["diagnostics"]["divergences"]
+    if (rhat is not None and rhat > 1.05) or (ndiv or 0) > 0:
+        rec = _run_adr_branch(path, cfg, outdir, rec, why,
+                              nested_rhat=rhat, nested_ndiv=ndiv)
+    return rec
+
+
+def _run_adr_branch(path: Path, cfg: dict, outdir: Path, rec: dict,
+                    why: str, *, nested_rhat=None, nested_ndiv=None) -> dict:
+    """nested 采样未收敛时追加跑 adr（吸附弛豫三支路并联，标 exploratory）。
+
+    两个族都走 `nested_fit`：nested 用 `branch=parallel`，adr 用新的
+    `branch=adsorption`。产物文件名都沿用 `<stem>.nested.*`（同一实现体，
+    `config.branch` 区分拓扑），summary 的族列显示 `adr`。两个族都在逐点
+    2%·|Z| 口径下，rms 可直接比——但都不作验收结论（都未过 §13/§14）。
+    """
+    import nested_fit as NF
+    import admission as AD
+
+    fit = cfg["fit"]
+    budget = "quick" if fit.get("quick") else "standard"
+    seed = 0 if fit.get("seed") is None else int(fit["seed"])
+    print("\n=== 族分派：nested 采样未收敛 ⇒ 追加 adr（exploratory）===")
+    print(f"  nested R̂={nested_rhat} div={nested_ndiv}，改用吸附弛豫专用模型 adr")
+    print("  口径：σ = 逐点 2%·|Z|（与 nested 同口径，rms 可直接比）")
+    # adr 已于 2026-11-16 并入 nested 的 adsorption 分支，统一走 nested_fit；
+    # 不再有独立的 adr_fit 入口。产物文件名沿用 <stem>.nested.json（同一个实现体）。
+    r = NF.run(str(path), outdir=str(outdir), branch="adsorption",
+               budget=budget, sigma_mode="perpoint", seed=seed,
+               plot=True, verbose=True)
+    # 保留 nested 结果（不丢），adr 结果作为主结果
+    rec["nested"] = dict(json=rec.get("json"), fig=rec.get("fig"),
+                         circuit=rec.get("circuit"), rms_rel=rec.get("rms_rel"),
+                         acf=rec.get("acf"), rhat_max=rec.get("rhat_max"),
+                         ndiv=rec.get("ndiv"))
+    rec.update(
+        ok=True, family="adr",
+        family_reason=(why + "；nested 采样未收敛（R̂>1.05/div>0），"
+                       "改用吸附弛豫专用模型 adr"),
+        admission_state=AD.STATE,
+        K=None, grade=None,
+        json=r["files"]["json"], fig=r["files"]["plot"],
+        circuit=r["files"].get("circuit"),
+        elpd=r["diagnostics"]["elpd"],
+        acf=r["metrics"]["acf"],
+        rms_rel=r["metrics"]["rms_rel"],
+        rhat_max=r["diagnostics"]["rhat_max"],
+        ndiv=r["diagnostics"]["divergences"],
+        warnings=list(r.get("notes") or []),
+        ksel=[f"族分派：voigt 预检 excluded —— {why}",
+              "nested 采样未收敛，追加 adr（吸附弛豫专用模型，exploratory）；"
+              "两个族都未过 §13/§14，参数不得当物理量"],
+    )
     return rec
 
 
@@ -363,10 +466,20 @@ def process_one(path: Path, cfg: dict) -> dict:
                 if fam == "not_excluded":
                     print("  voigt 可表达这条谱，按生产路径继续")
                 elif fam == "excluded":
-                    rec = _run_nested_branch(path, cfg, outdir, rec, fam_why)
-                    rec["t_s"] = time.time() - t0
-                    _write_meta(rec, outdir)
-                    return rec
+                    # 二次判断：预检是在 include_L=False 下跑的，高频感抗谱会被
+                    # 一律判 excluded，但那只是 voigt 顶层缺个电感——生产路径的
+                    # detect_L() 本来就会自动挂上，切 nested 反而把电感需求丢了。
+                    only_L, l_note = _voigt_excluded_only_by_L(path)
+                    if only_L:
+                        print("  excluded 只因高频感抗需 include_L ⇒ **不切族**：")
+                        print(f"    {l_note}")
+                        print("    交给生产路径 detect_L() 自动挂 jωL（顶层槽位）")
+                    else:
+                        print(f"  切族理由不是 include_L（{l_note}）⇒ nested")
+                        rec = _run_nested_branch(path, cfg, outdir, rec, fam_why)
+                        rec["t_s"] = time.time() - t0
+                        _write_meta(rec, outdir)
+                        return rec
                 else:
                     print(f"  不切族（{fam_why or '预检未登记'}）")
 
@@ -498,9 +611,10 @@ def _verdict(r: dict) -> str:
         return "跳过"
     if not r["ok"]:
         return "失败"
-    if r.get("family") == "nested":
+    if r.get("family") in ("nested", "adr"):
         # 临时准入：能跑但没过验收线。**不许**归入 "OK"。
-        return "nested（provisional，未过验收线）"
+        tag = "provisional" if r.get("family") == "nested" else "exploratory"
+        return f"{r['family']}（{tag}，未过验收线）"
     if r.get("kk_rejected"):
         return "KK 拒绝"
     if r.get("grade") == 0:
@@ -538,18 +652,19 @@ def write_summary(recs: list[dict], cfg: dict) -> Path:
     lines += ["| 文件 | 族 | K | 分级 | elpd | Δelpd±dse | rms/σ | PPC | 分量 | 耗时 | 判定 |",
               "|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in recs:
-        fam = "nested" if r.get("family") == "nested" else "voigt"
+        fam = (r.get("family") if r.get("family") in ("nested", "adr")
+               else "voigt")
         if not r["ok"]:
             lines.append(f"| {r['file']} | {fam} | – | – | – | – | – | – | – | "
                          f"{r['t_s']:.0f}s | **{_verdict(r)}**：{r['err'] or ''} |")
             continue
-        if r.get("family") == "nested":
-            # nested 的 K/grade/rms÷σ 都不适用：K 是 voigt 的分量数，
+        if r.get("family") in ("nested", "adr"):
+            # nested/adr 的 K/grade/rms÷σ 都不适用：K 是 voigt 的分量数，
             # grade 是 bm_real 的采样分级，rms/σ 需要 bm_real 的自由 σ。
             el = f"{r['elpd']:.1f}" if r.get("elpd") is not None else "–"
             rm = f"{r['rms_rel']:.2f}%" if r.get("rms_rel") is not None else "–"
             ac = f"{r['acf']:.3f}" if r.get("acf") is not None else "–"
-            lines.append(f"| {r['file']} | **nested** | – | – | {el} | – | "
+            lines.append(f"| {r['file']} | **{fam}** | – | – | {el} | – | "
                          f"{rm}（acf {ac}） | – | – | {r['t_s']:.0f}s | "
                          f"**{_verdict(r)}** |")
             continue
@@ -583,10 +698,14 @@ def write_summary(recs: list[dict], cfg: dict) -> Path:
                 for t in (r.get("ksel") or []):
                     lines.append(f"- {t}")
                 lines.append(f"- 日志：`{Path(r['outdir']) / 'run.log'}`")
-            elif r.get("family") == "nested":
+            elif r.get("family") in ("nested", "adr"):
                 # 临时准入：说清"为什么切族"和"结果不能怎么用"。
-                lines.append("- **族分派**：voigt 预检 `excluded` ⇒ 改跑 nested"
-                             "（不是 voigt 拟合失败，是串联族表达不了这条谱）")
+                if r.get("family") == "adr":
+                    lines.append("- **族分派**：voigt 预检 `excluded` ⇒ nested 采样"
+                                 "未收敛 ⇒ 追加 adr（吸附弛豫专用模型）")
+                else:
+                    lines.append("- **族分派**：voigt 预检 `excluded` ⇒ 改跑 nested"
+                                 "（不是 voigt 拟合失败，是串联族表达不了这条谱）")
                 lines.append(f"- 预检理由：{r.get('family_reason') or '—'}")
                 lines.append(f"- 准入状态 `{r.get('admission_state')}`："
                              "§13 `0/3`、§14 `4/14`、§17 `0/10` —— "

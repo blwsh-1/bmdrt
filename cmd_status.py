@@ -30,10 +30,12 @@ def _verdict(d: dict) -> str:
     # 继续往下走会被误读成「采样不可用」。
     if d.get("fit_performed") is False or d.get("kk_rejected"):
         return "KK 拒绝"
-    # 族分派到 nested 的记录：K / grade 都不适用（那是 voigt 的字段），
+    # 族分派到 nested/adr 的记录：K / grade 都不适用（那是 voigt 的字段），
     # 不先判这一条会一路掉到「看警告」。临时准入，不许写 "OK"。
     if d.get("family") == "nested":
         return "nested（provisional）"
+    if d.get("family") == "adr":
+        return "adr（exploratory）"
     g = d.get("sample_grade", d.get("grade"))
     if g == 0:
         return "采样不可用"

@@ -91,6 +91,13 @@ jax 版 + 可辨识性区间），不在本次"整理现有元件"范围内。
 > / `cmd_compare` 已接入，`bmdrt compare` 默认并列 voigt/nested/adr。
 > 吸附支路最终用 `rl_parallel`（R∥L）而非本文案里写的 `bm_ad.z_ad`——两者数学同式，
 > 复用 `rl_parallel` 避免 registry 里出现两个同式元件。实测见提交信息。
+>
+> **2026-11-16 同日再整合**：用户裁决「adr 作为 nested 的一个 branch，取消独立入口」。
+> `adr_fit.py` / `cmd_adr.py` / `bmdrt adr` 已删除；adr 并入 `nested_fit.run` 的
+> `--branch adsorption`（底层复用 `bm_top.fit_adr/z_adr`，不塞进 `z_nested` 的两层
+> 骨架，`bm_top.VALID_BRANCHES` 不变 ⇒ 采样内核逐位不变）。产物后缀 `.adr.*`
+> （与 nested 的 `.nested.*` 互不覆盖，auto 的 fallback 两份都保留）。
+> `bmdrt compare` 里的 adr 候选仍走 `bm_select.fit_adr`（与删除的文件无关），保留三族并列。
 
 新拓扑 `adr`：
 

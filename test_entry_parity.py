@@ -503,7 +503,29 @@ def t9_family_dispatch():
       "NF.run(str(path), outdir=str(outdir)" in src)
     c("nested 分支用 perpoint 2%（§14 口径）", 'sigma_mode="perpoint"' in src)
     c("summary 表有「族」列", "| 文件 | 族 |" in src)
-    c("nested 行不冒充 voigt 的 K/grade", 'fam = "nested" if r.get("family")' in src)
+    c("nested/adr 行不冒充 voigt 的 K/grade",
+      'if r.get("family") in ("nested", "adr")' in src
+      and 'fam = (r.get("family") if r.get("family")' in src)
+
+    # 高频感抗分派（2026-11-16，3E 谱暴露的 bug）：excluded 只因缺 include_L
+    # 时不切族，交给 detect_L 挂电感；低频感抗谱仍切 nested。
+    c("有 _voigt_excluded_only_by_L 二次判定",
+      "def _voigt_excluded_only_by_L" in src)
+    c("分派点先问二次判定再决定切不切",
+      "only_L, l_note = _voigt_excluded_only_by_L(path)" in src
+      and "if only_L:" in src)
+    c("二次判定用 voigt_can_represent(include_L=True)",
+      "voigt_can_represent(" in src and "include_L=True" in src)
+    c("二次判定用 detect_L",
+      "R.detect_L(f, Z)" in src)
+    # 真谱判定：3E 只缺 L（不切族），AZ31 低频感抗（仍切 nested）
+    spec3e = ROOT / "archive" / "3E-3_OER_exp3_0100mA.csv"
+    specaz = ROOT / "archive" / "AZ31-4Li_150.csv"
+    if spec3e.exists() and specaz.exists():
+        o3, n3 = BD._voigt_excluded_only_by_L(spec3e)
+        oa, na = BD._voigt_excluded_only_by_L(specaz)
+        c("3E 谱判为「只缺 include_L」⇒ 不切族", o3 is True, n3)
+        c("AZ31-4Li_150 判为「不只是缺 L」⇒ 仍切 nested", oa is False, na)
 
 
 # ---------------------------------------------------------------------------
@@ -600,8 +622,11 @@ def t10_nested_circuit_figure():
     c("write_plot 委托 plot_fit（2×3 唯一实现）",
       "from bm_figure_unified import plot_fit" in src_nf
       and "plot_fit(path, f, Z, curves" in src_nf)
-    c("nested_fit.run 写 .nested_circuit.png",
-      ".nested_circuit.png" in src_nf and "CN.draw_nested(" in src_nf)
+    c("nested_fit.run 按 branch 写电路图（nested/adr 两套）",
+      'stem_suffix = "adr" if branch == "adsorption" else "nested"' in src_nf
+      and "CN.draw_nested(" in src_nf and "CAD.draw_adr(" in src_nf)
+    c("adsorption 分支走 fit_adr/z_adr（不塞进 z_nested）",
+      "T.fit_adr(" in src_nf and "T.z_adr(f, p)" in src_nf)
 
     # 5) bm_figure_unified 的残差图例能优雅处理 None rms（不给 nan%）
     src_fig = (ROOT / "bm_figure_unified.py").read_text(encoding="utf-8")
@@ -621,11 +646,40 @@ def t10_nested_circuit_figure():
       "bm_circuit_nested" not in src_bc)
 
 
+def t11_adsorption_branch():
+    """2026-11-16：adr 并入 nested 的 adsorption 分支，取消独立入口。"""
+    print("\nT11 adsorption 分支整合（adr 并入 nested，取消独立入口）")
+    src_nf = (ROOT / "nested_fit.py").read_text(encoding="utf-8")
+    src_bd = (ROOT / "bmdrt.py").read_text(encoding="utf-8")
+    # 独立入口必须真的删掉
+    c("adr_fit.py 已删除", not (ROOT / "adr_fit.py").exists())
+    c("cmd_adr.py 已删除", not (ROOT / "cmd_adr.py").exists())
+    c("bmdrt 子命令不再有 adr",
+      "adr" not in __import__("bmdrt").discover())
+    # adsorption 只在 nested_fit 这一层分派，不碰 bm_top 的采样内核
+    c("argparse 接受 --branch adsorption", '"adsorption"' in src_nf)
+    c("param_table 用 ADR_KEYS（不是 sampled_keys）",
+      "list(T.ADR_KEYS) if branch == \"adsorption\"" in src_nf)
+    c("bmdrt adr fallback 改调 nested_fit.run(branch=adsorption)",
+      "NF.run(str(path), outdir=str(outdir), branch=\"adsorption\"" in src_bd)
+    c("bmdrt.py 不再 import adr_fit", "import adr_fit" not in src_bd)
+    # 底层采样器没被塞 adsorption（bm_top 的 VALID_BRANCHES 不变）
+    import bm_top as T
+    c("bm_top.VALID_BRANCHES 未加 adsorption（采样内核不变）",
+      "adsorption" not in T.VALID_BRANCHES)
+    c("fit_adr/z_adr 仍是 bm_top 的独立函数（复用而非重写）",
+      callable(T.fit_adr) and callable(T.z_adr))
+    # 产物互不覆盖：nested 与 adr 两套后缀
+    c("adsorption 用 .adr.* 后缀",
+      'stem_suffix = "adr" if branch == "adsorption" else "nested"' in src_nf)
+
+
 def main() -> int:
     for fn in (t1_single_metrics, t2_metrics_parity, t3_sigma_parity,
                t4_elpd_semantics, t5_budget_source, t6_sampler_args,
                t7_diff_same_input, t8_provisional_admission,
-               t9_family_dispatch, t10_nested_circuit_figure):
+               t9_family_dispatch, t10_nested_circuit_figure,
+               t11_adsorption_branch):
         fn()
     print(f"\n验收 {ok}/{total} 通过" if not bad
           else f"\nFAIL {len(bad)}/{total}: {bad}")
