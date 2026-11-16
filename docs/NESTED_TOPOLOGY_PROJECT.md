@@ -2970,6 +2970,14 @@ L=201.71` → C1 `R2′=190.42, R3′=156.00, L′=667.56`），随后才解析�
 
 #### 9.4.31.2 用法
 
+> **2026-11-16 补注（下面的原文按当时状态保留）**：`nested_fit.bat` 已删除，
+> Windows 入口统一为 `bmdrt.bat`。等价调用是 **`bmdrt.bat nested data.csv`**
+> ——同一个 `main()`、同一份参数表、逐位相同的产物。原文里的
+> `nested_fit.bat ...` 与「双击 `nested_fit.bat` 最省事」已不再有效；
+> 现在双击 `bmdrt.bat` 跑的是生产 `auto`（voigt），要 nested 请带 `nested` 子命令。
+> 另：`nested_fit.py` 自 2026-11-16 起是 `bmdrt nested` 的实现体，
+> 产物带 `admission.state="provisional"`（临时准入，`passed=False`）。
+
 ```bash
 # Windows 一键（用项目 venv D:\autoeis_env\Scripts\python.exe）
 nested_fit.bat data.csv

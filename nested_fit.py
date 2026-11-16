@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-"""nested_fit.py —— nested 拓扑的**独立研究性接口**（不接 `bmdrt.py` 主流程）。
+"""nested_fit.py —— nested 拓扑的研究接口（**`bmdrt nested` 的实现体**）。
 
 用途
 ----
@@ -10,16 +10,25 @@
     import nested_fit
     r = nested_fit.run("inbox/my_spectrum.csv", budget="standard")
 
-**这个接口不改 `bmdrt.py` / `bm_core.py` / `bm_top.py` / `bm_select.py` 的任何
-一行**，不写门禁、不做跨族判决、不改默认族。`bmdrt.bat` 的行为逐位不变。**
+两种调用方式**逐位等价**（同一个 `main()`、同一份参数表）：
+
+    bmdrt.bat nested data.csv          # 2026-11-16 起推荐，唯一的 Windows 入口
+    python nested_fit.py data.csv      # 直接跑脚本，等价
+
+**这个接口不改 `bm_core.py` / `bm_top.py` / `bm_select.py` 的任何一行**，
+不写门禁、不做跨族判决、不改 `bmdrt auto` 的默认族（仍是 voigt）。
+它是子命令而不是生产族：产物恒带 `admission.state="provisional"`。
 
 状态（必须随结果一起看）
 ------------------------
-`exploratory`。nested 在 `M6_VALIDATION_PLAN.md` §13 留出验收 **0/3**、
-§14 全量留出 **4/14**，两次都卡在 M-b 残差自相关；§17 又证四个文献电路
-（含 C2/C3 更多自由度）在 10 条未过谱上 M-b 全 0/10。
+`exploratory` + **临时准入（provisional）**。nested 在 `M6_VALIDATION_PLAN.md`
+§13 留出验收 **0/3**、§14 全量留出 **4/14**，两次都卡在 M-b 残差自相关；
+§17 又证四个文献电路（含 C2/C3 更多自由度）在 10 条未过谱上 M-b 全 0/10。
+而且 M-b 这个判据本身被 M-B-SIM-01 证伪（拟合后 acf AUC=0.52）——
+**未过 ≠ 模型差，过 ≠ 模型对**（R27）。
 所以本接口的输出**不是验收结论**，参数不得当物理量/真值直接引用，
 `acf` 提示只是把 §14 的口径摆出来供参考，不构成「通过/不通过」。
+准入差距与解锁条件写死在 `admission.py` 与 `PROVISIONAL_ADMISSION.md`。
 
 口径
 ----
@@ -41,13 +50,14 @@
 ----
     # 下面 `python` 指项目 venv D:\autoeis_env\Scripts\python.exe
     # （系统 Python 没装 numpyro/jax 会 ImportError；双击 .bat 即可）
-    python nested_fit.py                          # 扫 inbox/ 里的谱
-    python nested_fit.py data.csv                 # 单条
-    python nested_fit.py a.csv b.csv --budget quick
-    python nested_fit.py data.csv --sigma free --branch series --layers 1
-    python nested_fit.py 涂层.csv --branch capacitive --layers 2
-    python nested_fit.py data.csv --with-voigt --no-plot
-    nested_fit.bat data.csv                       # Windows 一键（用项目 venv）
+    bmdrt.bat nested                              # 扫 inbox/ 里的谱
+    bmdrt.bat nested data.csv                     # 单条
+    bmdrt.bat nested a.csv b.csv --budget quick
+    bmdrt.bat nested data.csv --sigma free --branch series --layers 1
+    bmdrt.bat nested 涂层.csv --branch capacitive --layers 2
+    bmdrt.bat nested data.csv --with-voigt --no-plot
+
+    python nested_fit.py data.csv                 # 直接跑脚本，参数完全相同
 
 输出默认写到 `out/nested_fit/`，每个输入谱一组：
 `<stem>.nested.json` / `<stem>.nested_curve.csv` / `<stem>.nested.png`。

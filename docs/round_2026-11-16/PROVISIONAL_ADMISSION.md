@@ -58,6 +58,7 @@ A3 在 §9.4.22 用 `standard` 档解掉后已失效；本次不改那句原文�
 | `cmd_nested.py` | `bmdrt nested` 子命令，薄转发 `nested_fit.main`（零算法、不另写参数表） |
 | `nested_fit.py` | 产物加 `admission=AD.block()`；`WARNING` 订正为「可作为 `bmdrt nested` 调用，但不改 `auto` 默认族」 |
 | `cmd_compare.py` | `compare.json` 加 `admission=AD.block()`；启动打印 banner |
+| `bmdrt.bat` | **Windows 唯一入口**（2026-11-16 起）：`%*` 透传子命令，`nested_fit.bat` 已删除 |
 
 `bmdrt nested` 与 `python nested_fit.py` 逐位相同：同一个 `main()`、同一份参数表、
 同一套产物路径（默认 `out/nested_fit/`）。
@@ -89,5 +90,5 @@ A3 在 §9.4.22 用 `standard` 档解掉后已失效；本次不改那句原文�
 D:/autoeis_env/Scripts/python.exe admission.py                  # 10/10
 D:/autoeis_env/Scripts/python.exe cmd_nested.py --selftest       # 5/5
 D:/autoeis_env/Scripts/python.exe test_entry_parity.py           # 118/118
-D:/autoeis_env/Scripts/python.exe bmdrt.py nested out/fig3/inputs/az31.csv --budget quick
+bmdrt.bat nested out/fig3/inputs/az31.csv --budget quick         # 唯一 Windows 入口
 ```

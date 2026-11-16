@@ -489,6 +489,15 @@ def t8_provisional_admission():
       "nested" not in src_bd and "family" not in src_bd)
     c("process_one 仍直连 bm_real.run", "R.run(" in src_bd)
 
+    # Windows 入口只留一个（2026-11-16 用户裁决「统一一个 bat，这样不用选」）
+    bats = sorted(p.name for p in ROOT.glob("*.bat"))
+    c("仓库顶层只有一个 .bat", bats == ["bmdrt.bat"], f"实际 {bats}")
+    bat = (ROOT / "bmdrt.bat").read_text(encoding="utf-8", errors="replace")
+    c("bmdrt.bat 用 %* 透传参数（子命令才能用）", "%*" in bat)
+    c("bmdrt.bat 不硬编码子命令（不会把 nested 吞成 auto）",
+      "bmdrt.py\" auto" not in bat and "bmdrt.py auto" not in bat)
+    c("bmdrt.bat 指向 bmdrt.py", "bmdrt.py" in bat)
+
 
 def main() -> int:
     for fn in (t1_single_metrics, t2_metrics_parity, t3_sigma_parity,
