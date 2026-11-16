@@ -19,6 +19,8 @@
     "zeta": "1.0",
     "diffusion": "none",
     "auto_mechanism": false,
+    "family_auto": true,
+    "_family_auto说明": "族分派：true 时先做 voigt 确定性预检，命中 excluded（低频感抗、纯串联表达不了）就改跑 nested，并按临时准入标 provisional；not_excluded/unknown 一律不切（默认 voigt）。false = 完全不改族（旧行为）。",
     "auto_mechanism_full": false,
     "adsorption": null,
     "auto_adsorption": false,
@@ -68,7 +70,12 @@
     "skip_done": true,
     "min_points": 8,
     "min_decades": 1.0,
-    "ext": [".csv", ".tsv", ".txt", ".dat"]
+    "ext": [
+      ".csv",
+      ".tsv",
+      ".txt",
+      ".dat"
+    ]
   },
 
   "watch": {

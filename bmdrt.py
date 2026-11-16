@@ -228,6 +228,98 @@ def _quick_probe(path: Path, cfg: dict) -> tuple:
     return None, info
 
 
+def _voigt_family_verdict(path: Path) -> tuple:
+    """voigt 族能不能表达这条谱（**确定性预检，不跑拟合**）。
+
+    返回 `(state, reason)`，`state ∈ {not_excluded, excluded, unknown}`。
+
+    这是当前**唯一**的自动族分派依据，来自 `circuit_registry.l0_precheck`：
+    voigt 是纯串联（`R_inf` + K 个 HN 串联），表达不了「低频感抗」——
+    低频段 Im>0 说明存在一个 `R∥L` 支路，只能放进并联节点（nested）。
+    命中 `excluded` 时 `auto` 改跑 nested，并按临时准入标 `provisional`。
+
+    `unknown` **不触发**改族：那是「该拓扑没登记确定性预检」，不是「不能用」。
+    """
+    import io
+
+    import numpy as np
+
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            import bm_real as R
+            f, Z = R.load_spectrum(str(path))
+    except Exception as exc:                      # noqa: BLE001
+        return "unknown", f"读谱失败，不做族分派（{type(exc).__name__}: {exc}）"
+    o = np.argsort(f)
+    f, Z = f[o], Z[o]
+    try:
+        import circuit_registry as CR
+        import circuit_runner as RU
+        cands = [c for c in RU.build_candidates(ks=(1,), layers=(1,),
+                                                include_L=False,
+                                                budget_profile="quick")
+                 if c.topology_id == "voigt"]
+        if not cands:
+            return "unknown", "构造不出 voigt 候选，不做族分派"
+        rec = CR.l0_precheck(cands[0], f, Z)
+    except Exception as exc:                      # noqa: BLE001
+        return "unknown", f"预检不可用（{type(exc).__name__}: {exc}）"
+    return str(rec["precheck_state"]), (rec.get("precheck_reason") or "")
+
+
+def _run_nested_branch(path: Path, cfg: dict, outdir: Path, rec: dict,
+                       why: str) -> dict:
+    """voigt 预检 `excluded` 时改跑 nested（临时准入，产物标 provisional）。
+
+    产物落在**同一个** `out/<stem>/` 下，但与 voigt 文件名分开
+    （`<stem>.nested.json` / `.nested_curve.csv` / `.nested.png`），
+    所以两种族的结果不会互相覆盖，也不会被误读成同一个模型。
+
+    **噪声口径用逐点 2%·|Z|**（§13/§14 的验收口径），不是 voigt 主路径的自由 σ。
+    理由：nested 的全部证据（§13 `0/3`、§14 `4/14`）都是这个口径标定的；
+    换成自由 σ 后 `|Z|` 跨 3 个量级会把高频点"合法地不拟合"，这条谱实测
+    rms 从 6.99% 涨到 52.60%（R16/R17 的直接后果），数字失去意义。
+    代价是**不能与同批 voigt 的 rms 直接比**，所以两个数都带口径标注。
+    """
+    import admission as AD
+    import nested_fit as NF
+
+    fit = cfg["fit"]
+    budget = "quick" if fit.get("quick") else "standard"
+    seed = 0 if fit.get("seed") is None else int(fit["seed"])
+    print("\n=== 族分派：voigt 预检 excluded ⇒ 改用 nested（provisional）===")
+    print(f"  理由：{why}")
+    print(f"  {AD.banner()}")
+    print("  口径：σ = 逐点 2%·|Z|（§13/§14 验收口径，`sigma_from_data=True`）；"
+          "同批 voigt 用的是自由 σ，两者 rms 不可直接比")
+    print(f"  预算：nested 用 {budget} 档（{NF.budget_kw(budget)}）；"
+          f"voigt 主路径的档位不同，也不可混读")
+    quick_warn = ([] if budget != "quick" else [
+        "quick 档只作预览（400 样本）：acf/rms 与 standard 可显著不同，"
+        "不得据此判过线 —— 同一条谱 quick 实测 acf 0.397、standard 0.726"])
+    for t in quick_warn:
+        print(f"  ⚠ {t}")
+    r = NF.run(str(path), outdir=str(outdir), budget=budget,
+               sigma_mode="perpoint", seed=seed, with_voigt=False,
+               plot=True, verbose=True)
+    rec.update(
+        ok=True, family="nested", family_reason=why,
+        admission_state=AD.STATE,
+        K=None, grade=None,                 # 这两个字段对 nested 不适用
+        json=r["files"]["json"], fig=r["files"]["plot"],
+        elpd=r["diagnostics"]["elpd"],
+        acf=r["metrics"]["acf"],
+        rms_rel=r["metrics"]["rms_rel"],
+        rhat_max=r["diagnostics"]["rhat_max"],
+        ndiv=r["diagnostics"]["divergences"],
+        warnings=list(r.get("notes") or []) + quick_warn,
+        ksel=[f"族分派：voigt 预检 excluded —— {why}",
+              "nested 结果标 provisional（§13 0/3、§14 4/14、§17 0/10），"
+              "不得当验收结论；参数不得当物理量"],
+    )
+    return rec
+
+
 def process_one(path: Path, cfg: dict) -> dict:
     """跑一个文件，返回记录。异常不外抛——批处理里一个坏文件不能拖垮整批。"""
     import bm_real as R
@@ -258,6 +350,24 @@ def process_one(path: Path, cfg: dict) -> dict:
                 fh.write(f"\n[SKIP] {reason}\n")
                 _write_meta(rec, outdir)
                 return rec
+
+            # ---- 族分派（2026-11-16，临时准入）----
+            # 门槛过了之后先问一句：voigt 这个族**能不能表达**这条谱？
+            # 判据是确定性的（低频感抗 ⇒ voigt 的纯串联表达不了），不是拟合比较，
+            # 所以不改变任何谱的既有 voigt 结果 —— 只有预检明确 excluded 的才切族。
+            # `unknown` 一律不切（"没登记预检" ≠ "不能用"）。
+            if bool(fit.get("family_auto", False)):
+                fam, fam_why = _voigt_family_verdict(path)
+                print(f"\n=== 族预检：voigt → {fam} ===")
+                if fam == "not_excluded":
+                    print("  voigt 可表达这条谱，按生产路径继续")
+                elif fam == "excluded":
+                    rec = _run_nested_branch(path, cfg, outdir, rec, fam_why)
+                    rec["t_s"] = time.time() - t0
+                    _write_meta(rec, outdir)
+                    return rec
+                else:
+                    print(f"  不切族（{fam_why or '预检未登记'}）")
 
             R.OUT = outdir                       # 图 / json / npz 都落到这个目录
             R.NULL_CACHE = {}                    # 清空零分布缓存（按 f 分键，换谱自动重算）
@@ -387,6 +497,9 @@ def _verdict(r: dict) -> str:
         return "跳过"
     if not r["ok"]:
         return "失败"
+    if r.get("family") == "nested":
+        # 临时准入：能跑但没过验收线。**不许**归入 "OK"。
+        return "nested（provisional，未过验收线）"
     if r.get("kk_rejected"):
         return "KK 拒绝"
     if r.get("grade") == 0:
@@ -421,15 +534,26 @@ def write_summary(recs: list[dict], cfg: dict) -> Path:
              "不计入拟合成功，也不算运行失败。", "",
              "> 全量状态（含以前跑过的）用 `python bmdrt.py status`；"
              "本文件只反映**最近一次**批处理。", ""]
-    lines += ["| 文件 | K | 分级 | elpd | Δelpd±dse | rms/σ | PPC | 分量 | 耗时 | 判定 |",
-              "|---|---|---|---|---|---|---|---|---|---|"]
+    lines += ["| 文件 | 族 | K | 分级 | elpd | Δelpd±dse | rms/σ | PPC | 分量 | 耗时 | 判定 |",
+              "|---|---|---|---|---|---|---|---|---|---|---|"]
     for r in recs:
+        fam = "nested" if r.get("family") == "nested" else "voigt"
         if not r["ok"]:
-            lines.append(f"| {r['file']} | – | – | – | – | – | – | – | "
+            lines.append(f"| {r['file']} | {fam} | – | – | – | – | – | – | – | "
                          f"{r['t_s']:.0f}s | **{_verdict(r)}**：{r['err'] or ''} |")
             continue
+        if r.get("family") == "nested":
+            # nested 的 K/grade/rms÷σ 都不适用：K 是 voigt 的分量数，
+            # grade 是 bm_real 的采样分级，rms/σ 需要 bm_real 的自由 σ。
+            el = f"{r['elpd']:.1f}" if r.get("elpd") is not None else "–"
+            rm = f"{r['rms_rel']:.2f}%" if r.get("rms_rel") is not None else "–"
+            ac = f"{r['acf']:.3f}" if r.get("acf") is not None else "–"
+            lines.append(f"| {r['file']} | **nested** | – | – | {el} | – | "
+                         f"{rm}（acf {ac}） | – | – | {r['t_s']:.0f}s | "
+                         f"**{_verdict(r)}** |")
+            continue
         if r.get("kk_rejected"):
-            lines.append(f"| {r['file']} | – | – | – | – | – | – | – | "
+            lines.append(f"| {r['file']} | {fam} | – | – | – | – | – | – | – | "
                          f"{r['t_s']:.0f}s | **KK 拒绝**（未拟合） |")
             continue
         q = ""
@@ -440,7 +564,7 @@ def write_summary(recs: list[dict], cfg: dict) -> Path:
         el = f"{r['elpd']:.1f}" if r.get("elpd") is not None else "–"
         cv = f"{r['cover']:.3f}" if r.get("cover") is not None else "–"
         lines.append(
-            f"| {r['file']} | {r.get('K')} | {r.get('grade')} | "
+            f"| {r['file']} | {fam} | {r.get('K')} | {r.get('grade')} | "
             f"{el} | {dd} | {q} | {cv} | {r.get('n_comp')} | "
             f"{r['t_s']:.0f}s | {_verdict(r)} |")
 
@@ -455,6 +579,17 @@ def write_summary(recs: list[dict], cfg: dict) -> Path:
             elif r.get("kk_rejected"):
                 lines.append(f"- KK 门禁状态 `{r.get('kk_status')}`："
                              f"数据不自洽，**未拟合、不输出 K**。")
+                for t in (r.get("ksel") or []):
+                    lines.append(f"- {t}")
+                lines.append(f"- 日志：`{Path(r['outdir']) / 'run.log'}`")
+            elif r.get("family") == "nested":
+                # 临时准入：说清"为什么切族"和"结果不能怎么用"。
+                lines.append("- **族分派**：voigt 预检 `excluded` ⇒ 改跑 nested"
+                             "（不是 voigt 拟合失败，是串联族表达不了这条谱）")
+                lines.append(f"- 预检理由：{r.get('family_reason') or '—'}")
+                lines.append(f"- 准入状态 `{r.get('admission_state')}`："
+                             "§13 `0/3`、§14 `4/14`、§17 `0/10` —— "
+                             "**未过验收线**，参数不得当物理量或真值")
                 for t in (r.get("ksel") or []):
                     lines.append(f"- {t}")
                 lines.append(f"- 日志：`{Path(r['outdir']) / 'run.log'}`")

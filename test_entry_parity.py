@@ -451,6 +451,52 @@ def _arg(rec, key):
 
 
 # ---------------------------------------------------------------------------
+# T9：族分派（auto 能不能自己判到并联）
+# ---------------------------------------------------------------------------
+def t9_family_dispatch():
+    print("\nT9 族分派：auto 在 voigt 表达不了时自动切 nested")
+    import bmdrt as BD
+
+    az31 = ROOT / "out" / "_m6_samples" / "z_csv" / "AZ31-8Li_50.csv"
+    e3 = ROOT / "out" / "fig3" / "inputs" / "3e.csv"
+    if not (az31.exists() and e3.exists()):
+        c("族分派测试谱存在（缺则不算通过）", False, f"{az31} / {e3}")
+        return
+
+    s_az, why_az = BD._voigt_family_verdict(az31)
+    c("AZ31（低频感抗）→ excluded", s_az == "excluded", f"实际 {s_az}")
+    c("excluded 的理由点明「低频感抗」", "低频感抗" in why_az, why_az[:60])
+    s_e3, why_e3 = BD._voigt_family_verdict(e3)
+    c("3E（无低频感抗）→ not_excluded", s_e3 == "not_excluded", f"实际 {s_e3}")
+    c("not_excluded 不切族（理由为空）", why_e3 == "", why_e3[:60])
+
+    # 判定文案：nested 不许被归进 OK
+    rec = dict(ok=True, family="nested", admission_state="provisional")
+    v = BD._verdict(rec)
+    c("nested 的判定含 provisional", "provisional" in v)
+    c("nested 的判定不是 OK", v != "OK")
+    c("nested 的判定不含「通过/合格」", "通过" not in v and "合格" not in v)
+
+    # 开关：关掉就不切族
+    import configparser  # noqa: F401  (只为显式说明这里读的是 json，不是 ini)
+    import json as _json
+    cfgf = ROOT / "config.json"
+    cfg = _json.loads(cfgf.read_text(encoding="utf-8"))
+    c("config 有 family_auto 开关", "family_auto" in cfg["fit"])
+    c("family_auto 默认开（用户要求「不用选」）", cfg["fit"]["family_auto"] is True)
+
+    # 产物形状：nested 分支必须落这几个字段，否则 summary 会崩
+    src = (ROOT / "bmdrt.py").read_text(encoding="utf-8")
+    for k in ("family=", "family_reason=", "admission_state=", "rms_rel=", "acf="):
+        c(f"nested 分支写 {k.rstrip('=')}", k in src)
+    c("nested 产物与 voigt 分文件名（不会互相覆盖）",
+      "NF.run(str(path), outdir=str(outdir)" in src)
+    c("nested 分支用 perpoint 2%（§14 口径）", 'sigma_mode="perpoint"' in src)
+    c("summary 表有「族」列", "| 文件 | 族 |" in src)
+    c("nested 行不冒充 voigt 的 K/grade", 'fam = "nested" if r.get("family")' in src)
+
+
+# ---------------------------------------------------------------------------
 # T8：临时准入（能跑 ≠ 达标）
 # ---------------------------------------------------------------------------
 def t8_provisional_admission():
@@ -483,11 +529,20 @@ def t8_provisional_admission():
     extra = bmdrt.discover()
     c("bmdrt 自动发现里出现 nested", "nested" in extra)
     c("nested 不在 BUILTIN 里（不冒充生产命令）", "nested" not in bmdrt.BUILTIN)
-    # 关键红线：加了子命令也不能动 auto 的默认族
+    # 族分派是**条件式**的：默认路径仍是 voigt，只在预检明确 excluded 时切。
+    # （2026-11-16 第二轮：用户要求 auto 能自动判到并联，所以不再断言
+    #  "源码里没有 nested"，改为断言"不会无条件切族"。）
     src_bd = (ROOT / "bmdrt.py").read_text(encoding="utf-8")
-    c("cmd_auto 段不出现 nested / family（默认族仍是 voigt）",
-      "nested" not in src_bd and "family" not in src_bd)
-    c("process_one 仍直连 bm_real.run", "R.run(" in src_bd)
+    c("族分派受 family_auto 开关控制",
+      'bool(fit.get("family_auto", False))' in src_bd)
+    c("只有预检 excluded 才切族",
+      'elif fam == "excluded":' in src_bd and "_run_nested_branch(" in src_bd)
+    c("process_one 仍保留 bm_real.run 的 voigt 主路径", "R.run(" in src_bd)
+    c("voigt 主路径在族分派之后（不会被短路）",
+      src_bd.index("R.run(") > src_bd.index('elif fam == "excluded":'))
+    c("预检 unknown / not_excluded 都不切族",
+      'if fam == "not_excluded":' in src_bd
+      and src_bd.count("_run_nested_branch(") == 2)  # 定义 1 次 + 调用 1 次
 
     # Windows 入口只留一个（2026-11-16 用户裁决「统一一个 bat，这样不用选」）
     bats = sorted(p.name for p in ROOT.glob("*.bat"))
@@ -502,7 +557,8 @@ def t8_provisional_admission():
 def main() -> int:
     for fn in (t1_single_metrics, t2_metrics_parity, t3_sigma_parity,
                t4_elpd_semantics, t5_budget_source, t6_sampler_args,
-               t7_diff_same_input, t8_provisional_admission):
+               t7_diff_same_input, t8_provisional_admission,
+               t9_family_dispatch):
         fn()
     print(f"\n验收 {ok}/{total} 通过" if not bad
           else f"\nFAIL {len(bad)}/{total}: {bad}")

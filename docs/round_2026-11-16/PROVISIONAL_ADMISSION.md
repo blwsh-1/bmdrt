@@ -59,6 +59,8 @@ A3 在 §9.4.22 用 `standard` 档解掉后已失效；本次不改那句原文�
 | `nested_fit.py` | 产物加 `admission=AD.block()`；`WARNING` 订正为「可作为 `bmdrt nested` 调用，但不改 `auto` 默认族」 |
 | `cmd_compare.py` | `compare.json` 加 `admission=AD.block()`；启动打印 banner |
 | `bmdrt.bat` | **Windows 唯一入口**（2026-11-16 起）：`%*` 透传子命令，`nested_fit.bat` 已删除 |
+| `bmdrt.py` | **族分派**（本轮新增）：`_voigt_family_verdict()` 调 registry 预检，`excluded` ⇒ `_run_nested_branch()`；`family_auto` 开关在 `config.json` |
+| `config.json` | `fit.family_auto = true` + 说明（`false` 即回到旧行为） |
 
 `bmdrt nested` 与 `python nested_fit.py` 逐位相同：同一个 `main()`、同一份参数表、
 同一套产物路径（默认 `out/nested_fit/`）。
@@ -66,8 +68,83 @@ A3 在 §9.4.22 用 `standard` 档解掉后已失效；本次不改那句原文�
 **为什么不给 provisional 做 config 开关**：开关会被默认值悄悄打开。
 这里只有模块级常量，改它必须改代码并过 review。
 
-## 4. 红线由断言守着（`test_entry_parity.py` T8）
+## 3.5 族分派：`auto` 自己判到并联（2026-11-16 第二轮）
 
+### 3.5.1 上一轮实现得太窄
+
+用户指出：「不是暂时解除限制了吗，只是输出说明一下」。
+上一轮只加了一条**旁路**子命令 `bmdrt nested`，`auto` 里完全不知道 nested 存在 ——
+那不是解除限制，是旁边开了个口子。
+
+### 3.5.2 判据本来就有，只是没接
+
+`circuit_registry.l0_precheck` 早就把 voigt 判为 **`excluded`** 了，理由写在产物里：
+
+```
+低频感抗 0.01–0.139 Hz（9 点）需把 R∥L 放进第二并联节点（= 改族定义）
+```
+
+`AZ31-4Li_150` 和 `AZ31-8Li_50` 都是这个状态。但 `process_one` 直接 `R.run`
+→ `bm_core.fit`（voigt），从头到尾没问过预检。
+
+### 3.5.3 现在的规则（`bmdrt.py::_voigt_family_verdict`）
+
+确定性预检，**不跑拟合**，秒级：
+
+| 预检结果 | 动作 |
+|---|---|
+| `not_excluded` | 按生产路径继续跑 voigt（**行为逐位不变**） |
+| `excluded` | 改跑 nested，产物标 `provisional`，summary 判定写「未过验收线」 |
+| `unknown` | **不切族**（"没登记预检" ≠ "不能用"），按 voigt 继续 |
+
+开关：`config.json` → `fit.family_auto`（默认 `true`，用户要求"不用选"）。
+设为 `false` 即完全回到旧行为。
+
+### 3.5.4 口径差异必须跟着数字走
+
+| 项 | voigt 主路径 | nested 分支 |
+|---|---|---|
+| 噪声 σ | 自由采样 + `sigma_floor` | **逐点 2%·\|Z\|**（§13/§14 验收口径） |
+| 预算档 | `KW`（3000/1000/3 链） | `standard`（2000/1000/2）或 `quick`（800/400/2） |
+| 产物 | `real_<stem>.json/.png` | `<stem>.nested.json/.nested_curve.csv/.nested.png` |
+
+**为什么 nested 不用自由 σ**：实测同一条 `AZ31-4Li_150`，自由 σ 下
+rms **52.60%**（高频端点 149%），逐点 2% 下 **6.39%** —— `|Z|` 跨 3 个量级时
+自由 σ 会把高频点"合法地不拟合"（R16/R17）。用自由 σ 得到的数字没有意义。
+
+代价：**两族的 rms 不能直接比**，两个数各自带口径标注，控制台也打印。
+
+### 3.5.5 实测
+
+```
+bmdrt.bat auto archive/AZ31-4Li_150.csv --quick
+  === 族预检：voigt → excluded ===
+  === 族分派：voigt 预检 excluded ⇒ 改用 nested（provisional）===
+    理由：低频感抗 0.01–0.139 Hz（9 点）…
+    [准入状态] provisional：§13 0/3、§14 4/14、M-b 4/14、§17 0/10
+    口径：σ = 逐点 2%·|Z|；与 voigt 的自由 σ 不可直接比
+    预算：quick 档（800/400/2/0.9/10）
+  → rms_rel 6.39%、acf 0.397、R̂ 1.0017、div 0（21.1 s）
+
+bmdrt.bat auto out/fig3/inputs/3e.csv --quick
+  === 族预检：voigt → not_excluded ===
+    voigt 可表达这条谱，按生产路径继续     ← 行为不变
+```
+
+> `4Li_150` 的 quick 档 acf 0.397 **不能读成"过了 M-b"**：§14 同谱 standard 档
+> 是 **0.726**。quick 只 400 样本，控制台会打这条警告（`quick 档只作预览…`）。
+
+### 3.5.6 没做的
+
+- **两族都跑再比**（`compare` 的逻辑）还没接进 `auto`。现在的规则只解决
+  「voigt 表达不了」，不解决「两族都能表达、哪个更好」（如 3E：voigt 6.28%
+  vs nested 5.81%）。要自动选优劣得跑两族，单谱时间 ×2~3。
+- nested 的电路图仍画不出来（`bm_circuit.draw` 只认 voigt 的串联骨架）。
+
+
+## 4. 红线由断言守着（`test_entry_parity.py` T8 + T9）
+
+T8（准入标注）
 - `state="provisional"`、`passed is False`
 - 四条差距都有 `required`/`actual`/`note`（只写「未过线」不可复核）
 - `parameters_are_physical is False`
@@ -75,7 +152,15 @@ A3 在 §9.4.22 用 `standard` 档解掉后已失效；本次不改那句原文�
 - **文案里「通过」「合格」一次都不出现**（否定式也会被单独摘录误读）
 - 两处产物引用**同一个** `AD.block()`
 - `nested` 出现在 `bmdrt.discover()` 但**不在 `BUILTIN`**
-- `bmdrt.py` 源码里没有 `nested` / `family`（默认族仍是 voigt），`process_one` 仍直连 `bm_real.run`
+- 仓库顶层只有一个 `.bat`，用 `%*` 透传、不硬编码子命令
+
+T9（族分派）
+- `AZ31-8Li_50` 的 voigt 预检 = `excluded`，理由含「低频感抗」
+- `3e.csv` 的 voigt 预检 = `not_excluded`，且**不切族**
+- 族分派受 `family_auto` 控制；只有 `excluded` 才调 `_run_nested_branch`
+- `R.run(` 的位置在分派之后 ⇒ voigt 主路径不会被短路
+- `nested` 的判定含 `provisional`、不等于 `OK`、不含「通过/合格」
+- nested 产物与 voigt **分文件名**、用 `perpoint` 2%、summary 有「族」列
 
 ## 5. 解锁正式准入的条件（写死）
 
@@ -89,6 +174,7 @@ A3 在 §9.4.22 用 `standard` 档解掉后已失效；本次不改那句原文�
 ```bash
 D:/autoeis_env/Scripts/python.exe admission.py                  # 10/10
 D:/autoeis_env/Scripts/python.exe cmd_nested.py --selftest       # 5/5
-D:/autoeis_env/Scripts/python.exe test_entry_parity.py           # 118/118
-bmdrt.bat nested out/fig3/inputs/az31.csv --budget quick         # 唯一 Windows 入口
+D:/autoeis_env/Scripts/python.exe test_entry_parity.py           # 143/143（T1–T9）
+bmdrt.bat nested out/fig3/inputs/az31.csv --budget quick         # 显式走 nested
+bmdrt.bat auto   archive/AZ31-4Li_150.csv --quick                # 自动族分派（→ nested）
 ```
