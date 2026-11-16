@@ -90,3 +90,8 @@ K=2  rms_re 0.017707194024327282 → 0.017707194024327282  SAME
 - **三条支路只能三选一**：`branch` 是单槽位，`merged`/`merged3` 在 `branch_merge_probe.py`
   里验证过，13 参数只换 0.14pp、cond 涨 8 个量级（§9.4.42.1）。
 - `compare` 是**串行**的：5 候选 × standard ≈ 3–5 分钟/条，整目录要小时级。
+- **多候选只有叠图，没有"分开的图"**：`compare.png` 把所有候选叠在同一组坐标，
+  候选 ≥2 时 Nyquist / Bode 幅值 / Bode 相位（①②③）里的曲线几乎重合，
+  只能靠残差子图（④⑤⑥）反推谁更好。需求已登记到
+  `BMDRT_RESULT_AND_FIGURE_DESIGN.md` §11（`layout="overlay"|"facet"`，
+  默认仍是 overlay），**按 2026-11-16 裁决留到输出层页面一起做**，本轮不实现。
