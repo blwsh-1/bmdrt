@@ -251,6 +251,8 @@ def draw_nested(p: dict, *, branch: str, layers: int, f_ref: float, path,
     if branch == "parallel":
         for xx in (b0, b1):
             ax.plot([xx, xx], [-Y_SUB, Y_SUB], color=INK, lw=1.6, zorder=2)
+        _dot(ax, b0)                          # 主干 × 并联支路 = 4 向焊接点
+        _dot(ax, b1)
         _wire(ax, b0 + 0.02, b0 + 0.18, Y_SUB)
         _resistor(ax, b0 + 0.18, b1 - 0.18, Y_SUB)
         _wire(ax, b1 - 0.18, b1 - 0.02, Y_SUB)
@@ -282,6 +284,11 @@ def draw_nested(p: dict, *, branch: str, layers: int, f_ref: float, path,
         _wire(ax, b1 - 0.10, b1)
         label(xm, 0.30, f"Q$_b$ = {_num(p['Q_b'], 'Ω')},  "
                         f"n$_b$ = {float(p['n_b']):.3f}")
+
+    # 支路输出 → 节点 D：主干必须连续，这里断掉整个梯形网络就开路了。
+    # （2026-11-16 用户看图指出 AZ31-4Li_150 的 R∥L 块右侧像"断点"，
+    #   核查确认是漏画了这条主干连线，不是符号风格问题。）
+    _wire(ax, b1, L["xD"])
 
     # ---- 外层 CPE1：A → D（跨整个 z_mid） ----
     xa_d = L["xA"]
@@ -449,6 +456,27 @@ def _selftest() -> int:
         others = [v for k, v in names.items() if k != br]
         c(f"{br}: 方程只含自己的支路", names[br] in eq
           and not any(o in eq for o in others))
+
+    print("8) 主干连通回归：支路输出 b1 → 节点 D 必须有主干导线（用户发现的断点）")
+    orig_wire = _wire
+    for br, ly in combos:
+        g = layout(br, ly)
+        segs = []
+
+        def rec(ax_, x0_, x1_, y=0.0, **kw):
+            segs.append((float(x0_), float(x1_), float(y)))
+
+        globals()["_wire"] = rec
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                draw_nested(p_full, branch=br, layers=ly, f_ref=31.6,
+                            path=f"{td}/x.png")
+        finally:
+            globals()["_wire"] = orig_wire
+        b1, xd = float(g["br"][1]), float(g["xD"])
+        hit = any(abs(a - b1) < 1e-6 and abs(b - xd) < 1e-6 and abs(y) < 1e-6
+                  for a, b, y in segs)
+        c(f"{br}/L={ly}: 存在 b1→D 主干连线（y=0）", hit)
 
     print(f"\n自检 {ok}/{total}")
     if bad:
