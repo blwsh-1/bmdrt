@@ -252,12 +252,13 @@ def write_curve(path: str, f, Z, Zm, Zv=None) -> None:
 
 
 def write_plot(path: str, f, Z, Zm, m: dict, Zv=None, m_v: dict | None = None,
-               tag: str = "") -> None:
+               tag: str = "", sigma_re=None, sigma_im=None) -> None:
     """委托 `bm_figure_unified.plot_fit`（**唯一 2×3 实现**）。
 
     2026-11-16 之前这里是自己画 1×3（Nyquist / Bode 幅值 / 相对残差），
     `bmdrt compare` 用的却是 2×3，两套图不一致。现在统一：nested 也走
     `plot_fit`，六个子图（+Bode 相位 +Re/Im 残差）与 `compare` 完全同构。
+    `sigma_re`/`sigma_im` 让残差子图带上 ±σ 点线带（voigt 风格）。
     """
     from bm_figure_unified import plot_fit
 
@@ -271,7 +272,8 @@ def write_plot(path: str, f, Z, Zm, m: dict, Zv=None, m_v: dict | None = None,
     meta = (f"rms_rel={m['rms_rel']:.2f}%   acf={m['acf']:.3f} "
             f"(re/im {m['acf_re']:.3f}/{m['acf_im']:.3f})   "
             f"acf_mag={m['acf_mag']:.3f}   1e5Hz 端点={m['top_rel_pct']:.1f}%")
-    plot_fit(path, f, Z, curves, title=head, meta=meta)
+    plot_fit(path, f, Z, curves, title=head, meta=meta,
+             sigma_re=sigma_re, sigma_im=sigma_im)
 
 
 # ---------------------------------------------------------------------------
@@ -346,7 +348,19 @@ def run(input_path: str | os.PathLike, *, outdir: str = DEFAULT_OUT,
 
     write_curve(csv_path, f, Z, Zm, Zv)
     if plot:
-        write_plot(png_path, f, Z, Zm, m, Zv, m_v=vref, tag=stem)
+        # 残差子图的 ±σ 点线带：perpoint=逐点 2%|Z|；scalar=固定标量；
+        # free=后验 s_re/s_im（若采样了）。None 就不画带。
+        sr = si = None
+        if sigma_mode == "perpoint":
+            sr = si = np.asarray(sigma_top, float)[0]
+        elif sigma_mode == "scalar":
+            sr = si = float(np.asarray(sigma_top, float)[0])
+        elif "s_re" in (o.get("s") or {}):
+            s_ = o["s"]
+            sr = float(np.median(np.asarray(s_["s_re"], float)))
+            si = float(np.median(np.asarray(s_["s_im"], float)))
+        write_plot(png_path, f, Z, Zm, m, Zv, m_v=vref, tag=stem,
+                   sigma_re=sr, sigma_im=si)
         # 并联电路图：只画 `z_nested` 这一族（`bm_circuit.draw` 只认 voigt
         # 串联骨架，画不了梯形网络）。失败只记 warning，不拦拟合结果。
         try:

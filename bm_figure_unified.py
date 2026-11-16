@@ -43,11 +43,17 @@ def _resid_label(c: dict) -> str:
 
 
 def plot_fit(path, f, Z, curves, *, title: str = "", meta: str = "",
-             dpi: int = 140, ref_pct: float = 2.0):
+             dpi: int = 140, ref_pct: float = 2.0,
+             sigma_re=None, sigma_im=None):
     """画 2×3：Nyquist / Bode 幅值 / Bode 相位 / 相对残差 / Re 残差 / Im 残差。
 
     `curves` 每项：`dict(label=str, Zc=complex ndarray, color=str|None,
     style="-"|"--", lw=float)`。空列表 ⇒ 只画数据。
+
+    `sigma_re` / `sigma_im`（可选）：在残差实部/虚部子图各画一条 **±σ 点线带**
+    （红色点线，与 voigt 的 `bm_real.plot_real` 残差图同风格）。标量或逐点
+    数组都行；`None` 就不画。`nested_fit` 把逐点 `2%·|Z|` 传进来，所以带会随
+    频率收窄/放宽——那是"逐点相对 σ"的真实形状，不是常数带。
     """
     import matplotlib.pyplot as plt
 
@@ -121,14 +127,20 @@ def plot_fit(path, f, Z, curves, *, title: str = "", meta: str = "",
             r = (c["Zc"].real if comp == "real" else c["Zc"].imag) - res
             a.semilogx(f, r, c["style"], lw=c["lw"], color=c["color"],
                        label=c["label"])
+        # ±σ 点线带（voigt 风格）：标量或逐点数组都广播到 f 长度。
+        sg = sigma_re if comp == "real" else sigma_im
+        if sg is not None:
+            sg = np.broadcast_to(np.asarray(sg, float), f.shape)
+            a.semilogx(f, +sg, ":", color="#c0392b", lw=1.1, alpha=.65,
+                       label=L("±σ", "±σ"))
+            a.semilogx(f, -sg, ":", color="#c0392b", lw=1.1, alpha=.65)
         a.set_xlabel(L("频率 / Hz", "f / Hz"))
         a.set_ylabel(L(f"残差 {name} / Ω", f"residual {name} / ohm"))
         a.set_title(L(f"{'⑤' if j == 0 else '⑥'} 残差 {name}",
                       f"({'5' if j == 0 else '6'}) residual {name}"),
                     fontsize=11)
         a.grid(alpha=.3, ls=":", which="both")
-        if j == 1:
-            a.legend(fontsize=8, frameon=False)
+        a.legend(fontsize=8, frameon=False)
 
     sup = title or L("拟合结果", "fit")
     fig.suptitle(sup, fontsize=13, y=0.985)

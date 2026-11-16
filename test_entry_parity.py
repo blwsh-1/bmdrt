@@ -598,6 +598,13 @@ def t10_nested_circuit_figure():
     c("plot_fit 残差图例对 None rms 不打印 nan",
       "def _resid_label" in src_fig and "float('nan')" not in src_fig)
 
+    # 5b) 残差子图支持 ±σ 点线带（voigt 风格），nested 会传进来
+    c("plot_fit 支持 sigma_re/sigma_im 点线带",
+      "sigma_re=None, sigma_im=None" in src_fig and "±σ" in src_fig)
+    c("nested_fit 把 σ 传给 plot_fit（点线带接上）",
+      "sigma_re=sr, sigma_im=si" in src_nf
+      and "sigma_re=sigma_re, sigma_im=sigma_im" in src_nf)
+
     # 6) bm_circuit 仍是 voigt 专用（没被嵌套图污染它的契约）
     src_bc = (ROOT / "bm_circuit.py").read_text(encoding="utf-8")
     c("bm_circuit 不 import 嵌套绘图器（图跟着方程走，各管各的）",
