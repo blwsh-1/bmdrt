@@ -118,6 +118,49 @@ DEFAULT_OUT = str(_ROOT / "out" / "nested_fit")
 # "standard 档"从此是同一件事，不是两份碰巧相同的字面量。
 VALIDATION_STANDARD = dict(SM.STANDARD)
 
+# 拓扑身份（2026-11-16，P0-1）：ADR 虽走本接口，但数学上是独立拓扑，
+# 不是 nested 的一个 branch。这里给出**单一来源**的身份映射，产物与 CLI
+# 都用它。`--branch adsorption` 保留作兼容别名（见 `resolve_topology`）。
+TOPOLOGIES = ("nested", "adr")
+BRANCH_TOPOLOGY = {"parallel": "nested", "series": "nested",
+                   "capacitive": "nested", "adsorption": "adr"}
+
+
+def topology_of(branch: str) -> str:
+    """branch → 拓扑身份（单一来源）。"""
+    if branch not in BRANCH_TOPOLOGY:
+        raise ValueError(f"未知 branch={branch!r}，可用 {sorted(BRANCH_TOPOLOGY)}")
+    return BRANCH_TOPOLOGY[branch]
+
+
+def resolve_topology(topology: str | None, branch: str | None) -> tuple[str, str]:
+    """把 `--topology` 与 `--branch` 收敛成 (topology, branch)，冲突显式报错。
+
+    - 两个都不给 ⇒ 默认 `(nested, parallel)`；
+    - 只给 topology ⇒ 填该拓扑的默认 branch（adr → adsorption）；
+    - 只给 branch（旧写法）⇒ 拓扑由它推导，`adsorption` 仍可用；
+    - 两个都给且冲突 ⇒ 显式报错（不静默纠正，避免掩盖意图）。
+
+    `branch` 默认 None 是必要的：若默认 "parallel"，则 `--topology adr`
+    会与默认值冲突，CLI 无法区分"用户显式给了 parallel"和"根本没给"。
+    """
+    DEFAULT_BRANCH = {"nested": "parallel", "adr": "adsorption"}
+    if topology is not None and topology not in TOPOLOGIES:
+        raise ValueError(f"未知 topology={topology!r}，可用 {TOPOLOGIES}")
+    if branch is not None and branch not in BRANCH_TOPOLOGY:
+        raise ValueError(f"未知 branch={branch!r}，可用 {sorted(BRANCH_TOPOLOGY)}")
+    if topology is None and branch is None:
+        return "nested", "parallel"
+    if branch is None:
+        branch = DEFAULT_BRANCH[topology]
+    implied = topology_of(branch)
+    if topology is None:
+        return implied, branch
+    if topology != implied:
+        raise ValueError(f"topology={topology!r} 与 branch={branch!r} 冲突："
+                         f"{branch!r} 属于 {implied!r}")
+    return topology, branch
+
 
 # ---------------------------------------------------------------------------
 # 口径工具
@@ -304,13 +347,20 @@ def write_plot(path: str, f, Z, Zm, m: dict, Zv=None, m_v: dict | None = None,
 # ---------------------------------------------------------------------------
 
 def run(input_path: str | os.PathLike, *, outdir: str = DEFAULT_OUT,
-        branch: str = "parallel", layers: int = 2, budget: str = "standard",
+        branch: str | None = None, topology: str | None = None,
+        layers: int = 2, budget: str = "standard",
         sigma_mode: str = "perpoint", sigma_pct: float = 2.0,
         sigma_abs: float | None = None, seed: int = 0,
         target_accept: float | None = None,
         plot: bool = True, with_voigt: bool = False, voigt_K: int = 1,
         progress: bool = False, verbose: bool = True) -> dict:
-    """拟合一条谱，写产物，返回结果 dict（Python API 入口）。"""
+    """拟合一条谱，写产物，返回结果 dict（Python API 入口）。
+
+    `topology` 是 2026-11-16 新增的**拓扑身份**（`nested`/`adr`）；缺省时
+    由 `branch` 推导。`--branch adsorption` 保留作兼容别名，产物里统一
+    写 `config.topology`，避免把 ADR 误读成 nested 的物理结构。
+    """
+    topology, branch = resolve_topology(topology, branch)
     src = Path(input_path)
     f, Z = R.load_spectrum(str(src))
     if f.size < 8:
@@ -428,7 +478,10 @@ def run(input_path: str | os.PathLike, *, outdir: str = DEFAULT_OUT,
         input=dict(path=str(src.resolve()), n_points=int(f.size),
                    f_min=float(f.min()), f_max=float(f.max()),
                    absZ_max=float(np.abs(Z).max())),
-        config=dict(branch=branch, layers=layers, budget=budget, budget_kw=kw,
+        config=dict(topology=topology,          # 拓扑身份：nested / adr（ADR 不是 nested 的 branch）
+                    branch=branch,              # 兼容别名：adsorption ⇔ topology=adr
+                    topology_branch_map=dict(BRANCH_TOPOLOGY),  # 身份映射落盘可复核
+                    layers=layers, budget=budget, budget_kw=kw,
                     # 五项数值 + 档名 + 是否与 circuit_runner 共享。`quick` 两个
                     # 入口数值不同（本接口走 bm_select.QUICK 800/400/10，
                     # runner 是 300/300/8），所以不许靠档名推断"同预算"。
@@ -511,9 +564,13 @@ def main(argv=None) -> int:
         epilog="示例：python nested_fit.py data.csv --budget quick --with-voigt")
     ap.add_argument("inputs", nargs="*", help="谱文件/目录；不给则扫 inbox/")
     ap.add_argument("--out", default=DEFAULT_OUT, help="输出目录")
+    ap.add_argument("--topology", choices=TOPOLOGIES, default=None,
+                    help="拓扑身份：nested（默认由 branch 推导）/ adr（吸附三支路并联）。"
+                         "adr 是独立拓扑，不是 nested 的 branch；旧写法 --branch "
+                         "adsorption 保留为兼容别名")
     ap.add_argument("--branch",
                     choices=("parallel", "series", "capacitive", "adsorption"),
-                    default="parallel",
+                    default=None,
                     help="adsorption = 吸附三支路并联 Rs+[CPE∥Rct∥Z_ad]（原 adr，"
                          "2026-11-16 并入；layers 对其无意义，强制 1）")
     ap.add_argument("--layers", type=int, choices=(1, 2), default=2)
@@ -546,7 +603,8 @@ def main(argv=None) -> int:
     ok, bad = 0, []
     for path in files:
         try:
-            run(path, outdir=a.out, branch=a.branch, layers=a.layers,
+            run(path, outdir=a.out, branch=a.branch, topology=a.topology,
+                layers=a.layers,
                 budget=a.budget, sigma_mode=a.sigma, sigma_pct=a.sigma_pct,
                 sigma_abs=a.sigma_abs, seed=a.seed,
                 target_accept=a.target_accept, plot=a.plot,

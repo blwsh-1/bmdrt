@@ -363,63 +363,70 @@ def _run_nested_branch(path: Path, cfg: dict, outdir: Path, rec: dict,
               "nested 结果标 provisional（§13 0/3、§14 4/14、§17 0/10），"
               "不得当验收结论；参数不得当物理量"],
     )
-    # ---- adr fallback（2026-11-16）----
-    # nested 是通用嵌套，对 12Li_5 那种"吸附弛豫"谱采样会崩（R̂=22、rms 30.8%）；
-    # 而 adr（吸附三支路并联）对同一类谱收敛到 7.10%。所以 nested 采样未收敛时
-    # 追加跑 adr 作为专用模型的兜底，主结果换成 adr，nested 结果保留在 `nested` 子键。
+    # ---- adr 附加候选（2026-11-16，P0-2 修订）----
+    # **诊断与模型选择解耦**：R̂/div 是后验可靠性信号，不是"另一个拓扑更对"的信号。
+    # 以前这里把 adr 直接设为主结果，导致 12Li_5 上 nested R̂=1.004、rms 5.80%
+    # 仅因 1 个 divergence 就被 adr 7.10% 盖掉 —— 那是门禁误当选择器。
+    # 现在：诊断不过只标记"后验不可靠"；adr 作为**附加候选**并列落盘，主结果仍是
+    # nested；谁更优交给 bmdrt compare 的统一评价流程，不由 fallback 决定。
     rhat = r["diagnostics"]["rhat_max"]
     ndiv = r["diagnostics"]["divergences"]
-    if (rhat is not None and rhat > 1.05) or (ndiv or 0) > 0:
-        rec = _run_adr_branch(path, cfg, outdir, rec, why,
-                              nested_rhat=rhat, nested_ndiv=ndiv)
+    unreliable = (rhat is not None and rhat > 1.05) or (ndiv or 0) > 0
+    rec["sampling_reliability"] = {
+        "status": "unreliable" if unreliable else "ok",
+        "rhat_max": rhat, "divergences": ndiv,
+        "reason": ("R̂>1.05 或 div>0：后验可靠性需审查；这不代表别的拓扑更正确"
+                   if unreliable else "R̂ 与 div 都在门槛内"),
+    }
+    if unreliable:
+        rec = _add_adr_candidate(path, cfg, outdir, rec, why,
+                                 nested_rhat=rhat, nested_ndiv=ndiv)
     return rec
 
 
-def _run_adr_branch(path: Path, cfg: dict, outdir: Path, rec: dict,
-                    why: str, *, nested_rhat=None, nested_ndiv=None) -> dict:
-    """nested 采样未收敛时追加跑 adr（吸附弛豫三支路并联，标 exploratory）。
+def _add_adr_candidate(path: Path, cfg: dict, outdir: Path, rec: dict,
+                       why: str, *, nested_rhat=None, nested_ndiv=None) -> dict:
+    """nested 诊断不过时追加 adr 作为**并列候选**（不替换主结果）。
 
-    两个族都走 `nested_fit`：nested 用 `branch=parallel`，adr 用新的
-    `branch=adsorption`。产物文件名都沿用 `<stem>.nested.*`（同一实现体，
-    `config.branch` 区分拓扑），summary 的族列显示 `adr`。两个族都在逐点
-    2%·|Z| 口径下，rms 可直接比——但都不作验收结论（都未过 §13/§14）。
+    P0-2（用户裁决）：div/R̂ 是后验可靠性信号，不是模型选择信号。
+    所以本函数只把 adr 写进 `rec["additional_candidates"]["adr"]`，
+    主结果（family/json/rms/fig）保持 nested 原样。谁更优由
+    `bmdrt compare` 的统一评价流程决定，不由这里的 fallback 决定。
+
+    产物后缀 `.adr.*` 与 nested 的 `.nested.*` 并存，互不覆盖；两族都在
+    逐点 2%·|Z| 口径下，rms 可比——但都不作验收结论（都未过 §13/§14）。
     """
     import nested_fit as NF
-    import admission as AD
 
     fit = cfg["fit"]
     budget = "quick" if fit.get("quick") else "standard"
     seed = 0 if fit.get("seed") is None else int(fit["seed"])
-    print("\n=== 族分派：nested 采样未收敛 ⇒ 追加 adr（exploratory）===")
-    print(f"  nested R̂={nested_rhat} div={nested_ndiv}，改用吸附弛豫专用模型 adr")
-    print("  口径：σ = 逐点 2%·|Z|（与 nested 同口径，rms 可直接比）")
-    # adr 已于 2026-11-16 并入 nested 的 adsorption 分支，统一走 nested_fit；
-    # 不再有独立的 adr_fit 入口。产物文件名沿用 <stem>.nested.json（同一个实现体）。
-    r = NF.run(str(path), outdir=str(outdir), branch="adsorption",
+    print("\n=== 诊断未过：追加 adr 作为并列候选（exploratory）===")
+    print(f"  nested R̂={nested_rhat} div={nested_ndiv} ⇒ 标记后验不可靠，")
+    print("  但**主结果仍是 nested**；adr 只作附加候选，不自动替换")
+    print("  口径：σ = 逐点 2%·|Z|（与 nested 同口径，rms 可比）")
+    # adr 是独立拓扑（topology=adr），不是 nested 的 branch；--branch adsorption
+    # 只是兼容别名。产物文件名 .adr.* 与 nested 的 .nested.* 并存。
+    r = NF.run(str(path), outdir=str(outdir), topology="adr",
                budget=budget, sigma_mode="perpoint", seed=seed,
                plot=True, verbose=True)
-    # 保留 nested 结果（不丢），adr 结果作为主结果
-    rec["nested"] = dict(json=rec.get("json"), fig=rec.get("fig"),
-                         circuit=rec.get("circuit"), rms_rel=rec.get("rms_rel"),
-                         acf=rec.get("acf"), rhat_max=rec.get("rhat_max"),
-                         ndiv=rec.get("ndiv"))
-    rec.update(
-        ok=True, family="adr",
-        family_reason=(why + "；nested 采样未收敛（R̂>1.05/div>0），"
-                       "改用吸附弛豫专用模型 adr"),
-        admission_state=AD.STATE,
-        K=None, grade=None,
-        json=r["files"]["json"], fig=r["files"]["plot"],
-        circuit=r["files"].get("circuit"),
-        elpd=r["diagnostics"]["elpd"],
-        acf=r["metrics"]["acf"],
-        rms_rel=r["metrics"]["rms_rel"],
-        rhat_max=r["diagnostics"]["rhat_max"],
-        ndiv=r["diagnostics"]["divergences"],
-        warnings=list(r.get("notes") or []),
-        ksel=[f"族分派：voigt 预检 excluded —— {why}",
-              "nested 采样未收敛，追加 adr（吸附弛豫专用模型，exploratory）；"
-              "两个族都未过 §13/§14，参数不得当物理量"],
+    rec.setdefault("additional_candidates", {})["adr"] = {
+        "family": "adr", "topology": "adr",
+        "json": r["files"]["json"], "fig": r["files"]["plot"],
+        "circuit": r["files"].get("circuit"),
+        "elpd": r["diagnostics"]["elpd"],
+        "acf": r["metrics"]["acf"],
+        "rms_rel": r["metrics"]["rms_rel"],
+        "rhat_max": r["diagnostics"]["rhat_max"],
+        "ndiv": r["diagnostics"]["divergences"],
+        "admission_state": r["admission"]["state"],
+        "note": "并列候选；拓扑优劣由 bmdrt compare 评价，不由 fallback 决定",
+    }
+    # 只在 ksel 里说明事实，不改 family 主结果、不改 verdict
+    rec.setdefault("ksel", []).append(
+        f"诊断未过（nested R̂={nested_rhat}/div={nested_ndiv}）⇒ 追加 adr 候选 "
+        f"rms={r['metrics']['rms_rel']:.2f}%；主结果仍 nested "
+        f"rms={rec.get('rms_rel'):.2f}%，两者并列待评价"
     )
     return rec
 
@@ -700,16 +707,21 @@ def write_summary(recs: list[dict], cfg: dict) -> Path:
                 lines.append(f"- 日志：`{Path(r['outdir']) / 'run.log'}`")
             elif r.get("family") in ("nested", "adr"):
                 # 临时准入：说清"为什么切族"和"结果不能怎么用"。
-                if r.get("family") == "adr":
-                    lines.append("- **族分派**：voigt 预检 `excluded` ⇒ nested 采样"
-                                 "未收敛 ⇒ 追加 adr（吸附弛豫专用模型）")
-                else:
-                    lines.append("- **族分派**：voigt 预检 `excluded` ⇒ 改跑 nested"
-                                 "（不是 voigt 拟合失败，是串联族表达不了这条谱）")
+                lines.append("- **族分派**：voigt 预检 `excluded` ⇒ 改跑 nested"
+                             "（不是 voigt 拟合失败，是串联族表达不了这条谱）")
                 lines.append(f"- 预检理由：{r.get('family_reason') or '—'}")
                 lines.append(f"- 准入状态 `{r.get('admission_state')}`："
                              "§13 `0/3`、§14 `4/14`、§17 `0/10` —— "
                              "**未过验收线**，参数不得当物理量或真值")
+                # P0-2：诊断是可靠性信号，不是模型选择信号
+                rel = r.get("sampling_reliability") or {}
+                if rel.get("status") == "unreliable":
+                    lines.append(f"- **后验可靠性**：未过（R̂={rel.get('rhat_max')}、"
+                                 f"div={rel.get('divergences')}）；这不代表别的拓扑更正确")
+                for cid, c in (r.get("additional_candidates") or {}).items():
+                    lines.append(f"- **并列候选 {cid}**（未替换主结果）："
+                                 f"rms={c.get('rms_rel'):.2f}%、acf={c.get('acf'):.3f}"
+                                 f"　→ {c.get('note')}")
                 for t in (r.get("ksel") or []):
                     lines.append(f"- {t}")
                 lines.append(f"- 日志：`{Path(r['outdir']) / 'run.log'}`")

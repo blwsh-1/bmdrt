@@ -527,6 +527,31 @@ def t9_family_dispatch():
         c("3E 谱判为「只缺 include_L」⇒ 不切族", o3 is True, n3)
         c("AZ31-4Li_150 判为「不只是缺 L」⇒ 仍切 nested", oa is False, na)
 
+    # P0-2（诊断与模型选择解耦）：fallback 不得替换主结果
+    c("诊断未过只标记不可靠，不换主结果",
+      'rec["sampling_reliability"] = {' in src
+      and '"status": "unreliable" if unreliable else "ok"' in src)
+    c("追加 adr 用 _add_adr_candidate（不是 _run_adr_branch）",
+      "def _add_adr_candidate" in src and "_run_adr_branch" not in src)
+    c("adr 写进 additional_candidates 而非主结果",
+      'rec.setdefault("additional_candidates", {})["adr"]' in src
+      and '"family": "adr"' in src)
+    c("附加候选 note 明说不由 fallback 决定",
+      "不由 fallback 决定" in src)
+    c("summary flagged 段呈现可靠性与并列候选",
+      "sampling_reliability" in (ROOT / "bmdrt.py").read_text(encoding="utf-8")
+      and "并列候选" in (ROOT / "bmdrt.py").read_text(encoding="utf-8"))
+    # 真产物验证（若刚跑过 12Li_5）
+    mp = ROOT / "out" / "AZ31-12Li_5" / "meta.json"
+    if mp.exists():
+        m = _json.loads(mp.read_text(encoding="utf-8"))
+        c("12Li_5 主结果仍是 nested（未被 adr 覆盖）", m.get("family") == "nested")
+        if m.get("sampling_reliability"):
+            c("12Li_5 诊断标记 unreliable",
+              m["sampling_reliability"]["status"] == "unreliable")
+            c("12Li_5 adr 在附加候选里",
+              "adr" in (m.get("additional_candidates") or {}))
+
 
 # ---------------------------------------------------------------------------
 # T8：临时准入（能跑 ≠ 达标）
@@ -660,9 +685,30 @@ def t11_adsorption_branch():
     c("argparse 接受 --branch adsorption", '"adsorption"' in src_nf)
     c("param_table 用 ADR_KEYS（不是 sampled_keys）",
       "list(T.ADR_KEYS) if branch == \"adsorption\"" in src_nf)
-    c("bmdrt adr fallback 改调 nested_fit.run(branch=adsorption)",
-      "NF.run(str(path), outdir=str(outdir), branch=\"adsorption\"" in src_bd)
+    c("bmdrt adr fallback 用显式 topology=adr（正式写法）",
+      "NF.run(str(path), outdir=str(outdir), topology=\"adr\"" in src_bd)
     c("bmdrt.py 不再 import adr_fit", "import adr_fit" not in src_bd)
+    # P0-1：ADR 拓扑身份（不是 nested 的 branch）
+    import nested_fit as NF
+    c("topology_of 映射四个 branch",
+      [NF.topology_of(b) for b in ("parallel", "series", "capacitive", "adsorption")]
+      == ["nested", "nested", "nested", "adr"])
+    c("两种写法等价：--branch adsorption ⇔ --topology adr",
+      NF.resolve_topology(None, "adsorption") == NF.resolve_topology("adr", None)
+      == ("adr", "adsorption"))
+    c("两个都不给默认 nested/parallel",
+      NF.resolve_topology(None, None) == ("nested", "parallel"))
+    for t, b in (("adr", "parallel"), ("nested", "adsorption")):
+        try:
+            NF.resolve_topology(t, b)
+            c(f"冲突 topology={t}/branch={b} 应拒绝", False)
+        except ValueError:
+            c(f"冲突 topology={t}/branch={b} 显式拒绝", True)
+    c("产物 config 落 topology 字段",
+      "config=dict(topology=topology" in src_nf
+      and "topology_branch_map=dict(BRANCH_TOPOLOGY)" in src_nf)
+    c("argparse 有 --topology",
+      'ap.add_argument("--topology", choices=TOPOLOGIES' in src_nf)
     # 底层采样器没被塞 adsorption（bm_top 的 VALID_BRANCHES 不变）
     import bm_top as T
     c("bm_top.VALID_BRANCHES 未加 adsorption（采样内核不变）",

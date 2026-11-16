@@ -2138,10 +2138,15 @@ register_topology(TopologySpec(
     consistency=_adr_consistency,
     consistency_id="adr_consistency_v1",
     notes=(
-        "对标外部 adsorption_RQ 模型（Rs+[CPEdl∥Rct]∥(Rads+Lads)）；差异在吸附支路用"
-        "R∥L 而非 R+L——低频感抗回路物理上对应 R∥L（§9.4.42 两者低频极限方向相反）",
+        "**不是文献电路的复现**（P1-1，2026-11-16 澄清）：外部 adsorption_RQ 是 "
+        "Rs+[CPEdl∥Rct]∥(R_ads+L_ads)，吸附支路 R 与 L **串联**；本拓扑用 R_ad∥L_ad "
+        "**并联**。两者低频极限方向相反（§9.4.42），不是同一个拓扑；本拓扑拟合成功"
+        "只说明三支路并联有拟合能力，不得宣称复现了文献吸附电路。是否补串联版"
+        "（ADR-RL-series）看物理依据，当前不新增。",
         "AZ31-12Li_5 上 nested 未收敛（R̂=22.07）而 adr 收敛到 R̂≈1.002、rms 7.10%，"
         "但 acf 仍 >0.50（M-b 未过），未过 §13/§14 验收线，不接 bmdrt.py 主流程",
+        "拓扑身份是 adr（独立拓扑），不是 nested 的 branch；`--branch adsorption` "
+        "只是兼容别名，产物 config.topology 恒为 adr",
         "未登记确定性预检：unknown 不等于 not_excluded",
         "研究接口：`resistor`/`cpe` 元件为 exploratory，结论一律 exploratory，不得当物理量",
     ),
