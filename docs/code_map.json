@@ -1,8 +1,8 @@
 {
  "generated_by": "tools/repo_map.py",
- "n_modules": 68,
+ "n_modules": 70,
  "n_tests": 20,
- "total_lines": 44017,
+ "total_lines": 44270,
  "layers": {
   "L0": {
    "desc": "数值内核：纯数学/模型定义，无文件 IO",
@@ -32,6 +32,7 @@
   "L2": {
    "desc": "分析与诊断：门禁、可辨识性、相关矩阵、合成验收",
    "modules": [
+    "admission.py",
     "bm_bench.py",
     "bm_check.py",
     "bm_corr.py",
@@ -64,6 +65,7 @@
     "circuit_runner.py",
     "cmd_compare.py",
     "cmd_diff.py",
+    "cmd_nested.py",
     "cmd_status.py",
     "nested_fit.py",
     "sweep_sigma_floor.py"
@@ -121,6 +123,7 @@
   "bmdrt.py"
  ],
  "product_optional": [
+  "admission.py",
   "bm_ad.py",
   "bm_bench.py",
   "bm_check.py",
@@ -136,6 +139,7 @@
   "circuit_registry.py",
   "circuit_runner.py",
   "cmd_compare.py",
+  "cmd_nested.py",
   "cmd_status.py",
   "convert_2e.py",
   "convert_3e.py",
@@ -207,6 +211,7 @@
    "circuit_evaluator.py",
    "circuit_runner.py",
    "cmd_compare.py",
+   "cmd_nested.py",
    "nested_fit.py",
    "patch_bundle_io.py",
    "sweep_sigma_floor.py",
@@ -231,6 +236,7 @@
    "test_seed.py"
   ],
   "entry_points": [
+   "admission.py",
    "batch_2e.py",
    "bm_ad.py",
    "bm_bench.py",
@@ -261,6 +267,7 @@
    "circuit_evaluator.py",
    "circuit_runner.py",
    "cmd_compare.py",
+   "cmd_nested.py",
    "convert_2e.py",
    "convert_3e.py",
    "drt.py",
@@ -406,6 +413,22 @@
   }
  ],
  "modules": [
+  {
+   "file": "admission.py",
+   "layer": "L2",
+   "role": "临时准入状态：provisional 常量 + 逐条差距 + 有/无证据范围（**恒 passed=False，不是开关**）",
+   "product": "opt",
+   "stability": "research",
+   "module": "admission",
+   "lines": 141,
+   "doc": "准入状态：**provisional（临时准入）**，含义是\"能跑\"，不是\"过线\"。",
+   "deps": [],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 2
+  },
   {
    "file": "batch_2e.py",
    "layer": "L1",
@@ -1005,9 +1028,10 @@
    "product": "opt",
    "stability": "research",
    "module": "cmd_compare",
-   "lines": 264,
+   "lines": 269,
    "doc": "bmdrt compare —— 一条谱、多个族的候选、一张图、一个状态。",
    "deps": [
+    "admission",
     "bm_core",
     "bm_figure_unified",
     "bm_real",
@@ -1036,6 +1060,24 @@
    "has_main": false,
    "uses_out": false,
    "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 0
+  },
+  {
+   "file": "cmd_nested.py",
+   "layer": "L4",
+   "role": "bmdrt nested：nested_fit 的薄包装（零算法，参数表复用 nested_fit.main）",
+   "product": "opt",
+   "stability": "research",
+   "module": "cmd_nested",
+   "lines": 86,
+   "doc": "`bmdrt nested` —— 把 `nested_fit.py` 接成 CLI 子命令（薄包装，零算法）。",
+   "deps": [
+    "nested_fit"
+   ],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": true,
    "hardcwd": false,
    "imported_by": 0
   },
@@ -1146,9 +1188,10 @@
    "product": "opt",
    "stability": "research",
    "module": "nested_fit",
-   "lines": 523,
+   "lines": 532,
    "doc": "nested_fit.py —— nested 拓扑的**独立研究性接口**（不接 `bmdrt.py` 主流程）。",
    "deps": [
+    "admission",
     "bm_core",
     "bm_experiments",
     "bm_real",
@@ -1160,7 +1203,7 @@
    "uses_out": true,
    "sys_path_hack": true,
    "hardcwd": false,
-   "imported_by": 2
+   "imported_by": 3
   },
   {
    "file": "patch_bundle.py",
@@ -1536,7 +1579,7 @@
    "product": "no",
    "stability": "stable",
    "module": "test_entry_parity",
-   "lines": 453,
+   "lines": 465,
    "doc": "T1–T6 验收 + 两入口差分测试（2026-11-16 口径合并）。",
    "deps": [
     "bm_experiments",

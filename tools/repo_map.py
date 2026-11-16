@@ -47,6 +47,8 @@ ROLE = {
     "circuit_evaluator.py": ("L2", "候选观测→evidence 状态的推导层（规则 E1–E7，争议规则显式标 disputed）", "opt", "research"),
     "bm_figure_unified.py": ("L3", "统一拟合图：一条谱 + 任意多条候选曲线 → 同一张 6 子图（只依赖 f/Z/curves）", "opt", "stable"),
     "cmd_compare.py": ("L4", "bmdrt compare：多族候选自动并列 → 统一状态 + 统一图（默认 standard / 逐点 σ）", "opt", "research"),
+    "cmd_nested.py": ("L4", "bmdrt nested：nested_fit 的薄包装（零算法，参数表复用 nested_fit.main）", "opt", "research"),
+    "admission.py": ("L2", "临时准入状态：provisional 常量 + 逐条差距 + 有/无证据范围（**恒 passed=False，不是开关**）", "opt", "research"),
     # ---- L1 ----
     "bm_real.py": ("L1", "真实数据主程序：读谱 / Lin-KK 门禁 / 选 K / 报告（**职责过载，需拆分**）", "core", "frozen"),
     "bm_ref_rwp.py": ("L1", "参考性 Rwp（独立 LS 重拟合，只作对照）", "opt", "frozen"),

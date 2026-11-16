@@ -450,10 +450,50 @@ def _arg(rec, key):
     return DEFAULTS.get(key, "<缺>")
 
 
+# ---------------------------------------------------------------------------
+# T8：临时准入（能跑 ≠ 达标）
+# ---------------------------------------------------------------------------
+def t8_provisional_admission():
+    print("\nT8 临时准入：两入口都标 provisional，且不许出现「过线」声明")
+    import admission as AD
+
+    b = AD.block()
+    c("state=provisional、passed=False",
+      b["state"] == "provisional" and b["passed"] is False)
+    c("四条差距都有 required/actual/note",
+      set(b["gap"]) == {"S13_holdout", "S14_full", "M-b", "S17_four_circuits"}
+      and all({"required", "actual", "note"} <= set(v) for v in b["gap"].values()))
+    c("参数不当物理量", b["parameters_are_physical"] is False)
+    c("写明有/无证据的谱型范围",
+      "仅 _10/_50" in b["usable_scope"] and "_0/_5/_150" in b["usable_scope"])
+    # 文案里一个"通过/合格"都不许有（否定式也会被单独摘录误读）
+    txt = AD.banner() + str(b)
+    c("文案不含「通过」", "通过" not in txt)
+    c("文案不含「合格」", "合格" not in txt)
+
+    src_nf = (ROOT / "nested_fit.py").read_text(encoding="utf-8")
+    src_cmp = (ROOT / "cmd_compare.py").read_text(encoding="utf-8")
+    c("nested_fit 产物带 admission", "admission=AD.block()" in src_nf)
+    c("compare 产物带 admission", "admission=AD.block()" in src_cmp)
+    c("两处引用同一个 AD.block()（不是各写一份）",
+      src_nf.count("AD.block()") == 1 and src_cmp.count("AD.block()") == 1)
+
+    # CLI 收敛：nested 已成为 bmdrt 子命令
+    import bmdrt
+    extra = bmdrt.discover()
+    c("bmdrt 自动发现里出现 nested", "nested" in extra)
+    c("nested 不在 BUILTIN 里（不冒充生产命令）", "nested" not in bmdrt.BUILTIN)
+    # 关键红线：加了子命令也不能动 auto 的默认族
+    src_bd = (ROOT / "bmdrt.py").read_text(encoding="utf-8")
+    c("cmd_auto 段不出现 nested / family（默认族仍是 voigt）",
+      "nested" not in src_bd and "family" not in src_bd)
+    c("process_one 仍直连 bm_real.run", "R.run(" in src_bd)
+
+
 def main() -> int:
     for fn in (t1_single_metrics, t2_metrics_parity, t3_sigma_parity,
                t4_elpd_semantics, t5_budget_source, t6_sampler_args,
-               t7_diff_same_input):
+               t7_diff_same_input, t8_provisional_admission):
         fn()
     print(f"\n验收 {ok}/{total} 通过" if not bad
           else f"\nFAIL {len(bad)}/{total}: {bad}")

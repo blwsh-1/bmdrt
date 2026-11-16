@@ -33,6 +33,7 @@ if ROOT not in sys.path:
 import bm_core as B                      # noqa: E402
 import bm_top as T                       # noqa: E402
 import bm_real as R                      # noqa: E402
+import admission as AD                   # noqa: E402  临时准入状态（恒 provisional）
 import circuit_runner as RU              # noqa: E402
 import circuit_evaluator as EV           # noqa: E402
 import bm_figure_unified as FIG          # noqa: E402
@@ -139,6 +140,9 @@ def one(fp: str, a, ks, layers, branches) -> dict:
                budget_profile=a.budget, likelihood=a.likelihood,
                seed=a.seed, include_L=include_L,
                status=ev["status"], reason=ev["reason"],
+               # 临时准入：`compare` 用的族（含 nested）没过 §13/§14，所以每份
+               # 产物都要能自证"这是能跑、不是达标"。见 `admission.py`。
+               admission=AD.block(),
                confirmation=ev.get("confirmation"),
                candidates=[dict(cid=c["cid"], label=c["label"],
                                 rms_rel=c["rms"], acf=c["acf"],
@@ -195,6 +199,7 @@ def run(argv=None) -> int:
 
     print(f"共 {len(files)} 条谱；预算 {a.budget}；σ={a.likelihood}；"
           f"voigt K∈{ks}、nested L∈{layers}/{','.join(branches)}")
+    print(AD.banner())
     n_bad = 0
     for i, fp in enumerate(files, 1):
         print(f"\n[{i}/{len(files)}] {os.path.basename(fp)}")

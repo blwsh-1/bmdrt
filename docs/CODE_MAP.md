@@ -47,13 +47,14 @@
 | `fit_store.py` | `drt` 命令行兼容读取器 | no |
 | `batch_2e.py` / `report_2e.py` | 2E 批处理调度与交付说明 | no |
 
-### L2 分析与诊断（12）
+### L2 分析与诊断（13）
 
 | 模块 | 职责 | 产品 |
 |---|---|---|
 | `bm_kk.py` | 拟合前 Lin-KK 门禁（gate / warn / off） | **core** |
 | `bm_experiments.py` | 实验脚本分发；`acf_max` 等验收指标也在这里 | opt |
 | `spectrum_metrics.py` | 两入口共用的残差指标 / 逐点 σ / ELPD 可比性判定 / 预算归一（纯函数，2026-11-16 收敛） | opt |
+| `admission.py` | 临时准入状态：`provisional` 常量 + 逐条差距 + 有/无证据范围（**恒 `passed=False`，不是开关**） | opt |
 | `bm_identifiability.py` | 统一可辨识性报告（六类诊断 / 三态） | opt |
 | `bm_corr.py` | 全参数后验相关矩阵 + 置信区间 | opt |
 | `bm_bench.py` / `bm_check.py` | 合成 benchmark / 端到端 PASS-FAIL | opt |
@@ -68,13 +69,15 @@
 | `bm_dash.py` | 自包含 HTML 交互面板（零运行时依赖） | **core** |
 | `bm_figure.py` | 出版级静态图（与面板共用同一份数据） | **core** |
 
-### L4 编排与入口（6）
+### L4 编排与入口（8）
 
 | 模块 | 职责 | 产品 |
 |---|---|---|
 | `bmdrt.py` | 唯一 CLI 入口；`cmd_*.py` 里写 `run(argv)` 自动注册子命令 | **core** |
 | `bm_select.py` | M4 跨族选择器骨架（voigt vs nested） | opt |
-| `nested_fit.py` | nested 独立研究接口（**未接主流程**） | opt |
+| `nested_fit.py` | nested 研究接口（**临时准入**：可作 `bmdrt nested` 调用，不改 `auto` 默认族） | opt |
+| `cmd_nested.py` | `bmdrt nested`：薄转发 `nested_fit.main`，零算法、不另写参数表 | opt |
+| `cmd_compare.py` | `bmdrt compare`：多族并列 → 统一状态 + 统一图 | opt |
 | `cmd_status.py` | 子命令：查看 `out/` 里跑过的结果 | opt |
 | `cmd_diff.py` | 子命令：扩散项数学回归 | no |
 | `sweep_sigma_floor.py` | σ 噪声地板敏感性扫描 | no |

@@ -70,13 +70,16 @@ if str(_ROOT) not in sys.path:
 import bm_experiments as E          # noqa: E402
 import bm_real as R                # noqa: E402
 import bm_top as T                 # noqa: E402
+import admission as AD             # noqa: E402  临时准入状态（恒 provisional，非开关）
 import spectrum_metrics as SM      # noqa: E402  两入口共用的指标/σ/预算
 from bm_select import BUDGETS      # noqa: E402  只读常量，不改口径
 
 WARNING = (
     "研究性接口（exploratory）：nested 在 §13 留出 0/3、§14 全量 4/14，"
     "未过验收线；§17 四个文献电路在 10 条未过谱上 M-b 全 0/10。"
-    "本接口不做跨族判决、不写门禁、不接 bmdrt.py 主流程；"
+    "自 2026-11-16 起可作为 `bmdrt nested` 子命令调用（临时准入，"
+    "`admission.state=provisional`、`passed=False`），但**不改 `bmdrt auto` 的"
+    "默认族（仍是 voigt）**、不做跨族判决、不写门禁；"
     "参数不得当物理量/真值，输出不是验收结论。"
 )
 
@@ -377,6 +380,10 @@ def run(input_path: str | os.PathLike, *, outdir: str = DEFAULT_OUT,
 
     result = dict(
         status="exploratory", warning=WARNING, notes=notes,
+        # 临时准入块：`state="provisional"` 且 `passed=False`，逐条列没达到的
+        # 阈值与有/无证据的谱型范围。用户裁决「能跑就行、不许声称过线」，
+        # 所以这块跟着**每一份**产物走，不是只印在控制台（见 `admission.py`）。
+        admission=AD.block(),
         input=dict(path=str(src.resolve()), n_points=int(f.size),
                    f_min=float(f.min()), f_max=float(f.max()),
                    absZ_max=float(np.abs(Z).max())),
@@ -414,6 +421,7 @@ def run(input_path: str | os.PathLike, *, outdir: str = DEFAULT_OUT,
 
     if verbose:
         print(f"\n=== {stem} ===")
+        print(f"  {AD.banner()}")
         print(f"  {f.size} 点  {f.min():.3g}–{f.max():.3g} Hz  |Z|max={np.abs(Z).max():.3g} Ω")
         print(f"  {branch}/L={layers}  {budget}  {sigma_desc}  seed={seed}  "
               f"{result['elapsed_s']}s")
@@ -483,6 +491,7 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
 
     print(WARNING)
+    print(AD.banner())
     files = collect_inputs(a.inputs)
     if not files:
         print("没有输入谱：请给文件路径，或把文件放进 inbox/。", file=sys.stderr)
