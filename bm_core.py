@@ -78,9 +78,10 @@ jax.config.update("jax_enable_x64", True)
 
 import jax.numpy as jnp
 
-# 采样参数来源捕获（阶段 C）：只记录"构造实参 → 对象属性"这一段，不改采样行为、
-# 不构造 run_id（但本模块字节会由 runner 声明集计入）。内核类型采集时才判，放 try 外。
-import sampler_capture as SC
+# 采样构造点钩子：内核只认识这个**零依赖、默认 no-op** 的中立层，不再 import
+# 审计层（CODE_MAP §4-⑤）。捕获实现由调用方显式 install；未安装时 emit 返回 None，
+# 采样数值与默认路径逐位不变。原 sampler_capture 的直接 import 已移除。
+import sampling_hook as HOOK
 
 # numpyro 只在**采样**时需要；DRT 解析式、后处理、bm_diff 的自检都是纯 numpy。
 # 所以放在 try 里：没装 numpyro 的环境仍能 import bm_core、跑 bm_check /
@@ -181,6 +182,7 @@ def model_z(f, p, include_L=True):
     "基础模型"和"基础模型 + 扩散项"，不需要分支参数。
       · p["Aw"]              → 半无限 Warburg，A_W 单位 Ω·s^(-1/2)
       · p["Rwo"] + p["tauD"] → 有限长阻挡 Warburg（coth）
+      · p["Rws"] + p["tauD"] → 有限长短路 Warburg（tanh，research 候选）
       · p["Rad"] + p["tau_ad"] → 吸附 RL（M2，Z = R·jωτ/(1+jωτ)）
     """
     z = np.full(len(f), float(p["R_inf"]), complex)
@@ -188,13 +190,15 @@ def model_z(f, p, include_L=True):
         z = z + 1j * 2 * np.pi * np.asarray(f, float) * float(p["L"])
     w = float(p["W"]) * np.asarray(p["pi"], float)
     z = z + _hn_z(f, w, p["tau"], p["phi"], p["zeta"]).sum(axis=1)
-    if "Aw" in p or ("Rwo" in p and "tauD" in p):
+    if "Aw" in p or ("Rwo" in p and "tauD" in p) or ("Rws" in p and "tauD" in p):
         if D is None:                   # pragma: no cover
             raise ImportError("需要扩散项但 bm_diff 不可用")
         if "Aw" in p:
             z = z + D.z_winf(f, float(p["Aw"]))
         if "Rwo" in p and "tauD" in p:
             z = z + D.z_wopen(f, float(p["Rwo"]), float(p["tauD"]))
+        if "Rws" in p and "tauD" in p:
+            z = z + D.z_wshort(f, float(p["Rws"]), float(p["tauD"]))
     if "Rad" in p and "tau_ad" in p:
         if A is None:                   # pragma: no cover
             raise ImportError("需要吸附项但 bm_ad 不可用")
@@ -315,6 +319,12 @@ def make_model(K: int = 10, alpha: float | None = 1.0, sigma: tuple | None = Non
             # 故意不放到"窗口外很远"——那里本来就不该由数据决定。
             tauD = numpyro.sample("tauD", dist.LogNormal(jnp.log(1.0 / omega_ref), 2.0))
             Zt = Zt + D.j_z_wopen(omega, Rwo, tauD)
+        if diffusion == "Wshort":
+            if D is None:               # pragma: no cover
+                raise ImportError("diffusion='Wshort' 但 bm_diff 不可用")
+            Rws = numpyro.sample("Rws", dist.LogNormal(jnp.log(0.1 * zmax), 2.0))
+            tauD = numpyro.sample("tauD", dist.LogNormal(jnp.log(1.0 / omega_ref), 2.0))
+            Zt = Zt + D.j_z_wshort(omega, Rws, tauD)
         if include_L:
             L = numpyro.sample("L", dist.LogNormal(jnp.log(1e-6), 2.0))
             Zt = Zt + 1j * omega * L
@@ -613,7 +623,7 @@ def fit(f, Z, K: int = 10, alpha: float | None = 1.0, sigma: tuple | None = None
     # 一次采样一条事件，挂到 mc 上随返回值带走。这里**不判断对错**：判定全在
     # 判定全由捕获层转交的纯函数判定器给出，本调用只提供"请求值 + 契约点观测值"。
     # 采不到不抛异常（记 capture_error），但也不会被悄悄吞掉——事件里数得出来。
-    mc.provenance = SC.capture_at_construction(
+    mc.provenance = HOOK.emit(
         mc, site="bm_core.fit",
         passed=dict(n_warmup=n_warmup, n_samples=n_samples, num_chains=num_chains,
                     target_accept=target_accept, max_tree_depth=max_tree_depth,

@@ -16,7 +16,7 @@
       ],
       "process_entry": "bmdrt.py",
       "closure_source": "audit_source_profiles.closure (AST，含函数体内导入)",
-      "n_files": 18,
+      "n_files": 16,
       "declared_source_set": [
         {
           "path": "bm_ad.py",
@@ -68,10 +68,6 @@
           "reason": "真实进程入口：解析命令行 + 合并 config.json 后再调 fit；在 AST 闭包‘上方’，闭包看不到它，但它决定传给 fit 的实参"
         },
         {
-          "path": "budget_capture_adapter.py",
-          "role": "module"
-        },
-        {
           "path": "config.json",
           "role": "config",
           "reason": "显式清单：数值默认值的来源（fit/kk/diag 段）；非 Python 文件，静态导入闭包必然漏掉"
@@ -85,19 +81,15 @@
           "role": "module"
         },
         {
-          "path": "sampler_capture.py",
-          "role": "module"
-        },
-        {
-          "path": "sampler_provenance.py",
+          "path": "sampling_hook.py",
           "role": "module"
         }
       ],
       "digest_preview": {
         "note": "审阅快照，不是身份；身份由 runner 在运行点重算（§3.1.1）",
-        "declared": "247e55e7fcec67511dbb78112cb1df573309091a3d6ad838a8d281dcfa732bd8",
-        "numeric": "d273f16652bd2aa2abdcbde08bffda9a547f9b839114a27784ea970b85b4fab6",
-        "workflow": "d6b04c910c4c212af50af5e1cf21f7138479b69b5a57ed33d4f9163a5e0d72d5"
+        "declared": "27cd1f2b67fb6c7074bc28cee276e7a938bf2c1a543cf5cc946a58efb7101b58",
+        "numeric": "0a4faa6e6790af0d38cd7e4142072e004926c2e895b1d53b70845b7982676fda",
+        "workflow": "9d67b889387f26a8ef6a58b741403f140d2e7ca98b961abab61ff4ae9df1aa9a"
       }
     },
     "B": {
@@ -107,14 +99,26 @@
       ],
       "process_entry": "bmdrt.py",
       "closure_source": "audit_source_profiles.closure (AST，含函数体内导入)",
-      "n_files": 22,
+      "n_files": 25,
       "declared_source_set": [
+        {
+          "path": "admission.py",
+          "role": "module"
+        },
         {
           "path": "bm_ad.py",
           "role": "module"
         },
         {
           "path": "bm_circuit.py",
+          "role": "module"
+        },
+        {
+          "path": "bm_circuit_adr.py",
+          "role": "module"
+        },
+        {
+          "path": "bm_circuit_nested.py",
           "role": "module"
         },
         {
@@ -131,6 +135,10 @@
         },
         {
           "path": "bm_experiments.py",
+          "role": "module"
+        },
+        {
+          "path": "bm_figure_unified.py",
           "role": "module"
         },
         {
@@ -169,10 +177,6 @@
           "path": "bmdrt.py",
           "role": "entry",
           "reason": "真实进程入口：解析命令行 + 合并 config.json 后再调 fit；在 AST 闭包‘上方’，闭包看不到它，但它决定传给 fit 的实参"
-        },
-        {
-          "path": "budget_capture_adapter.py",
-          "role": "module"
         },
         {
           "path": "config.json",
@@ -192,19 +196,19 @@
           "role": "entry"
         },
         {
-          "path": "sampler_capture.py",
+          "path": "sampling_hook.py",
           "role": "module"
         },
         {
-          "path": "sampler_provenance.py",
+          "path": "spectrum_metrics.py",
           "role": "module"
         }
       ],
       "digest_preview": {
         "note": "审阅快照，不是身份；身份由 runner 在运行点重算（§3.1.1）",
-        "declared": "3dd15b283c59fdce8e71236fc5148e00925eeebf3bf8643b07f07e791ae661f4",
-        "numeric": "55eb863944e2cc3b89245d470b8f71b5b650693ecb26ba0ce61ee8fbf26073aa",
-        "workflow": "b7298004173e57b91fdfbfe99f42bda843486ed368c19faa62e4d9e42e5c6fe1"
+        "declared": "374073613a0be3f21e32b4f604d51168ed956497af4924c7271fc59dec2db6c2",
+        "numeric": "e7b9c4c65f65bf8940aa98290dd93295a60b3eba9ac949ebe7925463a1db725b",
+        "workflow": "a523aaae6faf975a447ffe7c0e89e5ace733fd2175f9681d56e3f71cff992db1"
       }
     },
     "C": {
@@ -214,7 +218,7 @@
       ],
       "process_entry": "bmdrt.py",
       "closure_source": "audit_source_profiles.closure (AST，含函数体内导入)",
-      "n_files": 21,
+      "n_files": 19,
       "declared_source_set": [
         {
           "path": "bm_ad.py",
@@ -278,10 +282,6 @@
           "reason": "真实进程入口：解析命令行 + 合并 config.json 后再调 fit；在 AST 闭包‘上方’，闭包看不到它，但它决定传给 fit 的实参"
         },
         {
-          "path": "budget_capture_adapter.py",
-          "role": "module"
-        },
-        {
           "path": "config.json",
           "role": "config",
           "reason": "显式清单：数值默认值的来源（fit/kk/diag 段）；非 Python 文件，静态导入闭包必然漏掉"
@@ -295,19 +295,15 @@
           "role": "module"
         },
         {
-          "path": "sampler_capture.py",
-          "role": "module"
-        },
-        {
-          "path": "sampler_provenance.py",
+          "path": "sampling_hook.py",
           "role": "module"
         }
       ],
       "digest_preview": {
         "note": "审阅快照，不是身份；身份由 runner 在运行点重算（§3.1.1）",
-        "declared": "f5c8e51a642de65508258423147a7eb913b779624f92d920791d0cf0d61e155a",
-        "numeric": "975abc4524ecc6cbe36a27eee9da673017a23498b80b7dc50df892ba57cd9d64",
-        "workflow": "3ec706e5d2198a8ffea0180e73d70c38d70afa4769ae52ffca95edb46c15992e"
+        "declared": "e8a4951eb8d9218f6a2ed946cebec77dbaa1e044711e1e1a542f71e71aa5aafb",
+        "numeric": "041863f9e474eb72075db566e9b46e9a76d10c08a01c25547aebc0b2a631630b",
+        "workflow": "aed9884e41b7c9ad5fe6d4b71789e2500a1c471ecb00e1f57b310b28b787e63d"
       }
     }
   },

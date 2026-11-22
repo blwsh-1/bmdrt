@@ -18,7 +18,7 @@
 
 ## 2. 七层分类
 
-层次是**逻辑分层**，不代表当前代码已经遵守（见 §4 的 11 处反向依赖）。
+层次是**逻辑分层**，不代表当前代码已经遵守（见 §4 的 9 处反向依赖；L0→L5 一条已于 2026-11-20 解除）。
 
 ### L0 数值内核（10）——纯数学，无文件 IO
 
@@ -28,6 +28,7 @@
 | `bm_top.py` | 嵌套并联拓扑 `z_nested` 正演 + `fit_top` 独立采样路径 | **core** |
 | `bm_diff.py` | Warburg 族扩散元件与 HN↔Warburg 退化诊断 | **core** |
 | `bm_ws.py` | Ws 判据候选量（被 `bm_real.diffusion_gate` 消费） | **core** |
+| `sampling_hook.py` | 采样构造点中立钩子（零项目依赖、默认 no-op；内核只连它，捕获实现由调用方 `install`） | **core** |
 | `bm_ad.py` | 低频吸附电感元件 `Z_ad` | opt |
 | `drt.py` | DRT 粗解（只报过程数 / 时间常数 / 电阻） | opt |
 | `circuit_registry.py` | 候选电路注册表（schema 承载能力） | opt |
@@ -93,14 +94,14 @@
 补丁包重建），不是拟合能力。产品若要「可复现认证」再单独接，且**必须保持不变式**：
 `upstream_origin_captured=False` 时不得产出有效号（当前真实执行仍是 `unconfirmed` 零号）。
 
-### L6 测试（20）
+### L6 测试（21）
 
 `test_exec_identity.py`(1293 行) / `test_circuit_registry.py`(1262) / `test_contract.py`(1222) /
 `test_sampler_provenance.py`(927) / `test_budget_params.py` / `test_capture_contract.py` /
 `test_sampler_capture.py` / `test_patch_bundle.py` / `test_identity_p0.py` / `test_ecm.py` /
 `test_ad_gate.py` / `test_ad_gate_synth.py` / `test_bm_ad_e2e.py` / `test_bm_ad_sampler.py` /
 `test_bm_ad_select.py` / `test_drt_signed.py` / `test_audit_findings.py` / `test_include_L.py` /
-`test_seed.py` / `test_entry_parity.py`
+`test_seed.py` / `test_entry_parity.py` / `test_repo_integrity.py`
 
 ## 3. 产品候选与依赖闭包
 
@@ -111,8 +112,12 @@
 `bm_experiments` `bm_grade` `bm_ident` `bm_ref_rwp` `bm_select` `bm_top_gen` `drt` `fit_store`
 `sampler_capture` `sampler_provenance` `budget_capture_adapter`。
 
-其中**最后三个是「不该进产品却被拉进来」的**：`bm_core` 与 `bm_top` 在生产构造点直接
-`import sampler_capture`（审计层）。这是软件化必须解掉的耦合，见 §4-⑤。
+> 2026-11-20 更新：`sampling_hook.py`（L0，零项目依赖、默认 no-op）已加入核心闭包；
+> 内核改连它，审计层靠显式 `install()` 注入。原被拉进闭包的 `sampler_capture` /
+> `sampler_provenance` / `budget_capture_adapter` 不再属于默认产品路径（见 §4-⑤）。
+
+原本被拉进闭包的三件（`sampler_capture` / `sampler_provenance` / `budget_capture_adapter`）
+是「不该进产品却被拉进来」的审计层；2026-11-20 已通过中立钩子解耦，见 §4-⑤。
 
 ## 4. 五个软件化阻塞项（按严重度）
 
@@ -132,12 +137,15 @@ K 选择、机制选择、结果组装、报告输出。产品要复用它，只
 默认来源。同进程内跑两个不同配置的任务会互相污染（`run_e2.py` 那类批处理只能靠起子进程绕开）。
 → 需要显式 `Config` 对象贯穿调用，`KW` 只作向后兼容的默认值。
 
-**⑤ L0 反向依赖 L5（最硬的一条）。** `bm_core.py` / `bm_top.py` 在构造点 `import sampler_capture`，
-使**数值内核依赖审计层**。产品若不带审计层，这两个模块 import 就失败；若带，则把
-1000+ 行的身份契约绑进拟合引擎。→ 需要依赖倒置：内核只暴露 `on_sample_construct` 钩子，
-捕获实现由调用方注入；默认不注册（等价于今天的「不接 runner」）。
+**⑤ L0 反向依赖 L5 —— 已于 2026-11-20 解除（原最硬的一条）。** 旧状：`bm_core.py` /
+`bm_top.py` 在构造点 `import sampler_capture`，数值内核依赖审计层。现改：两内核只
+`import sampling_hook`（L0、零项目依赖、默认 no-op），构造点调 `HOOK.emit(...)`；
+捕获实现由调用方 `sampler_capture.install_hook()` 显式注入，默认不注册等价于
+「不接 runner」。`repo_map.py` 的 `layer_violations` 由 11 处降到 **9 处**，L0→L5
+一条已消失。审计能力可经 `test_sampler_capture.G9` 的可执行断言恢复；拟合样本
+在默认路径逐位不变（同一合成谱 K=2/seed=7 的 sha256 前后一致）。
 
-另外 11 处反向依赖是同一病根的不同表现，已由 `repo_map.py` 机械列出（`layer_violations`）：
+另外 9 处反向依赖是同一病根的不同表现，已由 `repo_map.py` 机械列出（`layer_violations`）：
 `bm_ad→bm_kk`、`bm_diff→bm_grade`、`bm_real→{bm_kk,bm_corr,bm_grade,bm_experiments}`、
 `bm_check→bm_select`、`drt→fit_store`、`sweep_sigma_floor→test_ecm`。
 

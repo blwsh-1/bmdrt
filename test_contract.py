@@ -234,16 +234,28 @@ def case_b3_bmdrt_bad_and_good(tmp):
     assert meta_bad["skip"] is True, meta_bad
     assert meta_bad["err"], "拒收必须写明理由，不能空着"
 
-    js = out / GOOD.stem / f"real_{GOOD.stem}.json"
+    meta_good = json.loads((out / GOOD.stem / "meta.json").read_text(encoding="utf-8"))
+    assert meta_good["ok"] is True, meta_good
+    # 产物名按族而变：voigt = real_<stem>.json；11-16 族分派后 excluded 谱
+    # 走 nested = <stem>.nested.json（见 bmdrt._run_nested_branch 的命名约定）。
+    # meta["json"] 是入口记录的实际产物路径，用它避免测试写死某一族的文件名。
+    js = Path(meta_good["json"]) if meta_good.get("json") else \
+        (out / GOOD.stem / f"real_{GOOD.stem}.json")
     assert js.exists(), "好谱没有出结果"
     assert (out / "summary.json").exists() or (out / "summary.md").exists(), \
         "汇总没有落盘"
     d = strict_load(js)                      # D 组：真实产物必须严格可解析
-    # P2-1：单 K 没有比较，不许把「没比过」写成 elpd_diff=0 / rank=1
-    assert d.get("comparison_performed") is False, d.get("comparison_performed")
+    # P2-1：单 K / 单候选没有比较，不许把「没比过」写成 elpd_diff=0 / rank=1。
+    # voigt 单 K 显式落 comparison_performed=False；nested 产物根本不带这组键
+    # （顶层无 comparison_performed/elpd_diff/rank），"缺键"即"未比较"，
+    # 不能用 `is False` 断言——那会把合法的缺键误判成失败。
+    if meta_good.get("family") == "nested":
+        assert "comparison_performed" not in d, d.get("comparison_performed")
+    else:
+        assert d.get("comparison_performed") is False, d.get("comparison_performed")
     assert d.get("elpd_diff") is None and d.get("rank") is None, \
         f"单 K 仍落了比较结论：elpd_diff={d.get('elpd_diff')}, rank={d.get('rank')}"
-    return f"坏谱拒收({meta_bad['err'][:18]}…)、好谱出结果、rc=0"
+    return f"坏谱拒收({meta_bad['err'][:18]}…)、好谱出结果({meta_good.get('family', 'voigt')})、rc=0"
 
 
 def case_b4_bmdrt_fit_failure(tmp):

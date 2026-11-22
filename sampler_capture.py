@@ -37,11 +37,14 @@
 """
 from __future__ import annotations
 
+import ast
 import os
+from pathlib import Path
 from typing import Any, Mapping
 
 import budget_capture_adapter as BA
 import sampler_provenance as SP
+import sampling_hook as HOOK
 
 CAPTURE_VERSION = "1.0"
 
@@ -54,20 +57,100 @@ CONSTRUCTION_FIELDS = ("n_warmup", "n_samples", "num_chains", "target_accept",
                        "max_tree_depth", "chain_method", "progress_bar")
 RUN_FIELDS = ("extra_fields",)
 
-#: 已接入的生产构造点。key 是站点名，value 是**唯一一处**构造代码的位置。
+#: 已接入的生产构造点。key 是站点名（**冻结闭集**，见 `exec_identity.BUDGET_CAPTURE_SITES`），
+#: value 是可读的锚点描述；行号不再写死，由 `site_anchor()` 用 AST 现场解析。
+#: 锚点 = (相对路径, 所属函数名, 该函数内第几个 MCMC 调用)。函数+序号对注释/空行
+#: 免疫；新增或删除构造点会让账目对不上，当场 FAIL 而不是静默漏掉。
 CALL_SITES = {
-    "bm_core.fit": "bm_core.py:610 MCMC(kern, num_warmup=, num_samples=, num_chains=, progress_bar=)",
-    "bm_top.fit_top": "bm_top.py:1004 MCMC(NUTS(model, ...), num_warmup=, ...)",
+    "bm_core.fit": "bm_core.py:fit()#1 MCMC(kern, ...)",
+    "bm_top.fit_top": "bm_top.py:fit_top()#1 MCMC(NUTS(model, ...), ...)",
 }
 
-#: **明确不接**的构造点。它在 `fit`/`fit_top` 之外自己造 NUTS+MCMC，绕过 BUDGETS，
-#: 属独立研究路径。写在这里是为了"不许静默漏掉"：探针会核对全仓构造点数
-#: == 已接 + 未接，数量对不上就报错。
+#: 站点 → AST 锚点（三者唯一确定一处构造）。与 CALL_SITES 的 key 必须逐项对齐，
+#: 由 `test_sampler_capture.G4` 交叉核验。
+SITE_ANCHORS = {
+    "bm_core.fit": ("bm_core.py", "fit", 1),
+    "bm_top.fit_top": ("bm_top.py", "fit_top", 1),
+}
+
+#: **明确不接**的构造点。写在这里是为了"不许静默漏掉"：G5 核对生产构造点数
+#: == 已接 + 明确不接，数量对不上就报错。
+#:
+#: 注意两类的区别：
+#: · `m35_cond_n2.py` 在仓库研究目录，不在生产模块清单里；
+#: · `fit_adr` **在生产模块 bm_top.py 里**，是 ADR 研究拓扑，冻结裁决下不写
+#:   provenance、也不许进 CALL_SITES（见 bm_top.py:1221-1223）。它必须同时出现在
+#:   "生产构造点账目"里，否则 G5 会把第三处当成漏接而 FAIL。
 NON_PRODUCTION_SITES = {
     "evidence/nested_topology/m35_cond_n2.py:116":
         "独立实验路径：自己构造 NUTS+MCMC，绕过 fit/fit_top 与 BUDGETS；"
         "未纳入生产捕获范围",
+    "bm_top.py:fit_adr()#1":
+        "ADR 研究拓扑（9b8e792 新增）：在生产模块内自带 MCMC 构造，"
+        "按冻结裁决不写 provenance、不进 CALL_SITES；此处仅作明账",
 }
+NON_PRODUCTION_ANCHORS = {
+    "evidence/nested_topology/m35_cond_n2.py:116":
+        ("evidence/nested_topology/m35_cond_n2.py", "fit", 1),
+    "bm_top.py:fit_adr()#1": ("bm_top.py", "fit_adr", 1),
+}
+
+#: G5 枚举构造点时扫描的生产模块（与 test_sampler_capture.G5 历史口径一致）。
+PRODUCTION_MODULES = ("bm_core.py", "bm_top.py", "bm_real.py", "bm_select.py",
+                      "nested_fit.py", "bmdrt.py")
+
+_ROOT = Path(__file__).resolve().parent
+
+
+def _mcmc_calls(source: str, *, filename: str = "<source>") -> list[dict]:
+    """用 AST 找源码里所有 `MCMC(...)` 调用，返回其行号与所属函数名。
+
+    **不用行号做身份**：只返回观测到的位置，供 G4/G5 与 `SITE_ANCHORS` 比对。
+    AST 解析忽略注释、空行与字符串里的 `MCMC(` 字样 —— 这正是"不因无关文本误报"
+    的关键。语法错误当场抛 `SyntaxError`，不静默返回空表。
+    """
+    tree = ast.parse(source, filename=filename)
+    out = []
+
+    def visit(node, scope):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                visit(child, child.name)
+            elif isinstance(child, ast.Call) and isinstance(child.func, ast.Name) \
+                    and child.func.id == "MCMC":
+                out.append(dict(line=child.lineno, scope=scope))
+            else:
+                visit(child, scope)
+
+    visit(tree, "<module>")
+    return out
+
+
+def find_mcmc_calls(rel_path: str, *, root=None) -> list[dict]:
+    """读一个仓库内相对路径并列出 MCMC 调用；缺文件返回空表。"""
+    base = _ROOT if root is None else Path(root)
+    path = base / rel_path
+    if not path.exists():
+        return []
+    return _mcmc_calls(path.read_text(encoding="utf-8"), filename=rel_path)
+
+
+def site_anchor(site: str, *, root=None) -> dict | None:
+    """把站点名解析成当前源码里的实际锚点；核对所属函数与函数内序号。
+
+    返回值带 `line`（给人看）与 `scope`/`ordinal`（给账目核对）。任一
+    锚点找不到、或被同名函数里新增的 MCMC 挤了序号，返回 None —— 调用方据此
+    FAIL，不猜。
+    """
+    anchor = SITE_ANCHORS.get(site)
+    if anchor is None:
+        return None
+    rel, scope, ordinal = anchor
+    calls = [c for c in find_mcmc_calls(rel, root=root) if c["scope"] == scope]
+    if len(calls) < ordinal:
+        return None
+    hit = calls[ordinal - 1]
+    return dict(file=rel, scope=scope, ordinal=ordinal, line=hit["line"])
 
 #: 字段 → `MCMC.__init__` 的形参名（用于在**没传**该字段时读库默认值）。
 #: 读的是 `inspect.signature`，不是记忆里的字面量——numpyro 改默认值这里会跟着变。
@@ -285,6 +368,16 @@ def _one_field(name: str, mcmc, *, site: str, passed: Mapping, run_call: Mapping
     code = _reason_code(name, resolved, obs, ctx)
     return judged(SP.evaluate(name, resolved=resolved, observation=obs,
                               reason_code=code, **kw))
+
+
+def install_hook() -> Any:
+    """把本层显式装进内核钩子，恢复"构造点自动捕获"。返回旧的钩子实现。
+
+    内核默认 no-op（不 import 本层）。需要审计的调用方（复现 harness、身份
+    测试、带审计的运行）显式调用本函数，用完用 `sampling_hook.uninstall()`
+    或把返回值交回 `sampling_hook.install()` 成对恢复。
+    """
+    return HOOK.install(capture_at_construction)
 
 
 def capture_at_construction(mcmc, *, site: str, passed: Mapping | None = None,
@@ -517,8 +610,13 @@ def _selftest() -> bool:
         evx["aggregate"]["weakest"] == "incomplete" and evx["judged"] is False
         and len(evx["fields"]) == 8, evx["aggregate"]["n_by_status"])
 
-    chk("已接入站点 2 个、未接入站点 1 个（m35 明账）",
-        len(CALL_SITES) == 2 and len(NON_PRODUCTION_SITES) == 1, sorted(CALL_SITES))
+    chk("已接入站点 2 个、未接入站点 2 个（m35 + fit_adr 明账）",
+        len(CALL_SITES) == 2 and len(NON_PRODUCTION_SITES) == 2
+        and len(NON_PRODUCTION_ANCHORS) == len(NON_PRODUCTION_SITES),
+        sorted(CALL_SITES))
+    chk("站点名与 AST 锚点逐项对齐",
+        set(SITE_ANCHORS) == set(CALL_SITES)
+        and len(SITE_ANCHORS) == 2, sorted(SITE_ANCHORS))
     return ok
 
 

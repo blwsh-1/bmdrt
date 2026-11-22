@@ -1,9 +1,21 @@
 # -*- coding: utf-8 -*-
-"""map_stage0_records.py —— 把阶段 0 的历史产物映射成机器可读的观测记录（v4）。
+"""map_stage0_records.py —— 把阶段 0 的历史产物映射成机器可读的观测记录（v5）。
 
 目的**不是**让历史数据好看，而是检验 `circuit_registry.observation_block` 到底
 能不能承载它们。凡是映射不了的字段，一律进 `unmapped` 并写明原因，不丢、不改、
 不补猜。映射过程**不跑任何拟合**，只读 `evidence/` 与原始谱。
+
+v5 相对 v4 改的一件事（2026-11-22）
+-----------------------------------
+**`--check` 第 3 层从"等于当前注册表"改成"必须是已登记代际"
+（`_KNOWN_GENERATIONS`）。** v4 把冻结快照的指纹直接跟现役代码比，而冻结快照
+按构造永远追不上现役代码 ⇒ 0.8.0 一升版就**永久红**（3 处，见
+`docs/round_2026-11-22/CHECK_ALARM_ROOT_CAUSE.md`）。永久红不是"多一条告警"，
+是判据失效：升级与篡改混在同一片红里、`--check` 当不了门。
+改后代际差归 `crossgen`（不阻断、单列），**未知代际**仍是 problem，
+而"现役代际没登记"也报 problem，逼升版时补一行而不是静默变绿。
+同时把 `records.jsonl` 的逐行比对改严：按 `\\n` 精确切行、不过滤空行
+（v4 会漏掉"往文件尾追加换行"这类字节篡改）。
 
 v4 相对 v3 改的三件事（第四轮审计，全部成立）
 -------------------------------------------
@@ -959,8 +971,107 @@ def _manifest(texts: dict, cov: dict, recs: list) -> dict:
     }
 
 
+#: 跨代比对时抹平的键。`registry_version`/`registry_digest` 是代际标记，
+#: `run_id` 由它们派生（`circuit_registry.py`：「进 run_id 哈希的字段。改这里
+#: 必须改 REGISTRY_VERSION」）。除此之外任何字段的差异都算真问题。
+_GEN_KEYS = ("registry_version", "registry_digest", "run_id")
+
+#: **已登记代际**。冻结快照的 `registry_version/registry_digest` 只要落在这张表里，
+#: 就说明"它属于某个真实存在过的注册表世代"，代际差是**历史归属**，不是漂移。
+#:
+#: 为什么需要这张表（而不是直接拿 MANIFEST 跟当前代码比）：
+#: 冻结快照是历史文物，它的代际**永远追不上**现役代码。拿"MANIFEST 指纹 == 当前
+#: 代码指纹"当完整性判据，等于要求 239 条 2026-11-14 的记录宣称自己由 2026-11-22
+#: 的注册表产出——这个条件按构造就不可能满足，于是 `--check` 永久红。
+#: 永久红不是"多一条告警"，是**判据失效**：真篡改与版本升级混在同一片红里。
+#:
+#: 反过来，只要"代际必须是已登记的一代"，把 MANIFEST 的指纹改成随机值/未知版本
+#: 仍然会被抓（`test_stage0_freeze.py` D4a/D4b 测的就是这个）。
+#:
+#: 代价与残留口子：把声明改成**另一个已登记代际**（如 0.7.0/b2675c82 →
+#: 0.8.0/aeb6aca1）不会被抓——那需要 MANIFEST 自身字节有个外部锚点，
+#: 属 `GENERATION.json` 那一档（见 docs/round_2026-11-22/CHECK_ALARM_ROOT_CAUSE.md §5）。
+#:
+#: **每升一次 `REGISTRY_VERSION` 或改动注册表内容，必须在这里追加一行**；
+#: 漏登记会被 `verify_frozen` 第 3 层当场指出来（而不是静默变绿）。
+_KNOWN_GENERATIONS = (
+    # (version, digest) → 该代际的出处
+    ("0.7.0", "b2675c8255bea716"),   # 2026-11-14 冻结；239 条 stage0 记录所属
+    ("0.7.0", "496946a5f5ea1b7d"),   # 2026-11-20 加 5 个槽位，版本号没跟着升
+    ("0.8.0", "aeb6aca1c13dd2ff"),   # 2026-11-22 补上版本号（现役）
+)
+
+
+def _strip_generation(obj):
+    if isinstance(obj, dict):
+        return {k: ("<gen>" if k in _GEN_KEYS else _strip_generation(v))
+                for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_strip_generation(x) for x in obj]
+    return obj
+
+
+def _same_except_generation(new_text: str, old_text: str) -> bool:
+    """两份 `records.jsonl` 是否**只在代际标记上**不同。
+
+    为什么需要：`registry_version` 进了 `run_id` 的哈希，所以注册表一升级，
+    239 条记录的 `run_id` 会全部重算成新值（实测 239/239）。若只比哈希，
+    `--check` 从此永远报警，就失去了区分「版本升级」与「记录被改」的能力。
+
+    这里把 `registry_version` / `registry_digest` / `run_id` 抹平后逐行比；
+    **其余任何字段**（rms、参数、sha256、判重结论…）的差异仍然返回 False。
+
+    **按 `\\n` 精确切行，不过滤空行**：早期版本用 `splitlines()` + `if ln.strip()`
+    过滤，于是往文件尾追加一个换行会被读成"逐行等价"——而 D5c 正是靠这条抓
+    "冻结副本被改"。空行/尾随空白属于字节差异，必须原样落到"不等"上。
+    """
+    a = new_text.split("\n")
+    b = old_text.split("\n")
+    if len(a) != len(b):
+        return False
+    for u, v in zip(a, b):
+        if u == v:
+            continue
+        if not u.strip() or not v.strip():
+            return False          # 一侧是空白行：不是"字段内容差异"，是字节漂移
+        if _strip_generation(json.loads(u)) != _strip_generation(json.loads(v)):
+            return False
+    return True
+
+
+def _strip_generation_manifest(text: str) -> dict:
+    """MANIFEST 的**代际无关视图**：抹掉三项由代际派生的内容。
+
+    实测（2026-11-22）：重算 MANIFEST 与冻结副本抹掉这三项后**逐字段相同**，
+    也就是说 MANIFEST 的字节差异 100% 由代际派生、零独立信息。
+
+    - `registry_version` / `registry_digest`：本次生成用的注册表指纹；
+    - `files["records.jsonl"].sha256`：`records.jsonl` 的哈希，而它变了正是因为
+      `run_id` 变了。`bytes` **不抹**——字节数变了说明改动不止代际标记。
+
+    抹的键是**固定三项**，不是"整段 `files`"。所以删掉 `files[coverage.json]`
+    （D5f）或改 `source_sha256` 仍然会落到"不等"上。
+    """
+    obj = json.loads(text)
+    for k in ("registry_version", "registry_digest"):
+        obj.pop(k, None)
+    files = obj.get("files")
+    if isinstance(files, dict):
+        rec = files.get("records.jsonl")
+        if isinstance(rec, dict):
+            rec.pop("sha256", None)
+    return obj
+
+
+def _same_manifest_except_generation(new_text: str, old_text: str) -> bool:
+    try:
+        return _strip_generation_manifest(new_text) == _strip_generation_manifest(old_text)
+    except (ValueError, TypeError):
+        return False
+
+
 def verify_frozen(frozen: Path, texts: dict, manifest: dict,
-                  source_paths: dict) -> list:
+                  source_paths: dict) -> tuple:
     """核对**整个**证据快照，返回问题清单（空 = 通过）。
 
     四个层次，缺一层就会留下"改了但没报"的口子：
@@ -968,14 +1079,29 @@ def verify_frozen(frozen: Path, texts: dict, manifest: dict,
     1. **重新生成的三个文件** vs 冻结副本磁盘字节——映射代码/原始产物变了会被抓；
     2. **冻结清单里的 `files`** vs 冻结副本磁盘字节——副本被单独改过会被抓
        （即使清单没动）；
-    3. **`registry_version` / `registry_digest`** vs 当前注册表——注册表改过、
-       但记录序列化没变时，这一层是唯一能发现的（审计 D4）；
+    3. **`registry_version` / `registry_digest`** vs **已登记代际表**
+       （`_KNOWN_GENERATIONS`）——不是 vs 当前代码；
     4. **`source_sha256` / `data_sha256`** vs 磁盘上的证据文件与原始谱——原始证据
        被改会被抓（审计 D5）。
 
     第 1 层比对"重算文本"，第 2 层比对"磁盘字节"：两者都过才算这份快照没漂移。
+
+    **第 3 层为什么改成查"已登记"而不是查"等于当前"**（2026-11-22 订正）
+    -------------------------------------------------------------------
+    原设计（审计 D4）要回答的是"注册表改过、但记录序列化没变时能发现吗"。
+    这条问法在**生成当时**成立、在**跨代复核时**不成立：冻结快照的指纹按构造
+    永远追不上现役代码，于是一升版就永久红，而红里分不出升级与篡改。
+    改成"代际必须是已登记的一代"后：
+    - 旧代际 → 归 `crossgen`（说明是历史归属，不阻断）；
+    - 未知代际（被改成随机值/不存在的版本）→ 仍是 problem（D4a/D4b 靠这条）；
+    - **现役代际没登记** → 也报 problem，逼升版时补一行，而不是静默变绿。
+
+    **返回 `(problems, crossgen)`**。`crossgen` 收「只在代际标记上不同」的情形
+    （见 `_same_except_generation` / `_same_manifest_except_generation`）：
+    注册表版本升级会让 `run_id` 全部重算、MANIFEST 三项派生字段随之变化，
+    那**不是**篡改，不算问题；但会单独列出，不静默吞掉。
     """
-    problems = []
+    problems, crossgen = [], []
     # --- 1. 重新生成 vs 冻结副本 ---
     for name in sorted(texts):
         fp = frozen / name
@@ -983,9 +1109,25 @@ def verify_frozen(frozen: Path, texts: dict, manifest: dict,
             problems.append(f"{name}: 冻结副本缺失")
             continue
         got = hashlib.sha256(texts[name].encode("utf-8")).hexdigest()
-        disk = hashlib.sha256(fp.read_bytes()).hexdigest()
+        raw = fp.read_bytes()
+        disk = hashlib.sha256(raw).hexdigest()
         if got != disk:
-            problems.append(f"{name}: 重算 {got[:16]} ≠ 冻结副本 {disk[:16]}")
+            # 从**字节**解码，不走 `read_text`：后者会做通用换行转换，
+            # 于是 CRLF 篡改读回来和 LF 一模一样（等价于放过）。
+            try:
+                disk_text = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                problems.append(f"{name}: 冻结副本不是合法 UTF-8，无法比对")
+                continue
+            if name == "records.jsonl" and _same_except_generation(texts[name], disk_text):
+                crossgen.append(f"{name}: 重算 {got[:16]} ≠ 冻结 {disk[:16]}，"
+                                f"但内容逐行等价（差异仅 registry_version/run_id）")
+            elif name == "MANIFEST.json" and _same_manifest_except_generation(
+                    texts[name], disk_text):
+                crossgen.append(f"MANIFEST.json: 重算 {got[:16]} ≠ 冻结 {disk[:16]}，"
+                                f"但除代际三项外逐字段相同")
+            else:
+                problems.append(f"{name}: 重算 {got[:16]} ≠ 冻结副本 {disk[:16]}")
     # --- 2. 清单自洽 ---
     for name, meta in sorted((manifest.get("files") or {}).items()):
         fp = frozen / name
@@ -996,13 +1138,24 @@ def verify_frozen(frozen: Path, texts: dict, manifest: dict,
         if disk != meta.get("sha256"):
             problems.append(f"MANIFEST.files[{name}]: 磁盘 {disk[:16]} ≠ 清单 "
                             f"{str(meta.get('sha256'))[:16]}")
-    # --- 3. 注册表身份 ---
-    if manifest.get("registry_version") != R.REGISTRY_VERSION:
-        problems.append(f"MANIFEST.registry_version={manifest.get('registry_version')!r} "
-                        f"≠ 当前 {R.REGISTRY_VERSION!r}")
-    if manifest.get("registry_digest") != R.registry_digest():
-        problems.append(f"MANIFEST.registry_digest={manifest.get('registry_digest')!r} "
-                        f"≠ 当前 {R.registry_digest()!r}")
+    # --- 3. 代际归属：必须是**已登记**的一代（不是"必须等于当前"）---
+    man_pair = (manifest.get("registry_version"), manifest.get("registry_digest"))
+    cur_pair = (R.REGISTRY_VERSION, R.registry_digest())
+    if cur_pair not in _KNOWN_GENERATIONS:
+        problems.append(
+            f"registry: 现役 {cur_pair[0]}/{cur_pair[1]} 未登记在 _KNOWN_GENERATIONS。"
+            "升过版本号或改过注册表内容就要补一行，否则跨代差异无法与篡改区分")
+    if man_pair != cur_pair:
+        if man_pair in _KNOWN_GENERATIONS:
+            crossgen.append(
+                f"MANIFEST 代际 {man_pair[0]}/{str(man_pair[1])[:16]} ≠ 现役 "
+                f"{cur_pair[0]}/{cur_pair[1][:16]}（已登记代际，属快照的历史归属）")
+        else:
+            problems.append(
+                f"MANIFEST.registry_version={man_pair[0]!r}、"
+                f"MANIFEST.registry_digest={man_pair[1]!r}："
+                f"不是已登记代际之一 "
+                f"{[(v, d[:8] + '…') for v, d in _KNOWN_GENERATIONS]}")
     # --- 4. 原始证据与数据内容 ---
     for rel, want in sorted((manifest.get("source_sha256") or {}).items()):
         p = source_paths.get(rel)
@@ -1020,7 +1173,59 @@ def verify_frozen(frozen: Path, texts: dict, manifest: dict,
         got = _sha256(p)
         if got != want:
             problems.append(f"data_sha256[{rel}]: 磁盘 {got[:16]} ≠ 清单 {str(want)[:16]}")
-    return problems
+    return problems, crossgen
+
+
+def recompute_run_ids(path: Path) -> tuple:
+    """按**记录自报**的 `registry_version` 复算 `run_id`（只读审计）。
+
+    为什么不做进 `R._check_execution()`
+    ----------------------------------
+    `_check_execution()` 是**写入时**的校验：它必须要求"新记录的 software 就是
+    当前代际"，否则新建一条记录就能谎报自己是历史代际、拿到一个不属于它的号。
+    历史复算是**审计职责**——只能由审计工具显式声明"我按记录自报的代际重算"。
+
+    把这条塞进生产校验器（让它在校验路径上保留自报值）能换来"历史可复算"，
+    但同时把"改 registry_version 是否会被 run_id 抓到"这件事也一起放掉了，
+    得再引入一张版本白名单去补 —— 两个模块各维护一份代际表，是新的漂移点。
+    分层收在这里更干净：生产只管写，审计只管读。
+
+    返回 `(passed, failed, skipped, unverifiable)`：
+    - `skipped`：记录本身没发号（`unconfirmed`），无从复算，不算通过；
+    - `unverifiable`：记录连 `software.registry_version` 都没有，不能假装复算。
+    """
+    passed, failed, skipped, unverifiable = 0, [], 0, 0
+    with open(path, encoding="utf-8") as fh:
+        for ln in fh:
+            ln = ln.strip()
+            if not ln:
+                continue
+            o = json.loads(ln)["observation"]
+            e = o.get("execution") or {}
+            rid = e.get("run_id")
+            if rid is None:
+                skipped += 1
+                continue
+            soft = dict(e.get("software") or {})
+            if not soft.get("registry_version"):
+                unverifiable += 1
+                continue
+            cid = o["candidate_id"]
+            try:
+                dat = R._check_data(e.get("data"), candidate_id=cid)
+                kind = R._seed_kind(e.get("seed_source"))
+                bud = R._check_budget_params(o.get("budget_params"), candidate_id=cid)
+                got = R._run_id_from(cid, dat, e["seed"], kind, bud, soft,
+                                     e["run_id_status"])
+            except Exception as exc:                      # 记录本身不合 schema
+                failed.append(f"{rid}: 复算抛错 {type(exc).__name__}: {exc}")
+                continue
+            if got == rid:
+                passed += 1
+            else:
+                failed.append(f"{rid}（自报 registry {soft['registry_version']}）"
+                              f"≠ 复算 {got}")
+    return passed, failed, skipped, unverifiable
 
 
 def main(argv=None) -> int:
@@ -1033,9 +1238,30 @@ def main(argv=None) -> int:
     ap.add_argument("--check", action="store_true",
                     help="重算整个快照（三份文件 + 注册表指纹 + 原始证据 sha256）并逐项比对，"
                          "不写任何文件")
+    ap.add_argument("--recompute-runids", action="store_true",
+                    help="只读审计：按每条记录**自报**的 registry_version 复算 run_id 并比对。"
+                         "读冻结副本，不重算快照、不写任何文件")
     args = ap.parse_args(argv)
     outdir = (_ROOT / args.out) if not Path(args.out).is_absolute() else Path(args.out)
     frozen = FROZEN if args.frozen is None else Path(args.frozen)
+
+    if args.recompute_runids:
+        # 早退：这条路径不 build 快照（不需要产物、不需要预算表），只读冻结副本。
+        src = frozen / "records.jsonl"
+        if not src.is_file():
+            print(f"找不到 {src}")
+            return 2
+        ok, bad, skip, unver = recompute_run_ids(src)
+        print(f"按记录自报代际复算 run_id：通过 {ok} / 不通过 {len(bad)} / "
+              f"未发号跳过 {skip} / 无代际标记无法复算 {unver}")
+        for b in bad[:10]:
+            print("  -", b)
+        if len(bad) > 10:
+            print(f"  …另有 {len(bad) - 10} 条")
+        if unver:
+            print(f"  注：{unver} 条没有 software.registry_version，"
+                  "不能声称'可复算'，已单列不计入通过。")
+        return 0 if not bad and not unver else 2
 
     import bm_select  # 只为 BUDGETS 的实际数值（AZ31 / oracle 只记了档名）
     budgets = {k: {kk: int(vv) if isinstance(vv, int) else float(vv)
@@ -1065,13 +1291,16 @@ def main(argv=None) -> int:
             disk = hashlib.sha256(fp.read_bytes()).hexdigest() if fp.is_file() else None
             tag = "清单" if name != "MANIFEST.json" else "磁盘"
             print(f"{name}: 重算 {got[:16]} / 冻结{tag} {str(disk)[:16]} → "
-                  f"{'一致' if got == disk else '不一致'}")
-        print(f"registry: {R.REGISTRY_VERSION} {R.registry_digest()} / "
-              f"冻结 {frozen_man.get('registry_version')} "
-              f"{frozen_man.get('registry_digest')}")
+                  f"{'一致' if got == disk else '不同（性质见下）'}")
+        cur_pair = (R.REGISTRY_VERSION, R.registry_digest())
+        man_pair = (frozen_man.get("registry_version"), frozen_man.get("registry_digest"))
+        tag = "已登记" if man_pair in _KNOWN_GENERATIONS else "**未登记**"
+        print(f"registry: 现役 {cur_pair[0]} {cur_pair[1]} / "
+              f"冻结 {man_pair[0]} {man_pair[1]}（{tag}代际）")
         print(f"原始证据 {len(man['source_sha256'])} 份、数据文件 "
               f"{len(man['data_sha256_files'])} 份逐份复核")
-        problems = verify_frozen(frozen, texts, frozen_man, source_paths)
+        problems, crossgen = verify_frozen(frozen, texts, frozen_man,
+                                           source_paths)
         # `verify_frozen` 比的是**冻结清单**；这里再比"重新生成的清单"是否与冻结的一致，
         # 否则字段被删（而非被改）时两侧都不报警。
         for k in ("n_records", "n_independent", "n_independent_strict",
@@ -1079,14 +1308,25 @@ def main(argv=None) -> int:
             if man.get(k) != frozen_man.get(k):
                 problems.append(f"MANIFEST.{k}: 重算 {man.get(k)!r} ≠ 冻结 "
                                 f"{frozen_man.get(k)!r}")
+        if crossgen:
+            print(f"代际差异 {len(crossgen)} 处（不计为问题，快照属旧代际）：")
+            for c in crossgen:
+                print("  ~", c)
         if problems:
             print(f"发现 {len(problems)} 处不一致：")
             for p in problems:
                 print("  -", p)
+            if any("未登记" in x or "_KNOWN_GENERATIONS" in x for x in problems):
+                print("  注：这是**代际未登记**，不是快照被改。"
+                      "升过 REGISTRY_VERSION 或改过注册表内容后，"
+                      "在 map_stage0_records._KNOWN_GENERATIONS 追加一行即可；"
+                      "不要靠重冻结 MANIFEST 清零（那会把新注册表追认给历史记录）。")
+                print("      见 docs/round_2026-11-22/CHECK_ALARM_ROOT_CAUSE.md")
             return 2
-        print(f"通过：{cov['n_records']} 条，{cov['n_independent']} 独立"
+        print(f"完整性通过：{cov['n_records']} 条，{cov['n_independent']} 独立"
               f"（严格口径 {cov['n_independent_strict']}），"
-              f"{cov['execution']['n_unique_run_id']} 个唯一 run_id")
+              f"{cov['execution']['n_unique_run_id']} 个唯一 run_id"
+              + (f"；{len(crossgen)} 项代际差异已单列" if crossgen else ""))
         return 0
 
     outdir.mkdir(parents=True, exist_ok=True)

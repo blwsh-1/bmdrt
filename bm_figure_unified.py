@@ -17,8 +17,12 @@ from __future__ import annotations
 
 import numpy as np
 
-#: 候选曲线配色（数据一律黑，候选按顺序取色）
-COLORS = ("#c0392b", "#2e86c1", "#27ae60", "#8e44ad", "#d68910", "#16a085")
+#: 候选曲线配色（数据一律黑，候选按顺序取色）。
+#: 12 色（2026-11-20）：三族 × 三种扩散 + 各自基线最多 12 个候选，
+#: 原来 6 色会循环复用 ⇒ 同图两条不同候选同色，只能靠图例文字区分。
+#: 刻意避开 `#7f8c8d`（2% 参考线）与 `#1f2d3d`（实测点）。
+COLORS = ("#c0392b", "#2e86c1", "#27ae60", "#8e44ad", "#d68910", "#16a085",
+          "#c2185b", "#2c3e50", "#6d4c41", "#3f51b5", "#00838f", "#827717")
 
 
 def _setup_cn():
@@ -54,6 +58,11 @@ def plot_fit(path, f, Z, curves, *, title: str = "", meta: str = "",
     （红色点线，与 voigt 的 `bm_real.plot_real` 残差图同风格）。标量或逐点
     数组都行；`None` 就不画。`nested_fit` 把逐点 `2%·|Z|` 传进来，所以带会随
     频率收窄/放宽——那是"逐点相对 σ"的真实形状，不是常数带。
+
+    **多候选自适应**（2026-11-20）：三族 × 三种扩散最多 12 条曲线，固定
+    9.4 in 高 + 单列图例会溢出画布、压住标题与坐标轴。这里按曲线数把
+    图例切两列、字号缩小，并按 `meta` 行数加高画布——清单一行不少，
+    只是不再挤扁子图。
     """
     import matplotlib.pyplot as plt
 
@@ -67,7 +76,16 @@ def plot_fit(path, f, Z, curves, *, title: str = "", meta: str = "",
         c.setdefault("lw", 1.7)
         c["Zc"] = np.asarray(c["Zc"], complex)
 
-    fig, ax = plt.subplots(2, 3, figsize=(16.8, 9.4))
+    n = len(curves)
+    ncol = 2 if n > 6 else 1
+    lsz = 6.4 if n > 6 else (7.0 if n > 3 else 7.5)
+    # 画布高度随底部清单增长：fontsize 8.2 × linespacing 1.5 ≈ 0.175 in/行。
+    # 之前按 0.135 估，27 行清单会压住子图的横轴标签（实测截图确认）。
+    n_meta = (meta.count("\n") + 1) if meta else 0
+    meta_in = max(0.0, n_meta * 0.175 + 0.35) if meta else 0.0
+    fig_h = 9.4 + max(0.0, meta_in - 1.5)
+
+    fig, ax = plt.subplots(2, 3, figsize=(16.8, fig_h))
     a = ax[0, 0]
     a.plot(Z.real, -Z.imag, "o", ms=4.6, mfc="none", mec="#1f2d3d", mew=1.0,
            label=L("实测", "data"), zorder=3)
@@ -78,7 +96,8 @@ def plot_fit(path, f, Z, curves, *, title: str = "", meta: str = "",
     a.set_ylabel(L("−Z″ / Ω", "-Z'' / ohm"))
     a.set_title(L("① Nyquist", "(1) Nyquist"), fontsize=11)
     a.grid(alpha=.3, ls=":")
-    a.legend(fontsize=7.5, frameon=False, loc="best")
+    a.legend(fontsize=lsz, frameon=True, framealpha=.85, ncol=ncol,
+             loc="best", borderpad=.3, labelspacing=.28, columnspacing=.8)
     # 不用 `set_aspect("equal")`：`adjustable="datalim"` 会把坐标轴撑到数据范围之外
     # （腐蚀谱纵轴被拉到 -2e5…5e5，实际只有 0…3e5），肉眼上像是数据跑飞了。
 
@@ -116,7 +135,9 @@ def plot_fit(path, f, Z, curves, *, title: str = "", meta: str = "",
     a.set_ylabel(L("|Z_model−Z| / |Z|", "rel. residual"))
     a.set_title(L("④ 相对残差", "(4) relative residual"), fontsize=11)
     a.grid(alpha=.3, ls=":", which="both")
-    a.legend(fontsize=8, frameon=False)
+    a.legend(fontsize=lsz if n <= 6 else 5.9, frameon=True, framealpha=.85,
+             ncol=ncol, loc="best", borderpad=.3, labelspacing=.26,
+             columnspacing=.8)
 
     for j, (comp, name) in enumerate((("real", L("实部", "Re")),
                                       ("imag", L("虚部", "Im")))):
@@ -140,15 +161,17 @@ def plot_fit(path, f, Z, curves, *, title: str = "", meta: str = "",
                       f"({'5' if j == 0 else '6'}) residual {name}"),
                     fontsize=11)
         a.grid(alpha=.3, ls=":", which="both")
-        a.legend(fontsize=8, frameon=False)
+        # 候选多时不再重复 12 条图例：①（两列图例）+ ④ + 底部清单已能定身份，
+        # ⑤⑥ 的小面板放图例会盖住残差曲线。
+        if n <= 6:
+            a.legend(fontsize=8, frameon=False)
 
     sup = title or L("拟合结果", "fit")
     fig.suptitle(sup, fontsize=13, y=0.985)
     if meta:
-        n_lines = meta.count("\n") + 1
-        fig.text(0.5, 0.010, meta, ha="center", va="bottom", fontsize=8.2,
+        fig.text(0.5, 0.006, meta, ha="center", va="bottom", fontsize=8.2,
                  color="#34495e", linespacing=1.5)
-        fig.tight_layout(rect=(0, 0.018 + 0.020 * n_lines, 1, 0.955))
+        fig.tight_layout(rect=(0, meta_in / fig_h, 1, 0.955))
     else:
         fig.tight_layout(rect=(0, 0.02, 1, 0.955))
     fig.savefig(path, dpi=dpi, bbox_inches="tight")

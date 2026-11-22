@@ -1,8 +1,8 @@
 {
  "generated_by": "tools/repo_map.py",
- "n_modules": 72,
- "n_tests": 20,
- "total_lines": 45847,
+ "n_modules": 74,
+ "n_tests": 21,
+ "total_lines": 48004,
  "layers": {
   "L0": {
    "desc": "数值内核：纯数学/模型定义，无文件 IO",
@@ -16,7 +16,8 @@
     "bm_top.py",
     "bm_ws.py",
     "circuit_registry.py",
-    "drt.py"
+    "drt.py",
+    "sampling_hook.py"
    ]
   },
   "L1": {
@@ -106,6 +107,7 @@
     "test_identity_p0.py",
     "test_include_L.py",
     "test_patch_bundle.py",
+    "test_repo_integrity.py",
     "test_sampler_capture.py",
     "test_sampler_provenance.py",
     "test_seed.py"
@@ -122,7 +124,8 @@
   "bm_result.py",
   "bm_top.py",
   "bm_ws.py",
-  "bmdrt.py"
+  "bmdrt.py",
+  "sampling_hook.py"
  ],
  "product_optional": [
   "admission.py",
@@ -186,6 +189,7 @@
   "test_identity_p0.py",
   "test_include_L.py",
   "test_patch_bundle.py",
+  "test_repo_integrity.py",
   "test_sampler_capture.py",
   "test_sampler_provenance.py",
   "test_seed.py"
@@ -303,6 +307,7 @@
    "test_identity_p0.py",
    "test_include_L.py",
    "test_patch_bundle.py",
+   "test_repo_integrity.py",
    "test_sampler_capture.py",
    "test_sampler_provenance.py",
    "test_seed.py"
@@ -325,11 +330,15 @@
     10
    ],
    [
+    "bm_ad",
+    7
+   ],
+   [
     "bmdrt",
     7
    ],
    [
-    "bm_ad",
+    "bm_diff",
     6
    ],
    [
@@ -337,16 +346,12 @@
     6
    ],
    [
-    "exec_identity",
+    "circuit_registry",
     6
    ],
    [
-    "circuit_registry",
-    5
-   ],
-   [
-    "admission",
-    4
+    "exec_identity",
+    6
    ]
   ]
  },
@@ -362,12 +367,6 @@
    "src_layer": "L2",
    "dep": "bm_select",
    "dep_layer": "L4"
-  },
-  {
-   "src": "bm_core",
-   "src_layer": "L0",
-   "dep": "sampler_capture",
-   "dep_layer": "L5"
   },
   {
    "src": "bm_diff",
@@ -398,12 +397,6 @@
    "src_layer": "L1",
    "dep": "bm_kk",
    "dep_layer": "L2"
-  },
-  {
-   "src": "bm_top",
-   "src_layer": "L0",
-   "dep": "sampler_capture",
-   "dep_layer": "L5"
   },
   {
    "src": "drt",
@@ -469,7 +462,7 @@
    "uses_out": false,
    "sys_path_hack": false,
    "hardcwd": false,
-   "imported_by": 6
+   "imported_by": 7
   },
   {
    "file": "bm_bench.py",
@@ -538,7 +531,7 @@
    "product": "no",
    "stability": "research",
    "module": "bm_circuit_adr",
-   "lines": 234,
+   "lines": 255,
    "doc": "等效电路图（adr：吸附弛豫三支路并联）。",
    "deps": [
     "bm_circuit",
@@ -557,7 +550,7 @@
    "product": "no",
    "stability": "research",
    "module": "bm_circuit_nested",
-   "lines": 491,
+   "lines": 520,
    "doc": "nested 拓扑的等效电路图（只画 `bm_top.z_nested` 这一个拓扑族）。",
    "deps": [
     "bm_circuit",
@@ -576,12 +569,12 @@
    "product": "core",
    "stability": "frozen",
    "module": "bm_core",
-   "lines": 812,
+   "lines": 822,
    "doc": "BM-DRT：用贝叶斯混合自动定弛豫峰数（对齐 Liu & Ciucci 2025 原方案）",
    "deps": [
     "bm_ad",
     "bm_diff",
-    "sampler_capture"
+    "sampling_hook"
    ],
    "has_main": true,
    "uses_out": false,
@@ -642,7 +635,7 @@
    "uses_out": false,
    "sys_path_hack": false,
    "hardcwd": false,
-   "imported_by": 4
+   "imported_by": 6
   },
   {
    "file": "bm_evidence.py",
@@ -706,7 +699,7 @@
    "product": "opt",
    "stability": "stable",
    "module": "bm_figure_unified",
-   "lines": 157,
+   "lines": 180,
    "doc": "统一拟合图：一条谱 + 任意多个候选曲线 → 同一张 6 子图。",
    "deps": [],
    "has_main": false,
@@ -856,7 +849,7 @@
    "product": "opt",
    "stability": "research",
    "module": "bm_select",
-   "lines": 1792,
+   "lines": 1823,
    "doc": "M4 跨族选择器（骨架）：voigt 族（`bm_core`）vs nested 族（`bm_top`）。",
    "deps": [
     "bm_core",
@@ -877,10 +870,11 @@
    "product": "core",
    "stability": "frozen",
    "module": "bm_top",
-   "lines": 1283,
+   "lines": 1453,
    "doc": "嵌套并联电路拓扑（M1 正演 + `fit_top()` 独立采样路径）。",
    "deps": [
-    "sampler_capture"
+    "bm_diff",
+    "sampling_hook"
    ],
    "has_main": true,
    "uses_out": false,
@@ -947,7 +941,7 @@
    "product": "core",
    "stability": "stable",
    "module": "bmdrt",
-   "lines": 1127,
+   "lines": 1161,
    "doc": "bmdrt —— BM-DRT 的唯一入口。",
    "deps": [
     "admission",
@@ -1020,7 +1014,7 @@
    "product": "opt",
    "stability": "research",
    "module": "circuit_evaluator",
-   "lines": 684,
+   "lines": 1021,
    "doc": "候选观测 → evidence 状态的**推导层**（registry 的 `evidence_block` 只做校验，不做推导）。",
    "deps": [
     "circuit_registry"
@@ -1038,14 +1032,14 @@
    "product": "opt",
    "stability": "research",
    "module": "circuit_registry",
-   "lines": 2259,
+   "lines": 2386,
    "doc": "circuit_registry.py —— 候选电路注册表（阶段 0B 最小原型）",
    "deps": [],
    "has_main": false,
    "uses_out": false,
    "sys_path_hack": false,
    "hardcwd": false,
-   "imported_by": 5
+   "imported_by": 6
   },
   {
    "file": "circuit_runner.py",
@@ -1054,9 +1048,10 @@
    "product": "opt",
    "stability": "research",
    "module": "circuit_runner",
-   "lines": 1000,
+   "lines": 1388,
    "doc": "registry 驱动的候选电路统一调度器。",
    "deps": [
+    "bm_ad",
     "bm_core",
     "bm_real",
     "bm_select",
@@ -1077,15 +1072,17 @@
    "product": "opt",
    "stability": "research",
    "module": "cmd_compare",
-   "lines": 286,
+   "lines": 594,
    "doc": "bmdrt compare —— 一条谱、多个族的候选、一张图、一个状态。",
    "deps": [
     "admission",
     "bm_core",
+    "bm_diff",
     "bm_figure_unified",
     "bm_real",
     "bm_top",
     "circuit_evaluator",
+    "circuit_registry",
     "circuit_runner"
    ],
    "has_main": true,
@@ -1237,7 +1234,7 @@
    "product": "opt",
    "stability": "research",
    "module": "nested_fit",
-   "lines": 569,
+   "lines": 654,
    "doc": "nested_fit.py —— nested 拓扑的研究接口（**`bmdrt nested` 的实现体**）。",
    "deps": [
     "admission",
@@ -1316,17 +1313,18 @@
    "product": "no",
    "stability": "frozen",
    "module": "sampler_capture",
-   "lines": 528,
+   "lines": 626,
    "doc": "采样参数捕获层（阶段 C 第一轮）：在两处生产构造点读八项配置。",
    "deps": [
     "budget_capture_adapter",
-    "sampler_provenance"
+    "sampler_provenance",
+    "sampling_hook"
    ],
    "has_main": true,
    "uses_out": false,
    "sys_path_hack": false,
    "hardcwd": false,
-   "imported_by": 4
+   "imported_by": 2
   },
   {
    "file": "sampler_provenance.py",
@@ -1339,6 +1337,22 @@
    "doc": "采样参数来源契约（sampler provenance）：八项配置的请求 / 解析 / 观测三态。",
    "deps": [],
    "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 4
+  },
+  {
+   "file": "sampling_hook.py",
+   "layer": "L0",
+   "role": "采样构造点中立钩子（零项目依赖、默认 no-op；内核只连它，捕获实现由调用方 install）",
+   "product": "core",
+   "stability": "stable",
+   "module": "sampling_hook",
+   "lines": 66,
+   "doc": "采样构造点的**中立钩子**：数值内核到这里为止，不再向下 import 审计层。",
+   "deps": [],
+   "has_main": false,
    "uses_out": false,
    "sys_path_hack": false,
    "hardcwd": false,
@@ -1562,7 +1576,7 @@
    "product": "no",
    "stability": "stable",
    "module": "test_contract",
-   "lines": 1222,
+   "lines": 1234,
    "doc": "test_contract.py —— 二轮代码审查 §5 的四组「契约」回归，防退化。",
    "deps": [
     "batch_2e",
@@ -1631,7 +1645,7 @@
    "product": "no",
    "stability": "stable",
    "module": "test_entry_parity",
-   "lines": 659,
+   "lines": 847,
    "doc": "T1–T6 验收 + 两入口差分测试（2026-11-16 口径合并）。",
    "deps": [
     "admission",
@@ -1733,17 +1747,34 @@
    "imported_by": 0
   },
   {
+   "file": "test_repo_integrity.py",
+   "layer": "L6",
+   "role": "仓库完整性：生产依赖必须在 git 内（R1/R2/R3）",
+   "product": "no",
+   "stability": "stable",
+   "module": "test_repo_integrity",
+   "lines": 124,
+   "doc": "test_repo_integrity.py —— 仓库完整性：生产依赖不许留在版本控制之外。",
+   "deps": [],
+   "has_main": true,
+   "uses_out": false,
+   "sys_path_hack": false,
+   "hardcwd": false,
+   "imported_by": 0
+  },
+  {
    "file": "test_sampler_capture.py",
    "layer": "L6",
    "role": "捕获层 28 格",
    "product": "no",
    "stability": "stable",
    "module": "test_sampler_capture",
-   "lines": 468,
-   "doc": "test_sampler_capture.py —— ③ 阶段 C 第一轮：捕获层的 28 格。",
+   "lines": 574,
+   "doc": "test_sampler_capture.py —— ③ 阶段 C 第一轮：捕获层的 29 格。",
    "deps": [
     "sampler_capture",
-    "sampler_provenance"
+    "sampler_provenance",
+    "sampling_hook"
    ],
    "has_main": true,
    "uses_out": false,

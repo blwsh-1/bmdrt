@@ -27,7 +27,7 @@
 
 覆盖项（对 auto / watch 有效）：
     --krange 1,4   --wide   --kmax 6   --quick   --ta 0.95   --seed 1
-    --L / --no-L   --zeta 1.0|free   --diffusion none|Ws|Wo|both
+    --L / --no-L   --zeta 1.0|free   --diffusion none|Ws|Wo|Wshort|both
     --kk gate|warn|off   --auto-mechanism / --auto-mechanism-full
     --no-move   --out DIR   --inbox DIR   --interval 30
     --ref-rwp    # 额外落一份参考性 Rwp（独立 LS + 逐点相对权重重拟合）
@@ -57,7 +57,9 @@
     select_k 语义不变。
 
     --diffusion 默认 none（与改动前逐位一致）。Ws=半无限 Warburg，
-    Wo=有限长阻挡 Warburg。两者高频尾相同，both 只作对照，别当最终模型。
+    Wo=有限长阻挡 Warburg，Wshort=有限长短路 Warburg（均为 research 候选，
+    接入≠准入：判据只给统计事实，不宣称数据里有扩散）。
+    Ws/Wo/Wshort 高频尾相同，both 只作对照，别当最终模型。
     设计依据见 DIFFUSION_PLAN.md。
 
     diff 的耗时**对硬件敏感**，别把某个秒数当固定值：
@@ -459,6 +461,26 @@ def process_one(path: Path, cfg: dict) -> dict:
                 rec["skip"] = True
                 rec["t_s"] = time.time() - t0
                 fh.write(f"\n[SKIP] {reason}\n")
+                _write_meta(rec, outdir)
+                return rec
+
+            # ---- 扩散 × 吸附互斥：配置层校验，族分派之前 ----
+            # bm_real.fit_one 里有一处 SystemExit 拒绝两者同开（R_ad 与 R_W 在
+            # 极低频不可分辨）；但 11-16 族分派后 excluded 谱改走 nested，那条
+            # 拦截在 voigt 路径里、nested 分支根本不经过 —— 显式开的开关被静默
+            # 吞掉还报 ok=True。物理互斥与选族无关，在这里统一校验：归一规则与
+            # 下面 voigt 路径传给 R.run 的完全一致，默认二者皆 None 不受影响。
+            _diff = (None if str(fit.get("diffusion", "none")).lower()
+                     in ("none", "", "null") else str(fit["diffusion"]))
+            _ad = (None if str(fit.get("adsorption") or "none").lower()
+                   in ("none", "", "null") else str(fit.get("adsorption")))
+            if _diff and _ad:
+                rec["err"] = ("中止：一期不支持 --diffusion 与 --adsorption 同时开启"
+                              "（R_ad 与 R_W 在低频段不可分辨，"
+                              "见 ADSORPTION_PROJECT.md §6.3）")
+                print(f"\n!!! {path.name} 中止：{rec['err']}")
+                fh.write(f"\n[FAIL] {rec['err']}\n")
+                rec["t_s"] = time.time() - t0
                 _write_meta(rec, outdir)
                 return rec
 
@@ -1022,7 +1044,7 @@ def parse_opts(argv: list[str]) -> tuple[list[str], dict]:
                  "kk", "adsorption", "sigma_floor", "seed", "diffusion"}
     _KK_MODES = {"gate", "warn", "off"}
     _AD_VALS = {"rl", "none", "null", ""}
-    _DIFF_VALS = {"none", "Ws", "Wo", "both"}
+    _DIFF_VALS = {"none", "Ws", "Wo", "Wshort", "both"}
     opt = {"krange": None, "wide": None, "kmax": None, "quick": None,
            "ta": None, "zeta": None, "L": None, "no_move": False,
            "out": None, "inbox": None, "interval": None, "kk": None,

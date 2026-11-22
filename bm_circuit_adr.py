@@ -26,6 +26,8 @@ from bm_circuit import ACC, INK, MUTE, _cpe, _dot, _inductor, _resistor, _wire
 #: 版面常数（单位与 bm_circuit 一致：1 数据单位 ≈ 1 英寸）
 PAD = 0.34
 W_RS = 0.95
+#: 顶层串联电感段宽度（include_L=True 才出现）
+W_L = 0.72
 W_BR = 2.30          # 三支路并联块的宽度（R∥L 需要较宽）
 GAP = 0.30
 Y_TOP = 1.05          # CPE 支路
@@ -57,50 +59,62 @@ def _num_H(L: float) -> str:
     return _num(L * 1e9, "nH")
 
 
-def elements() -> list[dict]:
+def elements(include_L: bool = False) -> list[dict]:
     """图上出现的元件，以及每个元件绑定的参数名（**单一来源**）。
 
     与 `bm_top.ADR_KEYS = (Rs, Q, n, Rct, R_ad, tau_ad)` 对拍：
     `L_ad` 是派生量（R_ad·τ_ad），不进采样器，标 `derived`。
     """
-    return [
-        dict(id="Rs",  kind="resistor", params=("Rs",)),
+    out = [dict(id="Rs",  kind="resistor", params=("Rs",))]
+    if include_L:
+        # 顶层串联 jωL 是采样参数，必须上图（否则图≠方程）
+        out.append(dict(id="L", kind="inductor", params=("L",)))
+    out += [
         dict(id="CPE", kind="cpe",      params=("Q", "n")),
         dict(id="Rct", kind="resistor", params=("Rct",)),
         dict(id="R_ad", kind="resistor", params=("R_ad",)),
         dict(id="L_ad", kind="inductor", params=("tau_ad",), derived=("L_ad",)),
     ]
+    return out
 
 
-def equation() -> str:
+def equation(include_L: bool = False) -> str:
     """与 `z_adr` 逐项对应的拓扑式（mathtext）。"""
-    return (r"$Z = R_s + \left[\mathrm{CPE} \parallel R_{ct} \parallel "
+    lead = r"R_s + j\omega L + " if include_L else r"R_s + "
+    return (r"$Z = " + lead + r"\left[\mathrm{CPE} \parallel R_{ct} \parallel "
             r"\left(R_{ad} \parallel L_{ad}\right)\right]$")
 
 
-def layout() -> dict:
+def layout(include_L: bool = False) -> dict:
     x = PAD
     rs = (x, x + W_RS)
-    xA = rs[1] + GAP
+    x = rs[1]
+    if include_L:
+        ls = (x + GAP, x + GAP + W_L)
+        x = ls[1]
+    else:
+        ls = None
+    xA = x + GAP
     xB = xA + GAP + W_BR
-    return dict(rs=rs, xA=xA, xB=xB, x_in=PAD * 0.5, x_out=xB + 0.40,
+    return dict(rs=rs, ls=ls, xA=xA, xB=xB, x_in=PAD * 0.5, x_out=xB + 0.40,
                 x_end=xB + 0.62)
 
 
 def draw_adr(p: dict, *, f_ref: float, path, name: str = "",
-             admission_state: str = "provisional") -> str:
+             admission_state: str = "provisional",
+             include_L: bool = False) -> str:
     """画 adr 拓扑。`p` 是后验中位数（键见 `bm_top.ADR_KEYS`）。
 
     `f_ref` 是 CPE 的归一化频率，必须与拟合时一致（`z_adr` 默认 √(f_min·f_max)）。
     """
-    need = [k for e in elements() for k in e["params"]]
+    need = [k for e in elements(include_L) for k in e["params"]]
     missing = [k for k in need if k not in p]
     if missing:
         raise KeyError(f"画图缺少参数 {missing}（adr 需要 {sorted(set(need))}）")
     if f_ref <= 0:
         raise ValueError(f"f_ref 必须为正，收到 {f_ref!r}")
 
-    L = layout()
+    L = layout(include_L)
     fig, ax = plt.subplots(figsize=(1.05 * L["x_end"], 3.75))
     ax.set_xlim(0, L["x_end"])
     ax.set_ylim(-1.85, 1.75)
@@ -117,7 +131,14 @@ def draw_adr(p: dict, *, f_ref: float, path, name: str = "",
     _resistor(ax, x0 + 0.10, x1 - 0.10)
     _wire(ax, x1 - 0.10, x1)
     label(0.5 * (x0 + x1), -0.30, f"R$_s$ = {_num(p['Rs'], 'Ω')}", va="top")
-    _wire(ax, x1, L["xA"])
+    if L.get("ls"):
+        lx0, lx1 = L["ls"]
+        _wire(ax, x1, lx0)
+        _inductor(ax, lx0, lx1)
+        label(0.5 * (lx0 + lx1), -0.30, f"L = {_num_H(float(p['L']))}", va="top")
+        _wire(ax, lx1, L["xA"])
+    else:
+        _wire(ax, x1, L["xA"])
     _dot(ax, L["xA"])
 
     # ---- 节点 A 竖直线（三支路并联的左端）----
@@ -162,7 +183,7 @@ def draw_adr(p: dict, *, f_ref: float, path, name: str = "",
     # mathtext 的行内 `$...$` 不能被折行截断（$ 一旦跨行，整段退回字面量），
     # 所以方程这一行单独放、不 wrap；其余散文才折行。
     import textwrap
-    eq = equation()
+    eq = equation(include_L)
     prose = [
         f"CPE is parametrised by its window amplitude Q = |Z(f_ref)|, not by a "
         f"capacitance: Z = Q(ω_ref/ω)^n·exp(−jnπ/2).  f_ref = {_num(f_ref, 'Hz')}.",

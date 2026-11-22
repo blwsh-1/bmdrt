@@ -213,16 +213,22 @@ def metrics(f: np.ndarray, Z: np.ndarray, Zm: np.ndarray) -> dict:
     return SM.metrics(f, Z, Zm)
 
 
-def param_table(o: dict, branch: str, layers: int) -> tuple[dict, dict]:
+def param_table(o: dict, branch: str, layers: int,
+                include_L: bool = False) -> tuple[dict, dict]:
     """后验 → `{name: {median, ci90, rhat, ess}}` + 正演要的物理参数。
 
     `branch="adsorption"` 是 2026-11-16 并入的三支路并联模型
     （`Rs + [CPE ∥ Rct ∥ Z_ad]`，对标外部 adsorption_RQ）。它不是
     `bm_top.z_nested` 的两层嵌套骨架，底层走 `fit_adr`/`z_adr`，所以
     参数集来自 `ADR_KEYS` 而非 `sampled_keys`。其余分支不受影响。
+
+    `include_L`（2026-11-20）：顶层电感是**采样参数**，必须进表——否则
+    重建曲线时 `p` 里没有 `L`，`z_*` 会当场抛错（宁可抛，不静默丢）。
     """
-    keys = (list(T.ADR_KEYS) if branch == "adsorption"
-            else list(T.sampled_keys(branch, layers)))
+    if branch == "adsorption":
+        keys = list(T.adr_sampled_keys(None, include_L))
+    else:
+        keys = list(T.sampled_keys(branch, layers, None, include_L))
     s = o["s"]
     table, p = {}, {}
     for k in keys:
@@ -352,6 +358,7 @@ def run(input_path: str | os.PathLike, *, outdir: str = DEFAULT_OUT,
         sigma_mode: str = "perpoint", sigma_pct: float = 2.0,
         sigma_abs: float | None = None, seed: int = 0,
         target_accept: float | None = None,
+        include_L: bool = False,
         plot: bool = True, with_voigt: bool = False, voigt_K: int = 1,
         progress: bool = False, verbose: bool = True) -> dict:
     """拟合一条谱，写产物，返回结果 dict（Python API 入口）。
@@ -359,6 +366,9 @@ def run(input_path: str | os.PathLike, *, outdir: str = DEFAULT_OUT,
     `topology` 是 2026-11-16 新增的**拓扑身份**（`nested`/`adr`）；缺省时
     由 `branch` 推导。`--branch adsorption` 保留作兼容别名，产物里统一
     写 `config.topology`，避免把 ADR 误读成 nested 的物理结构。
+
+    `include_L`（2026-11-20）：顶层串联 `jωL`，与 voigt 的 `--L` 同位置同先验。
+    默认 False（与改动前逐位一致）。`compare` 的 auto 判定对它同样生效。
     """
     topology, branch = resolve_topology(topology, branch)
     src = Path(input_path)
@@ -380,15 +390,18 @@ def run(input_path: str | os.PathLike, *, outdir: str = DEFAULT_OUT,
         # layers 对这个拓扑无意义（单节点三支路），强制 1 并记进 config。
         layers = 1
         o = T.fit_adr(f, Z, seed=seed, sigma=sigma_top,
-                      sigma_from_data=from_data, progress=progress, **kw)
-        table, p = param_table(o, branch, layers)
-        Zm = T.z_adr(f, p)
+                      sigma_from_data=from_data, include_L=bool(include_L),
+                      progress=progress, **kw)
+        table, p = param_table(o, branch, layers, include_L=bool(include_L))
+        Zm = T.z_adr(f, p, include_L=bool(include_L))
     else:
         o = T.fit_top(f, Z, branch=branch, layers=layers, seed=seed,
                       sigma=sigma_top, sigma_from_data=from_data,
+                      include_L=bool(include_L),
                       progress=progress, **kw)
-        table, p = param_table(o, branch, layers)
-        Zm = T.z_nested(f, p, branch=branch, layers=layers)
+        table, p = param_table(o, branch, layers, include_L=bool(include_L))
+        Zm = T.z_nested(f, p, branch=branch, layers=layers,
+                        include_L=bool(include_L))
     m = metrics(f, Z, Zm)
 
     # ELPD 可比性：**与 `circuit_runner` 调同一个判定函数**。两层理由分开：
@@ -458,12 +471,14 @@ def run(input_path: str | os.PathLike, *, outdir: str = DEFAULT_OUT,
             if branch == "adsorption":
                 import bm_circuit_adr as CAD
                 CAD.draw_adr(p, f_ref=f_ref, path=circ_path, name=stem,
-                             admission_state=AD.STATE)
+                             admission_state=AD.STATE,
+                             include_L=bool(include_L))
             else:
                 import bm_circuit_nested as CN
                 CN.draw_nested(p, branch=branch, layers=layers,
                                f_ref=f_ref, path=circ_path, name=stem,
-                               admission_state=AD.STATE)
+                               admission_state=AD.STATE,
+                               include_L=bool(include_L))
         except Exception as exc:                       # noqa: BLE001
             notes.append(f"电路图失败（不影响拟合结果）："
                          f"{type(exc).__name__}: {exc}")
@@ -489,6 +504,7 @@ def run(input_path: str | os.PathLike, *, outdir: str = DEFAULT_OUT,
                     sigma_mode=sigma_mode, sigma_desc=sigma_desc,
                     sigma_from_data=bool(from_data), sigma_pct=sigma_pct,
                     sigma_abs=sigma_abs, seed=seed,
+                    include_L=bool(include_L),   # 顶层 jωL（2026-11-20）
                     target_accept_override=target_accept,
                     with_voigt=with_voigt,
                     voigt_K=voigt_K if with_voigt else None),
@@ -587,6 +603,8 @@ def main(argv=None) -> int:
                     help="覆盖预算档的 target_accept（默认 standard=0.98）")
     ap.add_argument("--with-voigt", action="store_true",
                     help="同口径跑 voigt 基线作参照（不是跨族判决，R17）")
+    ap.add_argument("--L", dest="include_L", action="store_true", default=False,
+                    help="顶层串联感抗 jωL（与 voigt 的 --L 同位置同先验）")
     ap.add_argument("--voigt-K", type=int, default=1)
     ap.add_argument("--no-plot", dest="plot", action="store_false")
     ap.add_argument("--progress", action="store_true", help="显示 NUTS 进度条")
@@ -608,6 +626,7 @@ def main(argv=None) -> int:
                 budget=a.budget, sigma_mode=a.sigma, sigma_pct=a.sigma_pct,
                 sigma_abs=a.sigma_abs, seed=a.seed,
                 target_accept=a.target_accept, plot=a.plot,
+                include_L=a.include_L,
                 with_voigt=a.with_voigt, voigt_K=a.voigt_K,
                 progress=a.progress)
             ok += 1

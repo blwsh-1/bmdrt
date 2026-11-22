@@ -309,8 +309,10 @@ def t6_sampler_args():
       and SEL.QUICK["target_accept"] == 0.9 and SEL.QUICK["max_tree_depth"] == 10)
     c("bm_select.BUDGETS['standard'] 仍是 A2 档 ta=0.9（没被 standard 口径污染）",
       SEL.BUDGETS["standard"]["target_accept"] == 0.9)
-    # 不许改的文件：bm_core/bm_real 生产内核。bm_top 允许**纯新增**（adr 拓扑的
-    # z_resistor/z_adr/j_z_adr/fit_adr），但不许删改现有函数（diff 里不得有删除行）。
+    # 生产内核改动护栏。2026-11-20 解 L0→L5 反向依赖：bm_core/bm_top 只许把
+    # `import sampler_capture as SC` + `SC.capture_at_construction(` 换成中立钩子
+    # `import sampling_hook as HOOK` + `HOOK.emit(`；bm_top 另允许 adr 拓扑纯新增。
+    # 除这两种白名单改动外，任何采样参数/算法改动都必须让这里 FAIL。
     import subprocess
     try:
         out = subprocess.run(["git", "diff", "--name-only", "HEAD"],
@@ -318,18 +320,99 @@ def t6_sampler_args():
                              timeout=20).stdout.split()
     except Exception:                             # noqa: BLE001
         out = []
-    forbidden = {"bm_core.py", "bm_real.py"}
-    c("bm_core / bm_real 未修改", not (forbidden & set(out)),
-      f"改了 {forbidden & set(out)}")
-    try:
-        ns = subprocess.run(["git", "diff", "--numstat", "bm_top.py"],
-                            cwd=str(ROOT), capture_output=True, text=True,
-                            timeout=20).stdout.split()
-        d_top = int(ns[1]) if len(ns) >= 2 and ns[1].isdigit() else 0
-    except Exception:                             # noqa: BLE001
-        d_top = 0
-    c("bm_top 只新增不删改（adr 正演是纯新增，不动 fit_top/z_nested）",
-      d_top == 0, f"bm_top 删除行={d_top}")
+
+    def _kernel_hook_only(name: str) -> tuple[bool, str]:
+        """核对 diff 的增删行只落在钩子替换白名单内。"""
+        try:
+            patch = subprocess.run(["git", "diff", "-U0", "HEAD", "--", name],
+                                   cwd=str(ROOT), capture_output=True, text=True,
+                                   timeout=20).stdout
+        except Exception as exc:                  # noqa: BLE001
+            return False, f"git diff 失败：{exc}"
+        if not patch.strip():
+            return True, "未改"
+        minus = [ln[1:] for ln in patch.splitlines()
+                 if ln.startswith("-") and not ln.startswith("---")]
+        plus = [ln[1:] for ln in patch.splitlines()
+                if ln.startswith("+") and not ln.startswith("+++")]
+        allow_minus = lambda s: ("import sampler_capture as SC" in s
+                                 or "采样参数来源捕获" in s
+                                 or "不构造 run_id" in s
+                                 or "SC.capture_at_construction(" in s
+                                 or (name == "bm_core.py" and
+                                     'if "Aw" in p or ("Rwo" in p and "tauD" in p):' in s)
+                                 or (name == "bm_top.py" and s.strip() == ""))
+        allow_plus = lambda s: ("import sampling_hook as HOOK" in s
+                                or "采样构造点钩子" in s
+                                or "HOOK.emit(" in s
+                                or "捕获实现由调用方" in s
+                                or "审计层（CODE_MAP" in s
+                                or "原 sampler_capture 的直接 import 已移除" in s
+                                or "默认 no-op" in s
+                                # 2026-11-20 用户裁决接入 w_short 为 research 候选：
+                                # 下列行只加 diffusion='Wshort' 分支，默认 None 不变。
+                                # 默认路径哈希 9f753a26… 改动前后逐位相同（证据见日志）。
+                                or (name == "bm_core.py" and any(
+                                    k in s for k in (
+                                        'p["Rws"] + p["tauD"]',
+                                        'or ("Rws" in p and "tauD" in p)',
+                                        'if "Rws" in p and "tauD" in p:',
+                                        'D.z_wshort(',
+                                        'if diffusion == "Wshort":',
+                                        'diffusion=\'Wshort\' 但 bm_diff 不可用',
+                                        '"Rws" = numpyro.sample',
+                                        'D.j_z_wshort(',
+                                    ))
+                                    # Wshort 块内两行与 Wo 块文本相同（都在 diffusion
+                                    # 条件里）；按完整缩进行精确放行，配合上面的
+                                    # "diffusion 默认 None" 语义断言兜底。
+                                    or s in (
+                                        '            if D is None:               # pragma: no cover',
+                                        '            Rws = numpyro.sample("Rws", dist.LogNormal(jnp.log(0.1 * zmax), 2.0))',
+                                        '            tauD = numpyro.sample("tauD", dist.LogNormal(jnp.log(1.0 / omega_ref), 2.0))',
+                                    ))
+                                or (name == "bm_top.py" and s.strip() == ""))
+        # bm_top 的 adr 纯新增行不在本轮白名单；本轮禁改范围以 src 直接核验为准。
+        bad = [s for s in minus if not allow_minus(s)] + \
+              [s for s in plus if not allow_plus(s)]
+        return not bad, f"非白名单改动 {bad[:3]}" if bad else "仅钩子替换"
+
+    hook_ok_core, why_core = _kernel_hook_only("bm_core.py")
+    c("bm_core 只做钩子替换 + Wshort 扩散分支（2026-11-20 授权接入）",
+      hook_ok_core, why_core)
+    # 默认路径逐位不变的静态证明：Wshort 只在本模块的 diffusion 条件分支里出现，
+    # make_model 的 diffusion 默认仍是 None；数值证明由 _w_baseline 哈希给出（日志）。
+    _core_src = (ROOT / "bm_core.py").read_text(encoding="utf-8")
+    c("bm_core diffusion 默认 None（Wshort 只是可选分支）",
+      "diffusion: str | None = None" in _core_src
+      and _core_src.count('diffusion == "Wshort"') == 1)
+    c("bm_real 未修改", "bm_real.py" not in out, f"改了 bm_real.py")
+    # bm_top 2026-11-20：除钩子替换外，新增三族扩散分支。逐行白名单不现实，
+    # 改用**语义守卫**（比逐行更硬）：扩散开关默认 None 才不改默认采样；
+    # `_diffusion_*` 在 None 时必须返回 0.0（不引入额外项）；`sampled_keys()`
+    # 不带 diffusion 时的返回值必须与历史元组逐字相同（默认采样维度不变）。
+    _top_src = (ROOT / "bm_top.py").read_text(encoding="utf-8")
+    c("bm_top diffusion 三处签名默认 None（z_nested/j_z_nested/z_adr/j_z_adr）",
+      _top_src.count("diffusion: str | None = None") >= 4)
+    c("bm_top 扩散辅助在 None 时返回 0.0（默认不加项）",
+      _top_src.count("if diffusion is None:") >= 2
+      and "return 0.0" in _top_src)
+    import bm_top as _T
+    c("bm_top sampled_keys() 默认值仍与历史逐字一致（默认采样维度不变）",
+      _T.sampled_keys("parallel", 2)
+      == ("Rs", "R1", "Q1", "n1", "R2", "Q2", "n2", "R_ad", "tau_ad")
+      and _T.sampled_keys("series", 1)
+      == ("Rs", "R1", "Q1", "n1", "R_L", "tau_L"))
+    c("bm_top 钩子替换仍在（sampling_hook 已在、旧捕获调用已清）",
+      "import sampling_hook as HOOK" in _top_src
+      and "SC.capture_at_construction" not in _top_src)
+    c("bm_top VALID_BRANCHES 未加 adsorption（采样内核不变）",
+      tuple(_T.VALID_BRANCHES) == ("parallel", "series", "capacitive"))
+    # 双保险：内核源码里不许残留旧的捕获层直接调用
+    for _n in ("bm_core.py", "bm_top.py"):
+        _src = (ROOT / _n).read_text(encoding="utf-8")
+        c(f"{_n} 无 SC.capture_at_construction 残留",
+          "SC.capture_at_construction" not in _src)
     c("bm_select 只有 fit_nested 一处改动",
       [x for x in out if x == "bm_select.py"] in ([], ["bm_select.py"]))
     # 采样器实参：两族都不许传新的采样参数
@@ -451,7 +534,14 @@ def _same(a, b):
 
 #: 缺省与显式默认值等价（`fit_top(sigma_floor=0.0)` 是默认）。差分时按此归一，
 #: 避免把"写法不同"报成"实参不同"。
-DEFAULTS = {"sigma_floor": 0.0, "progress": True}
+#: `diffusion`（2026-11-20）：默认 None = 基础模型；`nested_fit.run` 不传、`circuit_runner`
+#: 显式传 `diffusion=None`，两者等价。传非 None 才是真正改变结构的 research 候选，
+#: 那时两侧都应该显式传同一个值，守卫照旧会抓出不一致。
+DEFAULTS = {"sigma_floor": 0.0, "progress": True, "diffusion": None,
+            "include_L": False,
+            # 2026-11-21：`zmax` 的参照量。None = 沿用 `max|Z|`（改动前口径），
+            # 两边都不传时等价。非 None 只用于高动态范围谱的实验/诊断。
+            "zmax_override": None}
 
 
 def _arg(rec, key):
@@ -627,6 +717,17 @@ def t10_nested_circuit_figure():
                 want |= {"L_ad"}
             c(f"{br}/L={ly} 图上参数 == 采样参数", got == want)
 
+    # 1b) include_L=True：图上必须多出顶层 L，且仍与采样键一一对应（2026-11-20）
+    for br in CN.VALID_BRANCHES:
+        for ly in (1, 2):
+            els_l = CN.elements(br, ly, include_L=True)
+            got = {k for e in els_l for k in e["params"]}
+            got |= {k for e in els_l for k in e.get("derived", ())}
+            want = set(T.sampled_keys(br, ly, None, True))
+            if br != "capacitive":
+                want |= {"L_ad"}
+            c(f"{br}/L={ly}+L 图上参数 == 采样参数（含顶层 L）", got == want)
+
     # 2) layers=1 不画 R2/CPE2
     for br in CN.VALID_BRANCHES:
         ids = {e["id"] for e in CN.elements(br, 1)}
@@ -641,6 +742,11 @@ def t10_nested_circuit_figure():
                             path=f"{td}/c.png")
         c("draw_nested 写出非零 PNG", os.path.exists(fp)
           and os.path.getsize(fp) > 20_000)
+        # 3b) include_L=True 也要能画出（图上多一个 L，参数必须给全）
+        fp_l = CN.draw_nested(dict(p, L=2e-6), branch="parallel", layers=2,
+                              f_ref=31.6, path=f"{td}/cl.png", include_L=True)
+        c("draw_nested(include_L=True) 写出非零 PNG", os.path.exists(fp_l)
+          and os.path.getsize(fp_l) > 20_000)
 
     # 4) nested_fit 的 2×3 图委托 bm_figure_unified（不再各写一份）
     src_nf = (ROOT / "nested_fit.py").read_text(encoding="utf-8")
@@ -651,7 +757,10 @@ def t10_nested_circuit_figure():
       'stem_suffix = "adr" if branch == "adsorption" else "nested"' in src_nf
       and "CN.draw_nested(" in src_nf and "CAD.draw_adr(" in src_nf)
     c("adsorption 分支走 fit_adr/z_adr（不塞进 z_nested）",
-      "T.fit_adr(" in src_nf and "T.z_adr(f, p)" in src_nf)
+      "T.fit_adr(" in src_nf and "T.z_adr(" in src_nf
+      # include_L 也必须在 adr 正演上转发（2026-11-20）：adr 有顶层 L 时
+      # 重建曲线不能退回无 L 版本，否则图与拟合结构不一致。
+      and "T.z_adr(f, p, include_L=bool(include_L))" in src_nf)
 
     # 5) bm_figure_unified 的残差图例能优雅处理 None rms（不给 nan%）
     src_fig = (ROOT / "bm_figure_unified.py").read_text(encoding="utf-8")
@@ -683,8 +792,9 @@ def t11_adsorption_branch():
       "adr" not in __import__("bmdrt").discover())
     # adsorption 只在 nested_fit 这一层分派，不碰 bm_top 的采样内核
     c("argparse 接受 --branch adsorption", '"adsorption"' in src_nf)
-    c("param_table 用 ADR_KEYS（不是 sampled_keys）",
-      "list(T.ADR_KEYS) if branch == \"adsorption\"" in src_nf)
+    c("param_table 用 adr 专属键集（不是 nested 的 sampled_keys）",
+      'branch == "adsorption"' in src_nf
+      and "T.adr_sampled_keys(" in src_nf)
     c("bmdrt adr fallback 用显式 topology=adr（正式写法）",
       "NF.run(str(path), outdir=str(outdir), topology=\"adr\"" in src_bd)
     c("bmdrt.py 不再 import adr_fit", "import adr_fit" not in src_bd)

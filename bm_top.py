@@ -88,8 +88,13 @@ from __future__ import annotations
 
 import numpy as np
 
-# 采样参数来源捕获（阶段 C）：只记录不改行为；不构造 run_id，但字节由声明集计入。
-import sampler_capture as SC
+# 采样构造点钩子：与 bm_core 同一中立层，默认 no-op；捕获实现由调用方显式 install。
+import sampling_hook as HOOK
+
+try:                                   # 扩散元件是可选层，缺了不影响基础模型
+    import bm_diff as DF
+except Exception:                      # pragma: no cover
+    DF = None
 
 try:                                   # jax 只在前向计算时需要
     import jax
@@ -153,6 +158,47 @@ def z_resistor(f, R):
 
 
 # --------------------------------------------------------------------------
+# 扩散项（Warburg）——2026-11-20 三族接入，默认 None 逐位不变
+# --------------------------------------------------------------------------
+# 参数键与 `bm_core.model_z` 对齐，便于同一套 median 重建：
+#   Ws  → `Aw`（半无限，Ω·s^-1/2）
+#   Wo  → `Rwo` + `tauD`（开路 coth）
+#   Wshort → `Rws` + `tauD`（短路 tanh）
+def _diffusion_np(f, p: dict, diffusion: str | None, f_ref: float | None = None):
+    """numpy 版扩散阻抗；`diffusion=None` 返回 0.0（默认路径逐位不变）。"""
+    if diffusion is None:
+        return 0.0
+    if DF is None:                       # pragma: no cover
+        raise ImportError("需要扩散项但 bm_diff 不可用")
+    if diffusion == "Ws":
+        return DF.z_winf(f, float(p["Aw"]))
+    if diffusion == "Wo":
+        return DF.z_wopen(f, float(p["Rwo"]), float(p["tauD"]))
+    if diffusion == "Wshort":
+        return DF.z_wshort(f, float(p["Rws"]), float(p["tauD"]))
+    raise ValueError(f"未知 diffusion={diffusion!r}（可用 Ws/Wo/Wshort）")
+
+
+def _diffusion_jax(omega, p: dict, diffusion: str | None):
+    """jax 版扩散阻抗；`diffusion=None` 返回 0.0（默认路径逐位不变）。"""
+    if diffusion is None:
+        return 0.0
+    if DF is None:                       # pragma: no cover
+        raise ImportError("需要扩散项但 bm_diff 不可用")
+    if diffusion == "Ws":
+        return DF.j_z_winf(omega, p["Aw"])
+    if diffusion == "Wo":
+        return DF.j_z_wopen(omega, p["Rwo"], p["tauD"])
+    if diffusion == "Wshort":
+        return DF.j_z_wshort(omega, p["Rws"], p["tauD"])
+    raise ValueError(f"未知 diffusion={diffusion!r}（可用 Ws/Wo/Wshort）")
+
+
+#: 三种扩散接法各自要采样的键（与 `bm_core.model_z` 的键名一致）。
+DIFFUSION_KEYS = {"Ws": ("Aw",), "Wo": ("Rwo", "tauD"), "Wshort": ("Rws", "tauD")}
+
+
+# --------------------------------------------------------------------------
 # 拓扑
 # --------------------------------------------------------------------------
 
@@ -167,12 +213,18 @@ VALID_BRANCHES = ("parallel", "series", "capacitive")
 PARAM_KEYS = ALL_PARAM_KEYS          # 向后兼容别名
 
 
-def sampled_keys(branch: str = "parallel", layers: int = 2) -> tuple:
+def sampled_keys(branch: str = "parallel", layers: int = 2,
+                 diffusion: str | None = None,
+                 include_L: bool = False) -> tuple:
     """当前拓扑**真正需要采样**的参数。
 
     - `layers=1` 没有第二个并联节点 → 不采 `R2` / `Q2` / `n2`；
     - `branch="parallel"` 不采 `R_L` / `tau_L`，反之不采 `R_ad` / `tau_ad`；
     - `L_ad` 永远是派生量（`R_L·tau_L`），不采样。
+    - `diffusion`（2026-11-20）：`Ws`→`Aw`；`Wo`→`Rwo,tauD`；`Wshort`→`Rws,tauD`。
+      None（默认）不采任何扩散键，与改动前逐位一致。
+    - `include_L`（2026-11-20）：True 时追加顶层串联 `L`；False（默认）不采，
+      与改动前逐位一致。
 
     给未使用的参数也建先验，会引入纯由先验决定的无效维度，NUTS 会在那里空转。
     """
@@ -180,6 +232,9 @@ def sampled_keys(branch: str = "parallel", layers: int = 2) -> tuple:
         raise ValueError(f"branch 只能是 {VALID_BRANCHES}，收到 {branch!r}")
     if layers not in (1, 2):
         raise ValueError(f"layers 只能是 1/2，收到 {layers!r}")
+    if diffusion is not None and diffusion not in DIFFUSION_KEYS:
+        raise ValueError(f"diffusion 只能是 {sorted(DIFFUSION_KEYS)} 或 None，"
+                         f"收到 {diffusion!r}")
     keys = ["Rs", "R1", "Q1", "n1"]
     if layers >= 2:
         keys += ["R2", "Q2", "n2"]
@@ -189,11 +244,17 @@ def sampled_keys(branch: str = "parallel", layers: int = 2) -> tuple:
         keys += ["R_L", "tau_L"]
     else:
         keys += ["Q_b", "n_b"]
+    if diffusion is not None:
+        keys += list(DIFFUSION_KEYS[diffusion])
+    if include_L:
+        keys += ["L"]
     return tuple(keys)
 
 
 def z_nested(f, p: dict, f_ref: float | None = None,
-             branch: str = "parallel", layers: int = 2):
+             branch: str = "parallel", layers: int = 2,
+             diffusion: str | None = None,
+             include_L: bool = False):
     """嵌套并联阻抗。
 
     参数（dict）
@@ -203,6 +264,17 @@ def z_nested(f, p: dict, f_ref: float | None = None,
     Q2, n2     : 内层 CPE
     branch="parallel"：`R_ad`、`tau_ad`（τ = L_ad/R_ad）
     branch="series"  ：`R_L`、`L_ad`
+
+    `diffusion`（2026-11-20，research 候选，**默认 None 逐位不变**）
+        `'Ws'`/`'Wo'`/`'Wshort'` 时在最内层并联节点内、与 `R2+Z_b`（layers=2）
+        或 `R1+Z_b`（layers=1）**串联**——即 Randles 的 A 型接法
+        `Cdl ∥ (Rct + Z_W)`，扩散阻抗与电荷转移电阻串在同一条支路上，
+        电容跨接在串联组合外。参数键 `Aw` / `Rwo+tauD` / `Rws+tauD`。
+
+    `include_L`（2026-11-20，**默认 False 逐位不变**）
+        顶层串联 `jωL`（`p["L"]`），与 `bm_core.model_z` 的 voigt L **同一位置、
+        同一先验**（`LogNormal(log 1e-6, 2)`）。放在 `Rs` 之后、并联网络之外：
+        仪器/引线电感是串联伪影，不属于任何电化学支路。
 
     layers=1 时退化为 `Rs + 1/(1/CPE1 + 1/(R1 + Z_branch))`，用于 M3 的
     拓扑退化检查。
@@ -222,20 +294,27 @@ def z_nested(f, p: dict, f_ref: float | None = None,
     else:
         zb = z_cpe(f, float(p["Q_b"]), float(p["n_b"]),
                    f_ref=w_ref / (2.0 * np.pi))
+    zw = _diffusion_np(f, p, diffusion)
 
     if layers >= 2:
-        z_inner = float(p["R2"]) + zb
+        z_inner = float(p["R2"]) + zb + zw
         zc2 = z_cpe(f, float(p["Q2"]), float(p["n2"]), f_ref=w_ref / (2 * np.pi))
         z_par2 = 1.0 / (1.0 / zc2 + 1.0 / z_inner)
         z_mid = float(p["R1"]) + z_par2
     else:
         # 单层：R1 与支路直接串联，**不含 R2**（R2 只属于第二层并联节点）
-        z_mid = float(p["R1"]) + zb
+        z_mid = float(p["R1"]) + zb + zw
     z_par1 = 1.0 / (1.0 / zc1 + 1.0 / z_mid)
-    return float(p["Rs"]) + z_par1
+    z = float(p["Rs"]) + z_par1
+    if include_L:
+        # 严格取键：include_L=True 却没有 L 参数是**结构错配**，必须当场报错。
+        # （`if "L" in p` 会静默把 L 丢掉，正是图与拟合不一致的来源。）
+        z = z + 1j * 2.0 * np.pi * f * float(p["L"])
+    return z
 
 
-def j_z_nested(omega, p: dict, w_ref, branch: str = "parallel", layers: int = 2):
+def j_z_nested(omega, p: dict, w_ref, branch: str = "parallel", layers: int = 2,
+               diffusion: str | None = None, include_L: bool = False):
     """jax 版（omega、w_ref 为角频率）。"""
     if branch not in VALID_BRANCHES:
         raise ValueError(f"branch 只能是 {VALID_BRANCHES}，收到 {branch!r}")
@@ -248,15 +327,19 @@ def j_z_nested(omega, p: dict, w_ref, branch: str = "parallel", layers: int = 2)
         zb = j_z_rl_series(omega, p["R_L"], p["L_ad"])
     else:
         zb = j_z_cpe(omega, p["Q_b"], p["n_b"], w_ref)
+    zw = _diffusion_jax(omega, p, diffusion)
     if layers >= 2:
-        z_inner = p["R2"] + zb
+        z_inner = p["R2"] + zb + zw
         zc2 = j_z_cpe(omega, p["Q2"], p["n2"], w_ref)
         z_par2 = 1.0 / (1.0 / zc2 + 1.0 / z_inner)
         z_mid = p["R1"] + z_par2
     else:
-        z_mid = p["R1"] + zb
+        z_mid = p["R1"] + zb + zw
     z_par1 = 1.0 / (1.0 / zc1 + 1.0 / z_mid)
-    return p["Rs"] + z_par1
+    z = p["Rs"] + z_par1
+    if include_L:
+        z = z + 1j * omega * p["L"]
+    return z
 
 
 # ---------------------------------------------------------------------------
@@ -266,7 +349,22 @@ def j_z_nested(omega, p: dict, w_ref, branch: str = "parallel", layers: int = 2)
 ADR_KEYS = ("Rs", "Q", "n", "Rct", "R_ad", "tau_ad")
 
 
-def z_adr(f, p: dict, f_ref: float | None = None):
+def adr_sampled_keys(diffusion: str | None = None,
+                     include_L: bool = False) -> tuple:
+    """adr 真正需要采样的参数；`diffusion`/`include_L` 追加对应键（默认不变）。"""
+    if diffusion is not None and diffusion not in DIFFUSION_KEYS:
+        raise ValueError(f"diffusion 只能是 {sorted(DIFFUSION_KEYS)} 或 None，"
+                         f"收到 {diffusion!r}")
+    keys = ADR_KEYS
+    if diffusion is not None:
+        keys = keys + DIFFUSION_KEYS[diffusion]
+    if include_L:
+        keys = keys + ("L",)
+    return keys
+
+
+def z_adr(f, p: dict, f_ref: float | None = None, diffusion: str | None = None,
+          include_L: bool = False):
     """吸附弛豫三支路并联阻抗（**单节点三支路并联**）。
 
         Z = Rs + [ CPE ∥ Rct ∥ Z_ad ]
@@ -278,22 +376,39 @@ def z_adr(f, p: dict, f_ref: float | None = None):
     差异：吸附支路用 R∥L（`z_rl_parallel` / `bm_ad.z_ad`），不是 R+L 串联——
     低频感抗回路在物理上对应 R∥L（§9.4.42：两者低频极限方向相反）。
     参数 6 个：`Rs, Q, n, Rct, R_ad, tau_ad`。
+
+    `diffusion`（2026-11-20，research 候选，**默认 None 逐位不变**）
+        Randles 的 A 型接法：Warburg 与 Rct **串联**成法拉第支路，再与 CPE、
+        Z_ad 并联 —— `Z = Rs + [CPE ∥ (Rct + Z_W) ∥ Z_ad]`。
+
+    `include_L`（2026-11-20，**默认 False 逐位不变**）
+        顶层串联 `jωL`（`p["L"]`），位置与先验同 `z_nested` / `bm_core.model_z`。
     """
     f = np.asarray(f, float)
     w_ref = 2.0 * np.pi * (f_ref if f_ref is not None
                            else np.sqrt(f.min() * f.max()))
     zc = z_cpe(f, float(p["Q"]), float(p["n"]), f_ref=w_ref / (2.0 * np.pi))
     za = z_rl_parallel(f, float(p["R_ad"]), float(p["tau_ad"]))
-    zpar = 1.0 / (1.0 / zc + 1.0 / float(p["Rct"]) + 1.0 / za)
-    return float(p["Rs"]) + zpar
+    # 法拉第支路：Rct（+ 可选扩散）。diffusion=None 时 zw=0，逐位不变。
+    zf = float(p["Rct"]) + _diffusion_np(f, p, diffusion)
+    zpar = 1.0 / (1.0 / zc + 1.0 / zf + 1.0 / za)
+    z = float(p["Rs"]) + zpar
+    if include_L:
+        z = z + 1j * 2.0 * np.pi * f * float(p["L"])
+    return z
 
 
-def j_z_adr(omega, p: dict, w_ref):
+def j_z_adr(omega, p: dict, w_ref, diffusion: str | None = None,
+            include_L: bool = False):
     """jax 版 z_adr（omega、w_ref 为角频率）。"""
     zc = j_z_cpe(omega, p["Q"], p["n"], w_ref)
     za = j_z_rl_parallel(omega, p["R_ad"], p["tau_ad"])
-    zpar = 1.0 / (1.0 / zc + 1.0 / p["Rct"] + 1.0 / za)
-    return p["Rs"] + zpar
+    zf = p["Rct"] + _diffusion_jax(omega, p, diffusion)
+    zpar = 1.0 / (1.0 / zc + 1.0 / zf + 1.0 / za)
+    z = p["Rs"] + zpar
+    if include_L:
+        z = z + 1j * omega * p["L"]
+    return z
 
 
 def param_spec():
@@ -311,6 +426,8 @@ def param_spec():
         "R_L":  ("感抗支路串联电阻（branch=series）", "Ω", "LogNormal(log(0.1·zmax), 2.0)"),
         "tau_L": ("感抗支路特征时间 L/R_L（branch=series）", "s", "LogNormal(log(1/ω_ref), 2.0)"),
         "L_ad": ("感抗支路电感 = R_L·tau_L（**派生量，不采样**）", "H", "—"),
+        "L":    ("顶层串联电感（include_L=True 才采样；与 voigt 同一条先验）",
+                 "H", "LogNormal(log(1e-6), 2.0)"),
         "Q_b":  ("容性最内层支路 CPE 的窗口幅值 |Z(ω_ref)|", "Ω", "LogNormal(log(zmax), 2.0)"),
         "n_b":  ("容性最内层支路 CPE 指数", "—", "Uniform(0.5, 1.0)"),
     }
@@ -758,7 +875,9 @@ def _check_sigma(f, sigma, sigma_floor: float = 0.0):
     return ("perpoint", arr[0], arr[1])
 
 
-def _loglik_chained(s, f, Z, branch, layers, sig_re, sig_im):
+def _loglik_chained(s, f, Z, branch, layers, sig_re, sig_im,
+                    diffusion: str | None = None,
+                    include_L: bool = False):
     """`(chain, draw, n_freq)` 的同频联合对数似然。
 
     `ll[c,d,j] = log p(Z'_j) + log p(Z''_j)` —— 同一频率的实虚部是**一个**
@@ -767,8 +886,12 @@ def _loglik_chained(s, f, Z, branch, layers, sig_re, sig_im):
     `sig_re`/`sig_im` 是 `_check_sigma` 归一化后的结果：`None` 表示自由噪声
     （逐 draw 从 `s["s_re"]`/`s["s_im"]` 取），否则是**常数或 `(n_freq,)` 数组**
     —— 后者走 numpy 广播，不需要另写一份似然。
+
+    `diffusion` / `include_L`（2026-11-20 修）：**必须与拟合时的结构一致**。
+    这里是 LOO/ELPD 的似然路径，早先没转发这两项 ⇒ 扩散/L 候选的 `elpd`
+    是用**无扩散、无 L** 的模型算的，与 `rms`/图用的结构不是同一个模型。
     """
-    keys = sampled_keys(branch, layers)
+    keys = sampled_keys(branch, layers, diffusion, include_L)
     ch, dr = s["Rs"].shape[:2]
     ll = np.empty((ch, dr, f.size))
     for c in range(ch):
@@ -776,7 +899,8 @@ def _loglik_chained(s, f, Z, branch, layers, sig_re, sig_im):
             p = {k: float(s[k][c, d]) for k in keys}
             if branch == "series":
                 p["L_ad"] = p["R_L"] * p["tau_L"]
-            z = z_nested(f, p, branch=branch, layers=layers)
+            z = z_nested(f, p, branch=branch, layers=layers,
+                         diffusion=diffusion, include_L=include_L)
             if sig_re is None:
                 sr, si = float(s["s_re"][c, d]), float(s["s_im"][c, d])
             else:
@@ -787,14 +911,17 @@ def _loglik_chained(s, f, Z, branch, layers, sig_re, sig_im):
     return ll
 
 
-def _prior_table(zmax, w_ref, branch: str, layers: int) -> dict:
+def _prior_table(zmax, w_ref, branch: str, layers: int,
+                 diffusion: str | None = None,
+                 include_L: bool = False) -> dict:
     """参数 → 先验分布（**单一来源**）。
 
     `fit_top` 的采样与 `physical_to_unconstrained` 的换算都读这张表，
     避免"文档里的先验"与"代码里的先验"各写一遍——v3 就吃过这个亏
     （`param_spec()` 曾把派生量 `L_ad` 写成独立先验）。
 
-    顺序即 `sampled_keys` 的顺序，不含派生量。
+    顺序即 `sampled_keys` 的顺序，不含派生量。`diffusion` 的先验尺度与
+    `bm_core.make_model` 的扩散段对齐（宽 σ=2，不替数据做主）。
     """
     import numpyro.distributions as dist
 
@@ -817,13 +944,30 @@ def _prior_table(zmax, w_ref, branch: str, layers: int) -> dict:
     else:
         t["Q_b"] = dist.LogNormal(jnp.log(zmax), 2.0)
         t["n_b"] = dist.Uniform(0.5, 1.0)
+    if diffusion is not None:
+        # 与 bm_core.make_model 扩散段同尺度：Rw/Rwo/Rws ~ LogNormal(0.1·zmax, 2)，
+        # tauD 中心放窗口几何中心、σ=2（不放到窗口外很远）。
+        if diffusion == "Ws":
+            t["Aw"] = dist.LogNormal(jnp.log(0.1 * zmax), 2.0)
+        elif diffusion == "Wo":
+            t["Rwo"] = dist.LogNormal(jnp.log(0.1 * zmax), 2.0)
+            t["tauD"] = dist.LogNormal(jnp.log(1.0 / w_ref), 2.0)
+        elif diffusion == "Wshort":
+            t["Rws"] = dist.LogNormal(jnp.log(0.1 * zmax), 2.0)
+            t["tauD"] = dist.LogNormal(jnp.log(1.0 / w_ref), 2.0)
+    if include_L:
+        # 与 `bm_core.make_model` 的顶层 L 完全同一条先验：中心 1 μH、σ=2（宽）。
+        # 不用 zmax 定标 —— 电感量级与阻抗量级无关，用 zmax 会把先验做成数据依赖。
+        t["L"] = dist.LogNormal(jnp.log(1e-6), 2.0)
     return t
 
 
 def physical_to_unconstrained(p_phys: dict, *, zmax: float, w_ref: float,
                               branch: str = "parallel", layers: int = 2,
                               sigma=None, sigma_floor: float = 0.0,
-                              num_chains: int = 1) -> dict:
+                              num_chains: int = 1,
+                              diffusion: str | None = None,
+                              include_L: bool = False) -> dict:
     """物理参数 → **无约束**空间，供 `fit_top(init_values=...)` 使用。
 
     NumPyro 的 `init_params` 期望的是无约束（unconstrained）初值：正参数是
@@ -855,14 +999,15 @@ def physical_to_unconstrained(p_phys: dict, *, zmax: float, w_ref: float,
     from numpyro.distributions.transforms import biject_to
 
     _check_sigma(None, sigma, sigma_floor)      # 提前报错（与 fit_top 同一套校验）
-    tab = _prior_table(float(zmax), float(w_ref), branch, layers)
+    tab = _prior_table(float(zmax), float(w_ref), branch, layers, diffusion,
+                       include_L)
     out = {}
-    for k in sampled_keys(branch, layers):
+    for k in sampled_keys(branch, layers, diffusion, include_L):
         if k not in p_phys:
             continue
         u = biject_to(tab[k].support).inv(np.asarray(float(p_phys[k])))
         out[k] = np.asarray(u, dtype=float).reshape(())
-    missing = set(sampled_keys(branch, layers)) - set(out)
+    missing = set(sampled_keys(branch, layers, diffusion, include_L)) - set(out)
     if missing:
         raise ValueError(f"init_values 缺少参数：{sorted(missing)}")
 
@@ -897,7 +1042,9 @@ def physical_to_unconstrained(p_phys: dict, *, zmax: float, w_ref: float,
 
 def _make_model(branch: str, layers: int, sig_mode: str,
                 sig_re=None, sig_im=None, sigma_floor: float = 0.0,
-                zmax_override: float | None = None):
+                zmax_override: float | None = None,
+                diffusion: str | None = None,
+                include_L: bool = False):
     """构造 NumPyro 模型。噪声用 `_check_sigma` **归一化后**的输入。
 
     逐点 σ 与标量 σ 走**同一段代码**：`jnp.asarray` 对标量给 0 维、对
@@ -926,12 +1073,14 @@ def _make_model(branch: str, layers: int, sig_mode: str,
         w_ref = 2.0 * jnp.pi * jnp.sqrt(jnp.min(f_arr) * jnp.max(f_arr))
         omega = 2.0 * jnp.pi * f_arr
         p = {}
-        for k, d in _prior_table(zmax, w_ref, branch, layers).items():
+        for k, d in _prior_table(zmax, w_ref, branch, layers, diffusion,
+                                 include_L).items():
             p[k] = numpyro.sample(k, d)
         if branch == "series":
             p["L_ad"] = numpyro.deterministic("L_ad", p["R_L"] * p["tau_L"])
 
-        Zt = j_z_nested(omega, p, w_ref, branch=branch, layers=layers)
+        Zt = j_z_nested(omega, p, w_ref, branch=branch, layers=layers,
+                        diffusion=diffusion, include_L=include_L)
 
         if sig_mode == "free":
             if sigma_floor > 0:
@@ -960,8 +1109,8 @@ def fit_top(f, Z, *, branch: str = "parallel", layers: int = 2,
             num_chains: int = 4, target_accept: float = 0.9,
             max_tree_depth: int = 10, sigma=None, sigma_floor: float = 0.0,
             sigma_from_data: bool = False, zmax_override: float | None = None,
-            init_values: dict | None = None,
-            progress: bool = True) -> dict:
+            init_values: dict | None = None, diffusion: str | None = None,
+            include_L: bool = False, progress: bool = True) -> dict:
     """单次固定 `branch × layers` 的 NUTS 拟合（M3 研究性原型）。
 
     边界（审查批准的范围）
@@ -1037,11 +1186,11 @@ def fit_top(f, Z, *, branch: str = "parallel", layers: int = 2,
         raise ValueError("f 与 Z 长度需一致且不少于 8 点")
     if not np.all(np.isfinite(f)) or f.min() <= 0:
         raise ValueError("频率必须是有限正数")
-    sampled_keys(branch, layers)                 # 提前校验 branch/layers
+    sampled_keys(branch, layers, diffusion, include_L)   # 提前校验 branch/layers/diffusion
     sig_mode, sig_re, sig_im = _check_sigma(f, sigma, sigma_floor)
 
     model = _make_model(branch, layers, sig_mode, sig_re, sig_im,
-                        float(sigma_floor), zmax_override)
+                        float(sigma_floor), zmax_override, diffusion, include_L)
 
     mcmc = MCMC(NUTS(model, target_accept_prob=target_accept,
                      max_tree_depth=max_tree_depth),
@@ -1052,7 +1201,7 @@ def fit_top(f, Z, *, branch: str = "parallel", layers: int = 2,
     # 一次采样一条事件。注意 `fit_top` **没有** `extra_fields` 形参、run 里硬编码
     # ("diverging",) ⇒ 这一项只有观测值、没有声明值，记录会落 derived/resolved_missing。
     # 这是如实记账（F-6），不是漏接：要闭就得给 fit_top 加形参，不在本轮范围。
-    mcmc.provenance = SC.capture_at_construction(
+    mcmc.provenance = HOOK.emit(
         mcmc, site="bm_top.fit_top",
         passed=dict(n_warmup=n_warmup, n_samples=n_samples, num_chains=num_chains,
                     target_accept=target_accept, max_tree_depth=max_tree_depth,
@@ -1064,7 +1213,8 @@ def fit_top(f, Z, *, branch: str = "parallel", layers: int = 2,
         s_ch["L_ad"] = s_ch["R_L"] * s_ch["tau_L"]
     s = {k: v.reshape((-1,) + v.shape[2:]) for k, v in s_ch.items()}
 
-    ll = _loglik_chained(s_ch, f, Z, branch, layers, sig_re, sig_im)
+    ll = _loglik_chained(s_ch, f, Z, branch, layers, sig_re, sig_im,
+                         diffusion=diffusion, include_L=include_L)
     import arviz as az
     # 注意：`from_dict` 的第一个位置参数是 posterior；log_likelihood 必须
     # 作为关键字传。`az.loo` 还需要 posterior 组来对齐 (chain, draw)，
@@ -1128,11 +1278,12 @@ def fit_top(f, Z, *, branch: str = "parallel", layers: int = 2,
 # 吸附三支路并联（adr）采样
 # ---------------------------------------------------------------------------
 
-def adr_prior_table(zmax, w_ref):
-    """adr 六参数先验（单一来源）。尺度与 nested 对齐。"""
+def adr_prior_table(zmax, w_ref, diffusion: str | None = None,
+                    include_L: bool = False):
+    """adr 六参数先验（单一来源）。尺度与 nested 对齐；`diffusion`/`L` 追加先验。"""
     import numpyro.distributions as dist
 
-    return {
+    t = {
         "Rs": dist.LogNormal(jnp.log(0.2 * zmax), 1.0),
         "Q": dist.LogNormal(jnp.log(zmax), 2.0),
         "n": dist.Uniform(0.5, 1.0),
@@ -1140,16 +1291,30 @@ def adr_prior_table(zmax, w_ref):
         "R_ad": dist.LogNormal(jnp.log(0.1 * zmax), 2.0),
         "tau_ad": dist.LogNormal(jnp.log(1.0 / w_ref), 2.0),
     }
+    if diffusion is not None:
+        if diffusion == "Ws":
+            t["Aw"] = dist.LogNormal(jnp.log(0.1 * zmax), 2.0)
+        elif diffusion == "Wo":
+            t["Rwo"] = dist.LogNormal(jnp.log(0.1 * zmax), 2.0)
+            t["tauD"] = dist.LogNormal(jnp.log(1.0 / w_ref), 2.0)
+        elif diffusion == "Wshort":
+            t["Rws"] = dist.LogNormal(jnp.log(0.1 * zmax), 2.0)
+            t["tauD"] = dist.LogNormal(jnp.log(1.0 / w_ref), 2.0)
+    if include_L:
+        t["L"] = dist.LogNormal(jnp.log(1e-6), 2.0)
+    return t
 
 
-def _loglik_adr(s, f, Z, sig_re, sig_im):
+def _loglik_adr(s, f, Z, sig_re, sig_im, diffusion: str | None = None,
+                include_L: bool = False):
     """`(chain, draw, n_freq)` 同频联合对数似然（与 `_loglik_chained` 同口径）。"""
     ch, dr = s["Rs"].shape[:2]
+    keys = adr_sampled_keys(diffusion, include_L)
     ll = np.empty((ch, dr, f.size))
     for c in range(ch):
         for d in range(dr):
-            p = {k: float(s[k][c, d]) for k in ADR_KEYS}
-            z = z_adr(f, p)
+            p = {k: float(s[k][c, d]) for k in keys}
+            z = z_adr(f, p, diffusion=diffusion, include_L=include_L)
             if sig_re is None:
                 sr, si = float(s["s_re"][c, d]), float(s["s_im"][c, d])
             else:
@@ -1164,12 +1329,15 @@ def fit_adr(f, Z, *, n_warmup: int = 600, n_samples: int = 1200, seed: int = 0,
             num_chains: int = 4, target_accept: float = 0.9,
             max_tree_depth: int = 10, sigma=None, sigma_floor: float = 0.0,
             sigma_from_data: bool = False, zmax_override: float | None = None,
-            init_values: dict | None = None, progress: bool = True) -> dict:
+            init_values: dict | None = None, diffusion: str | None = None,
+            include_L: bool = False, progress: bool = True) -> dict:
     """吸附三支路并联拓扑的 NUTS 拟合。返回结构与 `fit_top` **同构**。
 
     拓扑：`Z = Rs + [CPE ∥ Rct ∥ Z_ad]`，`Z_ad = R∥L` 吸附电感（6 参数）。
     `sigma`/`sigma_from_data`/`zmax_override` 的语义与 `fit_top` 完全一致
     （逐点 σ 含被留出点自身 → elpd 不作样本外证据；R21 先验尺度数据依赖）。
+    `diffusion`（2026-11-20）：Randles A 型，Warpurg 与 Rct 串联；None 逐位不变。
+    `include_L`（2026-11-20）：顶层串联 `jωL`；False（默认）逐位不变。
     """
     from numpyro.infer import MCMC, NUTS
     import numpyro
@@ -1181,6 +1349,7 @@ def fit_adr(f, Z, *, n_warmup: int = 600, n_samples: int = 1200, seed: int = 0,
         raise ValueError("f 与 Z 长度需一致且不少于 8 点")
     if not np.all(np.isfinite(f)) or f.min() <= 0:
         raise ValueError("频率必须是有限正数")
+    adr_sampled_keys(diffusion, include_L)     # 提前校验 diffusion / include_L
     sig_mode, sig_re, sig_im = _check_sigma(f, sigma, sigma_floor)
 
     def model(f_arr, Zr, Zi):
@@ -1189,8 +1358,8 @@ def fit_adr(f, Z, *, n_warmup: int = 600, n_samples: int = 1200, seed: int = 0,
         w_ref = 2.0 * jnp.pi * jnp.sqrt(jnp.min(f_arr) * jnp.max(f_arr))
         omega = 2.0 * jnp.pi * f_arr
         p = {k: numpyro.sample(k, d)
-             for k, d in adr_prior_table(zmax, w_ref).items()}
-        Zt = j_z_adr(omega, p, w_ref)
+             for k, d in adr_prior_table(zmax, w_ref, diffusion, include_L).items()}
+        Zt = j_z_adr(omega, p, w_ref, diffusion=diffusion, include_L=include_L)
 
         if sig_mode == "free":
             if sigma_floor > 0:
@@ -1226,7 +1395,8 @@ def fit_adr(f, Z, *, n_warmup: int = 600, n_samples: int = 1200, seed: int = 0,
     s_ch = {k: np.asarray(v) for k, v in mcmc.get_samples(group_by_chain=True).items()}
     s = {k: v.reshape((-1,) + v.shape[2:]) for k, v in s_ch.items()}
 
-    ll = _loglik_adr(s_ch, f, Z, sig_re, sig_im)
+    ll = _loglik_adr(s_ch, f, Z, sig_re, sig_im, diffusion=diffusion,
+                     include_L=include_L)
     import arviz as az
     idata = az.from_dict(posterior=s_ch, log_likelihood={"obs": ll})
     loo = az.loo(idata)

@@ -131,10 +131,27 @@ nested 名下。所以 0.3.0 规定：
 只是换了件外衣。格式错误不是"来源缺失"，不能静默降级成 `possible_duplicate`：
 那会把调用方的 bug 藏起来。
 
+0.8.0：**槽位扩展**。三族（`voigt` / `nested` / `adr`）各加两个可选槽位 ——
+`diffusion`（`w_inf`→Ws、`w_open`→Wo、`w_short`→Wshort）与 `series_inductor`
+（顶层 `rl_series`）。两者都**默认关**，且槽位元件与 config 值必须一致
+（`_check_diffusion_slot` / `_check_inductor_slot`），防"假接入"。
+
+> **版本号语义订正（2026-11-22）**：槽位是 2026-11-20 加的，但 `REGISTRY_VERSION`
+> 当时没跟着升，于是 `0.7.0` 同时对应两个 `registry_digest`
+> （MANIFEST 冻结的 `b2675c8255bea716` 与加槽位后的 `496946a5f5ea1b7d`）。
+> 同一个版本号对应两套注册表内容，是版本号语义错误，不是数据问题
+> （`records.jsonl` 未变）。本版升到 `0.8.0` 把两个世代分开；
+> `evidence/stage0_records/MANIFEST.json` **不重冻结**，它记的 `0.7.0/b2675c82`
+> 正是那 239 条记录所属的世代。详见 `round_2026-11-21/ADR_RETIRE_VERIFICATION.md` §5。
+
 边界
 ----
-- 拓扑只登记 `voigt` / `nested` 两个；Warburg 与吸附登记为**未接线元件**
-  （`wired=False`），因为现有拓扑没有对应的槽位。
+- 拓扑登记 `voigt` / `nested` / `adr` 三个（`adr` 自 2026-11-22 起
+  `ADR_FAMILY_VERDICT` 判定"作为候选已被支配"，保持 `exploratory`、
+  不进默认候选集，但保留研究入口）。
+- 元件：Warburg 三兄弟（`w_inf`/`w_open`/`w_short`）与顶层 `rl_series` **已接线**
+  （`wired=True`，挂 `diffusion` / `series_inductor` 槽位）；`adsorption` 仍
+  `wired=False`（顶层串联接点已由极点结构证否，见其 `blocked_reason`）。
 - 不接 `bmdrt.py`，不改 `bm_core`/`bm_top`/`bm_select`/`bm_identifiability` 任何一行。
 - 本模块的校验是**格式与约束层**的强制，不证明语义正确；后者靠
   `test_circuit_registry.py` 的 fixture 契约测试。
@@ -146,7 +163,8 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
-REGISTRY_VERSION = "0.7.0"        # 0.7：产物 sha256 必须是 64 位十六进制（非空 ≠ 有效）
+REGISTRY_VERSION = "0.8.0"        # 0.8：三族各加 diffusion / series_inductor 槽位
+#                                     （0.7：产物 sha256 必须是 64 位十六进制）
 PRECHECK_VERSION = "0.1.0"
 
 PRECHECK_STATES = ("excluded", "not_excluded", "unknown")
@@ -1954,15 +1972,59 @@ def _voigt_consistency(by_slot: Mapping, cfg: Mapping) -> None:
             f"voigt：config['K']={K} 与实际挂载的 HN 单元数 {len(units)} 不一致；"
             "数学结构与登记定义对不上")
 
+    _check_inductor_slot(by_slot, cfg, "voigt")
+
+    # 扩散槽位（2026-11-20）：槽位元件与 config['diffusion'] 必须一一对应且同有同无。
+    # 不这样做就会出现"槽位挂了 w_inf、采样却按 diffusion=None 跑"的假接入——
+    # 登记表数学结构与真正拟合的结构对不上，是 §4 明令禁止的。
+    _check_diffusion_slot(by_slot, cfg, "voigt")
+
+
+def _check_inductor_slot(by_slot: Mapping, cfg: Mapping, who: str) -> None:
+    """三族共用的顶层电感槽位校验（2026-11-20）。
+
+    规则与扩散同构：`series_inductor` 槽位挂了 `rl_series` ⇔ `config['include_L']`
+    为真，且最多一个。这样"auto 判定要 L"与"实际采样了 L"不可能对不上——
+    否则会出现 voigt 有 L、nested/adr 没有 L 的口径分裂。
+    """
     inc = bool(cfg.get("include_L", False))
     inductors = by_slot.get("series_inductor", [])
     if inc and len(inductors) != 1:
         raise ValueError(
-            f"voigt：include_L=True 需要恰好一个 series_inductor，实得 {inductors}")
+            f"{who}：include_L=True 需要恰好一个 series_inductor，实得 {inductors}")
     if not inc and inductors:
         raise ValueError(
-            f"voigt：include_L=False 但挂了 series_inductor={inductors}；"
+            f"{who}：include_L=False 但挂了 series_inductor={inductors}；"
             "顶层感抗只在 include_L=True 时采样")
+
+
+def _check_diffusion_slot(by_slot: Mapping, cfg: Mapping, who: str) -> None:
+    """三族共用的扩散槽位一致性校验（voigt/nested/adr 同一把尺）。
+
+    规则：`diffusion` 槽位挂了元件 ⇔ `config['diffusion']` 有值，且元件与值
+    一一对应（w_inf↔Ws / w_open↔Wo / w_short↔Wshort），槽位最多一个元件。
+    这样"登记结构"与"采样结构"不可能对不上。
+    """
+    diff_slot = by_slot.get("diffusion", [])
+    diff_cfg = cfg.get("diffusion") or None
+    _w_map = {"w_inf": "Ws", "w_open": "Wo", "w_short": "Wshort"}
+    if diff_slot and not diff_cfg:
+        raise ValueError(
+            f"{who}：挂了扩散元件 {diff_slot} 但 config['diffusion'] 未给；"
+            "登记结构与采样结构必须一致")
+    if diff_cfg and not diff_slot:
+        raise ValueError(
+            f"{who}：config['diffusion']={diff_cfg!r} 但没挂扩散槽位；"
+            "登记结构与采样结构必须一致")
+    if diff_slot:
+        if len(diff_slot) != 1:
+            raise ValueError(
+                f"{who}：diffusion 槽位最多一个元件（min=0,max=1），实得 {diff_slot}")
+        expect = _w_map.get(diff_slot[0])
+        if expect != diff_cfg:
+            raise ValueError(
+                f"{who}：槽位元件 {diff_slot[0]} 对应 diffusion={expect!r}，"
+                f"与 config['diffusion']={diff_cfg!r} 不符")
 
 
 def _nested_consistency(by_slot: Mapping, cfg: Mapping) -> None:
@@ -2003,6 +2065,8 @@ def _nested_consistency(by_slot: Mapping, cfg: Mapping) -> None:
         raise ValueError(f"nested：layers=2 需要恰好一个 inner_cpe，实得 {inner}")
     if layers == 1 and inner:
         raise ValueError(f"nested：layers=1 不含第二并联节点，inner_cpe 必须为空，实得 {inner}")
+    _check_inductor_slot(by_slot, cfg, "nested")
+    _check_diffusion_slot(by_slot, cfg, "nested")
 
 
 def _adr_consistency(by_slot: Mapping, cfg: Mapping) -> None:
@@ -2018,6 +2082,8 @@ def _adr_consistency(by_slot: Mapping, cfg: Mapping) -> None:
         if got != [expect]:
             raise ValueError(
                 f"adr：槽位 {slot_id} 要求恰好挂一个 {expect!r}，实得 {got}")
+    _check_inductor_slot(by_slot, cfg, "adr")
+    _check_diffusion_slot(by_slot, cfg, "adr")
 
 
 register_topology(TopologySpec(
@@ -2025,7 +2091,8 @@ register_topology(TopologySpec(
     name="串联 HN 弛豫叠加",
     skeleton="Z(f) = R_inf + Σ_{k=1..K} Z_HN(τ_k, W_k, φ_k, ζ_k)  [+ jωL，仅 include_L=True]",
     forward_ref="bm_core:model_z",
-    param_space=("R_inf", "W[k]", "pi[k]", "ln_tau[k]", "zeta[k]", "L"),
+    param_space=("R_inf", "W[k]", "pi[k]", "ln_tau[k]", "zeta[k]", "L",
+                 "Rw|Aw|Rwo@tauD"),
     derived=("K",),
     priors={
         "R_inf": "LogNormal 相对 zmax 的固定档（见 bm_core.make_model）",
@@ -2033,6 +2100,8 @@ register_topology(TopologySpec(
         "pi[k]": "φ ∈ (0,1)，Uniform/截断（bm_select.VOIGT_CAPS['phi']）",
         "zeta[k]": "ζ ∈ (0.3,2.0)，zeta_fixed=1.0 时退化为 Cole-Cole",
         "L": "仅在 include_L=True 时采样",
+        "Rw/Aw/Rwo/tauD": "仅 diffusion 槽位挂载时采样；σ=2.0 宽先验"
+                          "（见 bm_core.make_model 扩散段）",
     },
     init_profiles={
         "uniform": "init_to_uniform（生产默认；`bm_core.fit` 未给 init_values 时）",
@@ -2045,6 +2114,11 @@ register_topology(TopologySpec(
                  note="K 由 config['K'] 给出，每个单元一组 (W,τ,φ,ζ)"),
         SlotSpec("series_inductor", "顶层串联感抗", ("rl_series",), min_count=0, max_count=1,
                  note="仅 include_L=True；默认关闭"),
+        SlotSpec("diffusion", "顶层串联扩散（research 候选，2026-11-20）",
+                 ("w_inf", "w_open", "w_short"), min_count=0, max_count=1,
+                 note="默认关闭；接入≠准入，判据只给统计事实不宣称机制存在；"
+                      "槽位元件须与 config['diffusion'] 一致（w_inf↔Ws/"
+                      "w_open↔Wo/w_short↔Wshort）"),
     ),
     maturity="production",
     min_level="L1",
@@ -2089,6 +2163,12 @@ register_topology(TopologySpec(
         SlotSpec("inner_cpe", "内层 CPE（仅 layers=2）", ("cpe",), min_count=0, max_count=1),
         SlotSpec("branch", "最内层支路", ("rl_parallel", "rl_series", "cpe"),
                  min_count=1, max_count=1),
+        SlotSpec("diffusion", "最内层支路内串联扩散（A 型/Randles，research 候选）",
+                 ("w_inf", "w_open", "w_short"), min_count=0, max_count=1,
+                 note="默认关闭；与 branch 串联、同在 R2（或 R1）之后、内层 CPE 之内；"
+                      "接入≠准入，判据只给统计事实不宣称机制存在"),
+        SlotSpec("series_inductor", "顶层串联感抗", ("rl_series",), min_count=0, max_count=1,
+                 note="仅 include_L=True；与 voigt 的 L 同一位置、同一先验"),
     ),
     maturity="exploratory",
     min_level="L1",
@@ -2131,6 +2211,12 @@ register_topology(TopologySpec(
         SlotSpec("cpe_branch", "双电层 CPE 并联支路", ("cpe",), min_count=1, max_count=1),
         SlotSpec("charge_transfer", "电荷转移电阻并联支路", ("resistor",), min_count=1, max_count=1),
         SlotSpec("adsorption_branch", "吸附感抗并联支路", ("rl_parallel",), min_count=1, max_count=1),
+        SlotSpec("diffusion", "与 Rct 串联的扩散支路（A 型/Randles，research 候选）",
+                 ("w_inf", "w_open", "w_short"), min_count=0, max_count=1,
+                 note="默认关闭；与 charge_transfer 的 Rct 串联后作为一个法拉第支路，"
+                      "再与 CPE、吸附支路并联；接入≠准入"),
+        SlotSpec("series_inductor", "顶层串联感抗", ("rl_series",), min_count=0, max_count=1,
+                 note="仅 include_L=True；与 voigt/nested 的 L 同一位置、同一先验"),
     ),
     maturity="exploratory",
     min_level="L1",
@@ -2143,8 +2229,19 @@ register_topology(TopologySpec(
         "**并联**。两者低频极限方向相反（§9.4.42），不是同一个拓扑；本拓扑拟合成功"
         "只说明三支路并联有拟合能力，不得宣称复现了文献吸附电路。是否补串联版"
         "（ADR-RL-series）看物理依据，当前不新增。",
-        "AZ31-12Li_5 上 nested 未收敛（R̂=22.07）而 adr 收敛到 R̂≈1.002、rms 7.10%，"
-        "但 acf 仍 >0.50（M-b 未过），未过 §13/§14 验收线，不接 bmdrt.py 主流程",
+        "AZ31-12Li_5 上曾观测到 nested R̂=22.07 而 adr R̂≈1.002、rms 7.10%。"
+        "**该对比的归因已于 2026-11-22 订正**：那次 nested 是 `include_L=False` 的旧配置"
+        "（`out/m4_holdout2.json` 14 条参数全无 L 键），接顶层 L 后同谱 nested R̂=1.003/div=0。"
+        "所以 22.07 是**缺 L 的表达力问题**，不是\"nested 这个族采样不稳\"——不得再用它当"
+        "adr 优于 nested 的证据（见 `round_2026-11-21/TOPOLOGY_AUDIT.md` §3.8）。",
+        "acf 仍 >0.50（M-b 未过），未过 §13/§14 验收线，不接 bmdrt.py 主流程。",
+        "**作为拟合候选已被支配**（`ADR_FAMILY_VERDICT.md`）：同参数数跨 5 类 13 条，"
+        "带 L 时串联式 12 胜 / 1 平 / 0 负，均 rms 9.05%→6.93%；无 L 时 9 胜 / 3 平 / 1 负。"
+        "多出的自由度正好是不可辨那一维（`1/Rct+1/R_ad` 只能以和出现）。"
+        "**不进默认候选集**（`build_candidates(include_adr=)` 默认已是 False；"
+        "但 `bmdrt compare` 的 `--no-adr` 默认仍是 True，属 CLI 层未同步），"
+        "保留 `wired` 与研究入口用于对标外部模型 / 欠定负对照；不要用它的 elpd 下结论"
+        "（退化后验上的 elpd 与 R̂ 一起坏，属层 0）。",
         "拓扑身份是 adr（独立拓扑），不是 nested 的 branch；`--branch adsorption` "
         "只是兼容别名，产物 config.topology 恒为 adr",
         "未登记确定性预检：unknown 不等于 not_excluded",
@@ -2179,7 +2276,10 @@ register_element(ElementSpec(
     params=("R_ad", "tau_ad"),
     maturity="exploratory",
     formula="Z = R·jωτ/(1+jωτ)；ω→0 时 →0，ω→∞ 时 →R",
-    notes=("低频感抗峰在 1/(2πτ)；这是 nested 的默认支路，也是 AZ31 需要的那个接点",),
+    notes=("低频感抗峰在 1/(2πτ)；这是 nested 的默认支路，也是 AZ31 需要的那个接点",
+           "与 `adsorption`（voigt 顶层串联接点）是**同一个函数**，实测 max|Δ|=0.0："
+           "吸附元件没有缺席，区别只在接在哪 —— 第二并联节点（本元件）有效，"
+           "顶层串联（adsorption）已被 §9.4.12 证否"),
 ))
 
 register_element(ElementSpec(
@@ -2208,9 +2308,11 @@ register_element(ElementSpec(
     forward_ref="bm_diff:z_winf",
     params=("A",),
     maturity="frozen",
-    wired=False,
-    blocked_reason="现有两个拓扑都没有扩散槽位；接入需要先定义槽位与接点",
+    wired=True,
     formula="Z = A/√(jω)（渐近形式，见 bm_diff.z_winf）",
+    notes=("2026-11-20 用户裁决接入为 research 候选：正演/采样/CLI 齐备"
+           "（diffusion='Ws'）。接入≠准入：判据只给统计事实，不宣称数据里有扩散；"
+           "§4 三条准入（ω^-1/2 斜率/独立机制依据/CAL-01）仍未满足",),
 ))
 
 register_element(ElementSpec(
@@ -2219,9 +2321,10 @@ register_element(ElementSpec(
     forward_ref="bm_diff:z_wopen",
     params=("Rw", "tauD"),
     maturity="frozen",
-    wired=False,
-    blocked_reason="同上；且 §11 未把扩散接入列为当前范围",
+    wired=True,
     formula="Z = Rw·coth(√(jωτD))/√(jωτD)",
+    notes=("2026-11-20 接入为 research 候选（diffusion='Wo'）；"
+           "同 w_inf 的接入≠准入边界",),
 ))
 
 register_element(ElementSpec(
@@ -2230,21 +2333,40 @@ register_element(ElementSpec(
     forward_ref="bm_diff:z_wshort",
     params=("Rw", "tauD"),
     maturity="frozen",
-    wired=False,
-    blocked_reason="同上；另有实现未接 CLI 的记录",
+    wired=True,
     formula="Z = Rw·tanh(√(jωτD))/√(jωτD)",
+    notes=("2026-11-20 接入为 research 候选：正演 bm_diff.j_z_wshort 已在，"
+           "采样/重建/CLI 的 'Wshort' 分支同批补齐；接入≠准入边界同上",),
 ))
 
 register_element(ElementSpec(
     id="adsorption",
-    name="吸附阻抗",
+    name="吸附阻抗（voigt 顶层串联接点）",
     forward_ref="bm_ad:z_ad",
     params=("Rad", "tau_ad"),
     maturity="exploratory",
     wired=False,
-    blocked_reason="只允许挂在第二并联节点内；现有拓扑的 branch 槽位语义不同，尚未定义接点",
+    # 状态（2026-11-21 结案）：**这个 id 不代表"一个缺的元件"，而是"voigt 顶层
+    # 串联"这一个接点。** 元件本身与 `rl_parallel` 是同一个函数
+    # （`bm_ad.z_ad` ≡ `bm_top.z_rl_parallel`，实测 max|Δ|=0.0）；有效接点
+    # （第二并联节点）已由 nested 的 `branch` 槽位与 adr 的 `adsorption_branch`
+    # 承载，两族候选集里一直在跑。所以这里不是"待接"，是"这一个接点已被证否"。
+    #
+    # §9.4.12.4 的极点证据：voigt(K=2)+ad 极点恒为实负（−20.0, −0.50, −0.625），
+    # nested 是复共轭（−0.479±0.438i）。相同有理函数必有相同极点集 ⇒ 两族不可能
+    # 全域恒等；参数盒里约 23% 落在复极点区，那里顶层串联严格不能表示。
+    # 因此"把它补到 voigt" = 给 voigt 加第二个并联节点 = 把 voigt 改成 nested
+    # （§9.4.12.5），属改族定义，不是补元件。
+    blocked_reason=("顶层串联接点已证否（§9.4.12）：要表示低频感抗必须把 R∥L 放进"
+                    "第二并联节点，而那正是 nested 的族定义；故不登记槽位。"
+                    "有效接点见 rl_parallel（nested 的 branch / adr 的 "
+                    "adsorption_branch 已承载）"),
     formula="见 bm_ad.z_ad；低频极限为 R∥L 型回路",
-    notes=("§9.4.12 实测：把 R∥L 挂到 voigt 最外层串联，noise=0 残差只从 44.0% 降到 40.7%",),
+    notes=("与 `rl_parallel` 是**同一个函数**（实测 max|Δ|=0.0），差别只在接点；"
+           "别把它读成两个元件",
+           "§9.4.12 实测：挂到 voigt 最外层串联，noise=0 残差只从 44.0% 降到 "
+           "40.7%（增量远小于 dse）⇒ 根因是接点不是元件",
+           "`bm_select.fit_voigt(adsorption='RL')` 仍可研究性调用，但不进候选集"),
 ))
 
 

@@ -329,10 +329,10 @@ def voigt_can_represent(f, Z, *, include_L=None,
 # --------------------------------------------------------------------------
 
 def fit_voigt(f, Z, K: int, *, seed: int = 0, include_L: bool = False,
-              adsorption: str | None = None,
+              adsorption: str | None = None, diffusion: str | None = None,
               sigma_floor: float = SIGMA_FLOOR, kw: dict | None = None,
-              sigma=None) -> dict:
-    """voigt 族：`bm_real.fit_one`（K 个串联 HN + 可选 L / 吸附支路）。
+              sigma=None, zmax_override: float | None = None) -> dict:
+    """voigt 族：`bm_real.fit_one`（K 个串联 HN + 可选 L / 吸附 / 扩散支路）。
 
     `include_L` / `adsorption` 是**族能力开关**，默认全关（= A2/B2 基线口径）。
     打开任一项都会扩大 voigt 族的候选空间，因此**必须与新臂一起预注册**
@@ -342,14 +342,23 @@ def fit_voigt(f, Z, K: int, *, seed: int = 0, include_L: bool = False,
       · `include_L=True` → 串联 `jωL`，只产生**高频**感抗（仪器伪影）；
       · `adsorption="RL"` → `R·jωτ/(1+jωτ)`，产生**低频**感抗（吸附弛豫），
         元件与 nested 族 `parallel` 支路完全相同。
+
+    `diffusion`（2026-11-20，research 候选）：None=基础模型（逐位不变）；
+    `'Ws'/'Wo'/'Wshort'/'both'` 在顶层串联对应扩散项。**接入≠准入**：这是
+    research 能力，判据只给统计事实，不宣称数据里有扩散机制。
     """
     kw = dict(QUICK if kw is None else kw)
     r = R.fit_one(f, Z, K, include_L, "1.0", seed=seed, kw=kw,
                   sigma_floor=float(sigma_floor), adsorption=adsorption,
-                  sigma=sigma)
+                  diffusion=diffusion, sigma=sigma,
+                  # 2026-11-21：`zmax` 的参照量。None = 沿用 max|Z|（改动前口径）。
+                  # 传值用于高动态范围谱的诊断/实验，不改默认行为。
+                  zmax_override=zmax_override)
     pt = r.get("pointwise_elpd")
     pt = None if pt is None else np.asarray(pt, float)
     caps = _caps_suffix(include_L, adsorption)
+    if diffusion:
+        caps += f"+{diffusion}"
     # 分量是否定位：跟着候选一起返回，**不改任何判定**（§9.4.18.2 默认路径逐位不变）。
     # 放进这里而不是 `_select_one`，是为了让 candidate_trace / JSON 里每个候选都自带
     # `k_eff`，事后不用重跑 MCMC 才能解释「K=2 里到底几个分量被定住了」。
@@ -360,6 +369,7 @@ def fit_voigt(f, Z, K: int, *, seed: int = 0, include_L: bool = False,
     cout_state, cout_frac = _comp_out_state(r.get("p_tau_out"))
     cand = dict(family="voigt", dof=K, branch=None, label=f"K={K}{caps}",
                 include_L=bool(include_L), adsorption=adsorption,
+                diffusion=diffusion,
                 elpd=float(r["elpd"]), se=float(r["elpd_se"]), pointwise=pt,
                 div=int(r.get("ndiv") or 0), rhat=r.get("rhat_max"),
                 grade=r.get("grade"), ok=_usable(pt, r["elpd"]), raw=r,
@@ -386,7 +396,10 @@ def _caps_suffix(include_L: bool, adsorption: str | None) -> str:
 
 def fit_nested(f, Z, layers: int, *, branch: str = BRANCH, seed: int = 0,
                sigma_floor: float = SIGMA_FLOOR, kw: dict | None = None,
-               sigma=None, sigma_from_data: bool = False) -> dict:
+               sigma=None, sigma_from_data: bool = False,
+               diffusion: str | None = None,
+               include_L: bool = False,
+               zmax_override: float | None = None) -> dict:
     """nested 族：`bm_top.fit_top`（R∥L 支路嵌在两层 R∥CPE 里）。
 
     `sigma_from_data`（2026-11-16 新增，**默认 False = 改动前行为逐位不变**）
@@ -396,6 +409,12 @@ def fit_nested(f, Z, layers: int, *, branch: str = BRANCH, seed: int = 0,
         事实必须由调用方按口径声明，不能让底层永远拿默认值。
         `bm_select` 内部的生产路径（`_select_one` 等）**一律不传**，因此行为
         与加参数之前逐位相同（`test_entry_parity.py` 守着这个默认值）。
+
+    `diffusion`（2026-11-20，research 候选）：`'Ws'/'Wo'/'Wshort'` 在最内层
+    并联节点内与 R2+Z_b 串联（Randles A 型）。None（默认）逐位不变。
+
+    `include_L`（2026-11-20）：顶层串联 `jωL`，与 voigt 同位置同先验。
+    **默认 False = 改动前逐位不变**；打开后 `sampled_keys` 多一个 `L`。
     """
     kw = dict(QUICK if kw is None else kw)
     o = T.fit_top(f, Z, branch=branch, layers=layers, seed=seed,
@@ -404,11 +423,15 @@ def fit_nested(f, Z, layers: int, *, branch: str = BRANCH, seed: int = 0,
                   target_accept=float(kw["target_accept"]),
                   max_tree_depth=int(kw["max_tree_depth"]),
                   sigma=sigma, sigma_floor=float(sigma_floor),
-                  sigma_from_data=bool(sigma_from_data), progress=False)
+                  sigma_from_data=bool(sigma_from_data), diffusion=diffusion,
+                  include_L=bool(include_L), progress=False,
+                  zmax_override=zmax_override)
     pt = o.get("pointwise_elpd")
     pt = None if pt is None else np.asarray(pt, float)
     cand = dict(family="nested", dof=layers, branch=branch,
-                label=f"{branch}/L={layers}",
+                label=f"{branch}/L={layers}"
+                      + ("+L" if include_L else "")
+                      + (f"+{diffusion}" if diffusion else ""),
                 elpd=float(o["elpd"]), se=float(o["elpd_se"]), pointwise=pt,
                 div=int(o.get("divergences") or 0), rhat=o.get("rhat_max"),
                 grade=None, ok=_usable(pt, o["elpd"]), raw=o)
@@ -428,7 +451,10 @@ def _usable(pt, elpd) -> bool:
 
 def fit_adr(f, Z, *, seed: int = 0, sigma_floor: float = SIGMA_FLOOR,
             kw: dict | None = None, sigma=None,
-            sigma_from_data: bool = False) -> dict:
+            sigma_from_data: bool = False,
+            diffusion: str | None = None,
+            include_L: bool = False,
+            zmax_override: float | None = None) -> dict:
     """adr 族：`bm_top.fit_adr`（吸附弛豫三支路并联，6 参数）。
 
     研究接口，对标外部 adsorption_RQ 模型（`Rs + [CPEdl∥Rct]∥(Rads+Lads)`）。
@@ -447,11 +473,16 @@ def fit_adr(f, Z, *, seed: int = 0, sigma_floor: float = SIGMA_FLOOR,
                   target_accept=float(kw["target_accept"]),
                   max_tree_depth=int(kw["max_tree_depth"]),
                   sigma=sigma, sigma_floor=float(sigma_floor),
-                  sigma_from_data=bool(sigma_from_data), progress=False)
+                  sigma_from_data=bool(sigma_from_data), diffusion=diffusion,
+                  include_L=bool(include_L), progress=False,
+                  zmax_override=zmax_override)
     pt = o.get("pointwise_elpd")
     pt = None if pt is None else np.asarray(pt, float)
-    cand = dict(family="adr", dof=None, branch=None, label="adr",
+    cand = dict(family="adr", dof=None, branch=None,
+                label=("adr" + ("+L" if include_L else "")
+                       + (f"+{diffusion}" if diffusion else "")),
                 elpd=float(o["elpd"]), se=float(o["elpd_se"]), pointwise=pt,
+                diffusion=diffusion,
                 div=int(o.get("divergences") or 0), rhat=o.get("rhat_max"),
                 grade=None, ok=_usable(pt, o["elpd"]), raw=o)
     return cand

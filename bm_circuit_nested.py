@@ -53,6 +53,8 @@ VALID_BRANCHES = ("parallel", "series", "capacitive")
 #: 版面常数（单位与 bm_circuit 一致：1 数据单位 ≈ 1 英寸）
 PAD = 0.34
 W_RS, W_R1, W_R2 = 0.95, 1.05, 1.05
+#: 顶层串联电感段宽度（include_L=True 才出现）
+W_L = 0.72
 W_BRANCH = {"parallel": 1.70, "series": 1.90, "capacitive": 1.05}
 GAP = 0.26
 Y_TOP = 1.10          # CPE1 所在的外层回路
@@ -96,16 +98,21 @@ def _num_H(L: float) -> str:
     return _num(L * 1e9, "nH")
 
 
-def elements(branch: str, layers: int) -> list[dict]:
+def elements(branch: str, layers: int, include_L: bool = False) -> list[dict]:
     """图上出现的元件，以及每个元件绑定的参数名。
 
     **单一来源**：`draw_nested` 的标签由它生成，自检拿它和
     `bm_top.sampled_keys` 对拍。`L_ad` 永远标 `derived=True`——它不进采样器
     （`parallel` 由 `R_ad·tau_ad` 算出，`series` 由 `R_L·tau_L` 算出）。
+
+    `include_L`（2026-11-20）：顶层串联 `jωL` 是**采样参数**，必须画出来；
+    否则图与 `z_nested` 的方程不一致（图上参数≠采样参数）。
     """
     _check(branch, layers)
-    out = [
-        dict(id="Rs",   kind="resistor", params=("Rs",)),
+    out = [dict(id="Rs",   kind="resistor", params=("Rs",))]
+    if include_L:
+        out.append(dict(id="L", kind="inductor", params=("L",)))
+    out += [
         dict(id="CPE1", kind="cpe",      params=("Q1", "n1")),
         dict(id="R1",   kind="resistor", params=("R1",)),
     ]
@@ -127,31 +134,40 @@ def elements(branch: str, layers: int) -> list[dict]:
     return out
 
 
-def equation(branch: str, layers: int) -> str:
+def equation(branch: str, layers: int, include_L: bool = False) -> str:
     """与 `z_nested` 逐项对应的拓扑式（mathtext）。"""
     _check(branch, layers)
     zb = {"parallel": r"R_{ad}\parallel L_{ad}",
           "series": r"R_L + j\omega L_{ad}",
           "capacitive": r"\mathrm{CPE}_b"}[branch]
+    lead = r"R_s + j\omega L + " if include_L else r"R_s + "
     if layers >= 2:
-        return (r"$Z = R_s + \left[\mathrm{CPE}_1 \parallel \left(R_1 + "
+        return (r"$Z = " + lead + r"\left[\mathrm{CPE}_1 \parallel \left(R_1 + "
                 r"\left[\mathrm{CPE}_2 \parallel (R_2 + " + zb + r")\right]"
                 r"\right)\right]$")
-    return (r"$Z = R_s + \left[\mathrm{CPE}_1 \parallel \left(R_1 + "
+    return (r"$Z = " + lead + r"\left[\mathrm{CPE}_1 \parallel \left(R_1 + "
             + zb + r"\right)\right]$")
 
 
-def layout(branch: str, layers: int) -> dict:
+def layout(branch: str, layers: int, include_L: bool = False) -> dict:
     """横向坐标：串联元件在主干上，两个 CPE 分别走上下两条回路。
 
     节点顺序固定为 `Rs → A → R1 → B →(R2)→ C → Z_b → D`，`A` 与 `D` 之间
     挂 CPE1，`B` 与 `D` 之间挂 CPE2（layers=2）。这与 `z_nested` 的嵌套关系
     一一对应：CPE1 跨整个 `z_mid`，CPE2 只跨内层 `z_par2`。
+
+    `include_L`（2026-11-20）：在 `Rs` 之后插入串联 `L` 段，其余节点整体右移，
+    所以 `xA` 之后的所有坐标都跟着 `ls` 顺延。
     """
     _check(branch, layers)
     x = PAD
     rs = (x, x + W_RS)
     x = rs[1]
+    if include_L:
+        ls = (x + GAP, x + GAP + W_L)
+        x = ls[1]
+    else:
+        ls = None
     xA = x + GAP
     r1 = (xA + GAP, xA + GAP + W_R1)
     xB = r1[1] + GAP
@@ -162,7 +178,7 @@ def layout(branch: str, layers: int) -> dict:
         r2, xC = None, xB
     br = (xC + GAP, xC + GAP + W_BRANCH[branch])
     xD = br[1] + GAP
-    return dict(rs=rs, xA=xA, r1=r1, xB=xB, r2=r2, xC=xC, br=br, xD=xD,
+    return dict(rs=rs, ls=ls, xA=xA, r1=r1, xB=xB, r2=r2, xC=xC, br=br, xD=xD,
                 x_in=PAD * 0.5, x_out=xD + 0.40, x_end=xD + 0.62)
 
 
@@ -187,15 +203,20 @@ def derived_line(p: dict, branch: str) -> str:
 
 
 def draw_nested(p: dict, *, branch: str, layers: int, f_ref: float, path,
-                name: str = "", admission_state: str = "provisional") -> str:
+                name: str = "", admission_state: str = "provisional",
+                include_L: bool = False) -> str:
     """画 nested 拓扑。`p` 是**后验中位数**字典（键见 `bm_top.sampled_keys`）。
 
     `f_ref` 是 CPE 的归一化频率（`z_nested` 默认 `√(f_min·f_max)`），
     必须与拟合时一致，否则图上的 `Q` 数值对不上同一套方程。
+
+    `include_L`（2026-11-20）：`z_nested(include_L=True)` 时顶层多一个串联 `L`，
+    图上必须画出同一个元件——**图上参数集合 == 采样参数集合**是这张图的
+    硬约束（T10），不能只改方程不改图。
     """
     _check(branch, layers)
-    L = layout(branch, layers)
-    els = {e["id"]: e for e in elements(branch, layers)}
+    L = layout(branch, layers, include_L)
+    els = {e["id"]: e for e in elements(branch, layers, include_L)}
 
     # 只要求**采样参数**到齐；`L_ad` 是派生量（R·τ），由 derived_line 现算，
     # 缺了不算错——它在 `z_nested` 里也只有 series 才可能出现在 p 里。
@@ -223,7 +244,15 @@ def draw_nested(p: dict, *, branch: str, layers: int, f_ref: float, path,
     _resistor(ax, x0 + 0.10, x1 - 0.10)
     _wire(ax, x1 - 0.10, x1)
     label(0.5 * (x0 + x1), -0.28, f"R$_s$ = {_num(p['Rs'], 'Ω')}", va="top")
-    _wire(ax, x1, L["xA"])
+    if L.get("ls"):
+        lx0, lx1 = L["ls"]
+        _wire(ax, x1, lx0)
+        _inductor(ax, lx0, lx1)
+        label(0.5 * (lx0 + lx1), -0.28, f"L = {_num_H(float(p['L']))}",
+              va="top")
+        _wire(ax, lx1, L["xA"])
+    else:
+        _wire(ax, x1, L["xA"])
     _dot(ax, L["xA"])
 
     # ---- 主干：R1（layers=2 时再接 R2） ----
@@ -336,7 +365,7 @@ def draw_nested(p: dict, *, branch: str, layers: int, f_ref: float, path,
     # mathtext 的行内 `$...$` 不能被折行截断（$ 一旦跨行，整段退回字面量），
     # 所以方程这一行单独放、不 wrap；其余散文才折行。
     import textwrap
-    eq = equation(branch, layers)
+    eq = equation(branch, layers, include_L)
     prose = [
         "CPE is parametrised by its window amplitude Q = |Z(f_ref)| = "
         "|Z(√(f_min·f_max))|, not by a capacitance: "

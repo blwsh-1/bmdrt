@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""test_sampler_capture.py —— ③ 阶段 C 第一轮：捕获层的 28 格。
+"""test_sampler_capture.py —— ③ 阶段 C 第一轮：捕获层的 29 格。
 
 阶段 B 测的是"这条记录该不该被当成证据"；这一轮测的是**采集本身可不可信**：
 
@@ -335,49 +335,154 @@ def case_G3_run_call_rejects_other_fields():
 
 
 def case_G4_site_line_numbers_match():
-    """站点字符串里的行号必须真的指到 `MCMC(`：改了生产代码就该改这里。"""
-    for site, where in C.CALL_SITES.items():
-        fname, rest = where.split(" ", 1)
-        path, line = fname.split(":")
-        text = (_ROOT / path).read_text(encoding="utf-8").splitlines()
-        assert "MCMC(" in text[int(line) - 1], f"{site}: {path}:{line} 不是构造行"
-    return f"{len(C.CALL_SITES)} 个站点行号全部对得上"
+    """站点必须能用 AST 锚点现场命中，不再依赖会漂移的行号。
+
+    锚点 = (文件, 所属函数, 函数内第几个 MCMC 调用)。验三件事：
+    ① 每个 CALL_SITES 都能解析到真实构造；② 未接站点（m35/fit_adr）也能解析；
+    ③ 已知冻结站点 bm_top.fit_adr 不在 CALL_SITES 里（不许为了凑数把它接上）。
+    """
+    assert set(C.SITE_ANCHORS) == set(C.CALL_SITES), "站点名与 AST 锚点没对齐"
+    for site in C.CALL_SITES:
+        hit = C.site_anchor(site)
+        assert hit is not None, f"{site}: 锚点 {C.SITE_ANCHORS[site]} 命中不到构造"
+        src = (_ROOT / hit["file"]).read_text(encoding="utf-8").splitlines()
+        assert "MCMC(" in src[hit["line"] - 1], \
+            f"{site}: {hit['file']}:{hit['line']} 不是构造行"
+    for key, anchor in C.NON_PRODUCTION_ANCHORS.items():
+        calls = [c for c in C.find_mcmc_calls(anchor[0]) if c["scope"] == anchor[1]]
+        assert len(calls) >= anchor[2], f"{key}: 未接站点锚点已失效"
+    assert "bm_top.fit_adr" not in C.CALL_SITES, \
+        "fit_adr 是冻结裁决下的研究路径，不许进已接闭集"
+    return f"{len(C.CALL_SITES)} 个已接站点 + {len(C.NON_PRODUCTION_SITES)} 个未接站点，AST 全部命中"
 
 
 def case_G5_construction_points_accounted():
-    """生产构造点数 == 已接 + 未接。**不许静默漏掉**第三处。"""
-    prod = ("bm_core.py", "bm_top.py", "bm_real.py", "bm_select.py",
-            "nested_fit.py", "bmdrt.py")
-    hits = []
-    for name in prod:
-        p = _ROOT / name
-        if not p.exists():
-            continue
-        for i, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1):
-            if re.search(r"=\s*MCMC\(", line):
-                hits.append(f"{name}:{i}")
-    assert len(hits) == len(C.CALL_SITES), f"生产里 {hits}，已接 {sorted(C.CALL_SITES)}"
-    m35 = _ROOT / "evidence/nested_topology/m35_cond_n2.py"
-    txt = m35.read_text(encoding="utf-8").splitlines()
-    assert any(re.search(r"=\s*MCMC\(", ln) for ln in txt)
-    key = next(iter(C.NON_PRODUCTION_SITES))
-    assert "m35_cond_n2.py" in key
-    return f"{len(hits)} 处已接 + {len(C.NON_PRODUCTION_SITES)} 处明账"
+    """生产构造点数 == 已接 + 明确不接。**不许静默漏掉**新增构造点。
+
+    用 AST 枚举，不用 `= MCMC(` 的文本正则：注释里的、字符串里的、缩进变化都
+    不影响；新增一处构造（哪怕在已有函数里插成第 2 个）都会让账目对不上。
+    """
+    hits = []                      # (file, scope, 该 scope 内序号, line)
+    for name in C.PRODUCTION_MODULES:
+        per_scope = {}             # 序号按**函数内**计数，与 SITE_ANCHORS 同口径
+        for call in C.find_mcmc_calls(name):
+            scope = call["scope"]
+            per_scope[scope] = per_scope.get(scope, 0) + 1
+            hits.append((name, scope, per_scope[scope], call["line"]))
+    connected = {(a[0], a[1], a[2]) for a in C.SITE_ANCHORS.values()}
+    all_declared = {(a[0], a[1], a[2]) for a in C.NON_PRODUCTION_ANCHORS.values()}
+    # m35 在研究目录、不在生产模块清单；生产账 = 已接 + 生产内明账。
+    prod_declared = {a for a in all_declared if a[0] in C.PRODUCTION_MODULES}
+    expected = connected | prod_declared
+    found = {(h[0], h[1], h[2]) for h in hits}
+    assert found == expected, \
+        f"生产构造点 {sorted(found)}；生产账本 {sorted(expected)}"
+    assert len(hits) == len(expected), f"重复锚点或重复枚举：{hits}"
+
+    # 锚点要能在当前源码里逐条命中（行号只是现场值，不是身份）
+    for hi in hits:
+        assert hi[:3] in expected, f"构造点 {hi[:3]} 没进任何账本"
+    # 生产模块之外的未接站点（m35）单独核对，仍在账本里
+    outside = all_declared - prod_declared
+    assert outside and all(any(a[0].endswith("m35_cond_n2.py") for a in outside)
+                           for a in outside), "m35 研究路径锚点必须在账本里"
+    for key, anchor in C.NON_PRODUCTION_ANCHORS.items():
+        assert anchor[0].endswith("m35_cond_n2.py") or anchor[0].endswith("bm_top.py"), \
+            f"未接账本项 {key} 不在预期文件"
+    assert any("m35_cond_n2.py" in k for k in C.NON_PRODUCTION_SITES), \
+        "m35 研究路径必须从账本里看得见"
+    assert any("fit_adr" in k for k in C.NON_PRODUCTION_SITES), \
+        "fit_adr 第三处构造必须从账本里看得见"
+
+    # 机制自检（纯内存源码，不碰磁盘）：验证"不因无关文本误报"与"新增构造会被发现"。
+    base = C._mcmc_calls("def fit():\n    m = MCMC(NUTS(f))\n")
+    noisy = C._mcmc_calls(
+        "# MCMC( 这行是注释\n\n"
+        "def fit():\n"
+        "    note = 'MCMC(NUTS(f))'  # 字符串里也不算\n"
+        "    m = MCMC(NUTS(f))\n")
+    assert base == [dict(line=2, scope="fit")], base
+    assert noisy == [dict(line=5, scope="fit")], noisy
+    grown = C._mcmc_calls(
+        "def fit():\n    m = MCMC(NUTS(f))\n"
+        "def future():\n    m = MCMC(NUTS(f))\n")
+    assert len(grown) == len(base) + 1, "新增构造点必须被 AST 看见（G5 随之 FAIL）"
+    return f"{len(hits)} 处生产构造（{len(connected)} 已接 + {len(prod_declared)} 生产明账 + {len(outside)} 研究目录明账）全部对得上；AST 不因注释/空行误报"
 
 
 def case_G6_production_imports_capture_only():
-    """生产模块只 import 捕获层；纯函数层不许被它们直接 import（阶段 B 的 X1）。"""
-    importers = []
+    """依赖倒置后：生产内核只 import 中立钩子，不许直连捕获层/纯函数层。
+
+    旧口径断言 importers == ["bm_core.py","bm_top.py"]（直连 sampler_capture）；
+    L0→L5 解耦后内核改连 `sampling_hook`。保留"不许直连纯函数层"的禁令，
+    并新增：中立钩子本身零项目 import、默认 no-op。
+    """
+    importers, hook_users = [], []
     for p in _ROOT.glob("*.py"):
         if p.name.startswith("test_") or p.name == "sampler_capture.py":
             continue
         txt = p.read_text(encoding="utf-8", errors="ignore")
         if re.search(r"^\s*import sampler_capture", txt, re.M):
             importers.append(p.name)
+        if re.search(r"^\s*import sampling_hook", txt, re.M):
+            hook_users.append(p.name)
         assert not re.search(r"^\s*(import|from)\s+sampler_provenance", txt, re.M), \
             f"{p.name} 直接 import 了纯函数层"
-    assert sorted(importers) == ["bm_core.py", "bm_top.py"], importers
-    return f"{importers} 只连捕获层"
+    assert importers == [], f"生产模块仍直连捕获层：{importers}"
+    assert sorted(hook_users) == ["bm_core.py", "bm_top.py"], hook_users
+
+    hook_src = (_ROOT / "sampling_hook.py").read_text(encoding="utf-8")
+    assert not re.search(r"^\s*(import|from)\s+(sampler_capture|sampler_provenance|"
+                         r"budget_capture_adapter|exec_identity)", hook_src, re.M), \
+        "中立钩子不得 import 任何审计层模块"
+    import sampling_hook as HK
+    old = HK.installed()
+    try:
+        HK.uninstall()
+        assert HK.emit(_mcmc(), site="bm_core.fit") is None, "no-op 时不该产事件"
+        fn = lambda *a, **k: {"sentinel": True}          # noqa: E731 —— 只测转交
+        HK.install(fn)
+        assert HK.emit(_mcmc(), site="bm_core.fit") == {"sentinel": True}, \
+            "安装后应按原样转交"
+    finally:
+        HK.uninstall()
+        if old:                                            # 恢复调用方原有钩子
+            HK.install(lambda *a, **k: None)
+    return f"内核 {hook_users} 只连中立钩子；捕获层直连 0 个"
+
+
+def case_G9_explicit_install_restores_capture():
+    """显式 install_hook() 必须恢复完整捕获；pre_uninstall 后回到 no-op。
+
+    这是"默认不注册但审计能力不丢失"的可执行证明：内核默认 no-op，
+    调用方装钩子后同一构造点能拿到与旧路径同构的事件（八项 + 预算块）。
+    """
+    import sampling_hook as HK
+    was = HK.installed()
+    try:
+        HK.uninstall()
+        m = _mcmc()
+        assert getattr(m, "provenance", None) is None
+        old = C.install_hook()
+        assert HK.installed(), "install_hook() 没有装上捕获实现"
+        ev = HK.emit(m, site="bm_core.fit",
+                     passed=dict(n_warmup=8, n_samples=8, num_chains=1,
+                                 target_accept=0.9, max_tree_depth=10,
+                                 progress_bar=False),
+                     run_call={})
+        assert isinstance(ev, dict) and len(ev.get("fields", {})) == 8, \
+            "恢复后的事件字段不全"
+        assert ev["capture_version"] == C.CAPTURE_VERSION
+        assert ev["budget_evidence"]["upstream_origin_captured"] is False, \
+            "恢复路径不得把上游来源升成 captured"
+        assert getattr(m, "provenance", None) is ev, "事件未挂回 MCMC 对象"
+        HK.uninstall()
+        assert HK.emit(_mcmc(), site="bm_core.fit") is None, "卸载后没回到 no-op"
+    finally:
+        HK.uninstall()
+        if was:
+            C.install_hook()
+    return "显式 install 恢复八项事件与 no-op 回退，来源标志保持 False"
 
 
 def case_G7_no_status_literals_except_incomplete():
@@ -442,6 +547,7 @@ CASES = [
     ("G6 生产只连捕获层", case_G6_production_imports_capture_only),
     ("G7 不自己造结论", case_G7_no_status_literals_except_incomplete),
     ("G8 观测点=契约点", case_G8_observed_where_is_contract_point),
+    ("G9 显式安装恢复捕获", case_G9_explicit_install_restores_capture),
 ]
 
 

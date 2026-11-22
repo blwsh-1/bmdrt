@@ -26,8 +26,12 @@
 | E1 | `sampling_status=failed` 的候选不参与比较（`bm_select` 同款门槛，R̂>1.05 或 div>0） | firm |
 | E2 | 预检 `excluded` 的候选不进比较；`unknown` 只是"没有判据"，**不当通过也不当排除** | firm |
 | E3 | viable < 2 ⇒ `insufficient_evidence`（一个候选谈不上"区分"，R12） | firm |
-| E4 | 前两名 `rms_rel` 差 ≤ `tie_pp` **且** `Δelpd` 不显著 ⇒ `non_identifiable` | **disputed** |
+| E7 | rms 最低候选 > `rms_accept`（10%）⇒ `insufficient_evidence`（绝对验收线） | **disputed** |
+| E8 | 只在 rms≤`rms_accept` 的 qualified 集内比较；未过线者单列、不删、不参与排序 | firm |
+| E4 | qualified 前两名 `rms_rel` 绝对差 ≤ `tie_pp` **且** 相对差 ≤ `tie_rel` ⇒ `non_identifiable`；配对 Δelpd 只作证据强弱、不否决 rms 并列 | **disputed** |
 | E5 | 否则 ⇒ `weak_preference`（"有倾向、但不足以 `identified`"） | firm |
+| E9 | `non_identifiable` 且三条件（rms 并列、配对 elpd 不显著、分段连续比较无实质更差段）均满足时，显示顺序按 `n_elements` 升序；不改状态/不改 best 语义 | firm |
+| E10 | 任一频段比 best 实质更差（差 > `tie_pp`，连续口径）或缺 `bands` 的候选不进元件数重排组；仍在候选表、不删 | firm |
 | E6 | `identified` / `model_inadequate` 一律不产出，理由写进 `unreachable_states` | firm |
 
 用法
@@ -67,7 +71,17 @@ RHAT_MAX = 1.05
 #: 2026-11-16 用户裁决：**定 1.0pp**（采纳上面的实证依据）。
 DEFAULT_TIE_PP = 1.0
 
-#: **有争议**：最优候选的 `rms_rel` 高于此值时，判 `insufficient_evidence`
+#: **有争议**：前两名 `rms_rel` 的**相对差**多少以内算"分不开"。
+#: 2026-11-20 加：绝对 pp 无法区分"低 rms 谱差 1pp"与"高 rms 谱差 1pp"。
+#: 实证判例（用户给定）：
+#:   · 1.2/1.3/9.9 vs 1.8/1.0/9.5 ⇒ rms 5.97 vs 5.81，abs 0.16pp、rel 2.8% ⇒ 不可分
+#:   · 1/1/9 vs 3/3/9             ⇒ rms 1.0 vs 3.0，abs 2.0pp、rel 200% ⇒ 可分
+#: 10%/15%/20%/25% 对上述判据分类一致；取 10%（最保守、更容易判可分的一端）。
+#: 判并列须 **rel≤10% 且 abs≤tie_pp**：低 rms 时 rel 会虚高（1.0→1.1 即 10%，
+#: 但 abs 0.1pp 无意义），由绝对门槛兜住。
+DEFAULT_TIE_REL = 10.0
+
+#: **有争议**：rms 最低候选的 `rms_rel` 高于此值时，判 `insufficient_evidence`
 #: （理由 `no_candidate_within_acceptance`）而不是 `non_identifiable`。
 #: 取值直接沿用 §14 的 `RMS_MAX=10.0`，**没有新造阈值**；但它在这里的用法是新的
 #: ——`model_inadequate` 被 `truth_known/noise_calibrated` 挡住，本规则是它的**代理**。
@@ -132,9 +146,19 @@ def tabulate(records) -> list:
         sd = fo.get("sampling_diagnostics") or {}
         pr = ob.get("predictive") or {}
         pre = rec.get("precheck") or {}
+        cand = rec.get("candidate") or {}
+        # 元件个数：顶层 `candidate.elements` 已是登记事实，不是从参数个数猜。
+        # 用它做「不可区分时元件少者优先」的显示顺序，不参与任何状态判定。
+        els = cand.get("elements")
+        n_el = len(els) if isinstance(els, (list, tuple)) else None
         rows.append(dict(
             candidate_id=ob.get("candidate_id") or pre.get("candidate_id"),
             topology_id=rec.get("topology_id"),
+            n_elements=n_el,
+            # 分段 rms%（低/中/高三段，来自 spectrum_metrics）。用于 E10
+            # 「分段过线模式一致性」门槛；没有就标不可用，绝不伪造。
+            bands=([_num(b) for b in fo["bands"]]
+                   if isinstance(fo.get("bands"), (list, tuple)) else None),
             precheck=pre.get("precheck_state"),
             precheck_reason=pre.get("precheck_reason") or "",
             run_status=ob.get("run_status"),
@@ -148,6 +172,12 @@ def tabulate(records) -> list:
                          else int(sd["divergences"])),
             elpd=_num(pr.get("elpd")),
             elpd_se=_num(pr.get("se")),
+            # 逐点 LOO：配对 dse 的输入，在记录**顶层**（registry 的 predictive
+            # 是四键白名单，放里面会被 _check_predictive 丢掉）。fit json 是
+            # 另一条同源路径，也没有就 None ⇒ 边缘 se 降级 + caveat。
+            pointwise_elpd=([_num(v) for v in rec["pointwise_elpd"]]
+                            if isinstance(rec.get("pointwise_elpd"), (list, tuple))
+                            else None),
             elpd_valid=pr.get("valid_for_comparison"),
             error=rec.get("error"),
         ))
@@ -168,7 +198,39 @@ def _significant(a: dict, b: dict) -> bool:
     return (d >= SIG_DELTA) and (d / se >= SIG_Z)
 
 
+def _paired_delta(a: dict, b: dict) -> dict:
+    """两条候选的配对 elpd 差与 dse（`bm_select.paired_diff` 同口径）。
+
+    Δ = Σ_i (a_i − b_i)，dse = sqrt(n·Var(a_i − b_i))，只在两边都有
+    `pointwise_elpd` 且长度/频率对齐（由调用方保证同源同网格）时算。
+
+    返回 `dict(delta, dse, z, method)`；配对不可用则 `delta/dse=None`、
+    `method="marginal_se"`（调用方须记 caveat，不得把边缘 se 冒充配对 dse）。
+    """
+    out = dict(delta=None, dse=None, z=None, method="unavailable")
+    if a.get("elpd") is None or b.get("elpd") is None:
+        return out
+    pa, pb = a.get("pointwise_elpd"), b.get("pointwise_elpd")
+    if pa and pb and len(pa) == len(pb) and len(pa) > 1:
+        d = [float(x) - float(y) for x, y in zip(pa, pb)]
+        n = len(d)
+        delta = float(sum(d))
+        mean = delta / n
+        var = sum((x - mean) ** 2 for x in d) / (n - 1)
+        dse = float((n * var) ** 0.5)
+        out.update(delta=delta, dse=dse,
+                   z=(delta / dse if dse > 0 else None), method="paired")
+        return out
+    # 降级：只有边缘 se，按 max(se) 作参考（**不是**配对 dse）。
+    se = max(a.get("elpd_se") or 0.0, b.get("elpd_se") or 0.0)
+    delta = float(a["elpd"] - b["elpd"])
+    out.update(delta=delta, dse=(se if se > 0 else None),
+               z=(delta / se if se > 0 else None), method="marginal_se")
+    return out
+
+
 def evaluate(rows, *, tie_pp: float = DEFAULT_TIE_PP,
+             tie_rel: float = DEFAULT_TIE_REL,
              rms_accept: float = DEFAULT_RMS_ACCEPT,
              candidate_set_complete: bool = True) -> dict:
     """核心纯函数：候选行 → 评价块。状态一定落在 `EVIDENCE_STATES` 内。"""
@@ -221,9 +283,17 @@ def evaluate(rows, *, tie_pp: float = DEFAULT_TIE_PP,
                        tie_pp=tie_pp, rms_accept=rms_accept,
                        candidate_set_complete=candidate_set_complete)
 
-    # E7（有争议）：所有 viable 都达不到 §14 的残差接受线 ⇒ 谈"分不分得开"没意义
-    if viable[0]["rms_rel"] > rms_accept:
-        fire("E7", f"最优候选 rms={viable[0]['rms_rel']:.2f}% 已高于接受线 "
+    # E7/E8：绝对验收线先于任何比较。rms<=rms_accept 才 qualified。
+    # 用户裁决的三段式：① 先过线 ② 过线内才比谁更好 ③ 不可区分时元件少者列前。
+    # 未过线者**不删**：单列进 not_qualified，随候选表一起输出（给事实，不丢证据）。
+    qualified = [r for r in viable if r["rms_rel"] <= rms_accept]
+    not_qualified = [r for r in viable if r["rms_rel"] > rms_accept]
+    if not_qualified:
+        ids = "、".join(r["candidate_id"] for r in not_qualified)
+        fire("E8", f"{len(not_qualified)} 个候选 rms 超绝对验收线 {rms_accept:g}%"
+                   f"（{ids}）：单列不参与比较，不删（仅超线，不等于机制错）")
+    if not qualified:
+        fire("E7", f"rms 最低的候选 rms={viable[0]['rms_rel']:.2f}% 已高于接受线 "
                    f"{rms_accept:g}%（沿用 §14 `RMS_MAX`）⇒ 没有一个候选够格，"
                    f"此处的「分不开」不能读作「候选集完备」",
              firm=False, disputed=True, rms_accept=float(rms_accept),
@@ -235,45 +305,144 @@ def evaluate(rows, *, tie_pp: float = DEFAULT_TIE_PP,
                        reason="no_candidate_within_acceptance",
                        best=viable[0], tie=None, excluded=excluded,
                        sampling_failed=sampling_failed + failed_run,
+                       not_qualified=not_qualified,
                        tie_pp=tie_pp, rms_accept=rms_accept,
                        candidate_set_complete=candidate_set_complete)
 
-    best, second = viable[0], viable[1]
+    # 比较只在 qualified 集内进行；viable 仍保留全量给候选表/计数。
+    pool = qualified
+    best, second = pool[0], (pool[1] if len(pool) > 1 else None)
+    if second is None:
+        fire("E3", f"qualified 候选只有 1 个（viable {len(viable)} 个）⇒ 不能谈「可区分」")
+        return _finish("insufficient_evidence", viable, rules, caveats,
+                       reason="single_qualified_candidate",
+                       best=best, tie=None, excluded=excluded,
+                       sampling_failed=sampling_failed + failed_run,
+                       not_qualified=not_qualified,
+                       tie_pp=tie_pp, rms_accept=rms_accept,
+                       candidate_set_complete=candidate_set_complete)
     gap_pp = float(second["rms_rel"] - best["rms_rel"])
-    sig = _significant(best, second)
-    d_elpd = (None if best["elpd"] is None or second["elpd"] is None
-              else float(best["elpd"] - second["elpd"]))
-    se = max(best.get("elpd_se") or 0.0, second.get("elpd_se") or 0.0)
-    z = (None if d_elpd is None else (d_elpd / se if se > 0 else None))
+    # E4（2026-11-20 改）：rms 相对+绝对双门槛决定"并列"，配对 elpd 降级为证据强弱。
+    # 旧逻辑 tied=(rms并列 and not elpd显著)，elpd 一显著就否决 rms 并列 ——
+    # 3e 里 5.81/5.97（三段同档、abs 0.16pp、rel 2.8%）被配对 z=6 判成可区分，
+    # 与用户判例冲突。现在并列由 rms 口径单独决定；elpd 只写进规则/caveat。
+    _lo = min(float(best["rms_rel"]), float(second["rms_rel"]))
+    gap_rel = (gap_pp / _lo * 100.0) if _lo > 0 else float("inf")
+    rms_tied = (gap_pp <= tie_pp) and (gap_rel <= tie_rel)
+    # E4 的 elpd 轴：优先配对 dse（同一批数据、同一 σ 口径下逐点差）。
+    # 边缘 se 是单模型逐点 elpd 的离散度，不是两条**差**的离散度 —— 用它
+    # 会把"边缘 se 大、配对差小"的两条误判为不可分（漏判）。配对不可用
+    # 才降级为 max(边缘 se)，并记 caveat，绝不混称。
+    pair = _paired_delta(best, second)
+    d_elpd = pair["delta"]
+    dse = pair["dse"]
+    z = pair["z"]
+    if pair["method"] == "marginal_se":
+        caveats.append("逐点 elpd 缺失（或长度不齐）⇒ Δelpd 用 max(边缘 se) 作"
+                       "**降级参考**，不是配对 dse；此时 E4 的显著性判定偏保守")
+        sig = _significant(best, second)
+    else:
+        # dse==0 且 Δ≠0（逐点差恒定）是**最强**的显著，不能因为 z 无定义
+        # 就漏判；dse==0 且 Δ==0 才是不显著。
+        sig = (d_elpd is not None and dse is not None
+               and abs(d_elpd) >= SIG_DELTA
+               and ((dse == 0) or (dse > 0 and z is not None and abs(z) >= SIG_Z)))
+    any_invalid = any(r.get("elpd_valid") is False for r in (best, second))
+    if any_invalid:
+        caveats.append("这两条的 `valid_for_comparison=False`（R21/σ 泄漏）⇒ "
+                       "配对 Δelpd 只能作**候选间相对参考**，不是样本外证据")
 
-    # E4（有争议）：残差地板相同且 Δelpd 不显著 ⇒ 分不开
-    tied = (gap_pp <= tie_pp) and (not sig)
-    fire("E4", f"前两名 rms 差 {gap_pp:.2f}pp（并列阈值 {tie_pp:g}pp）、"
-               f"Δelpd {'显著' if sig else '不显著'} "
-               f"⇒ {'判为并列（non_identifiable）' if tied else '不构成并列'}",
+    # 并列由 rms 双门槛决定；elpd 只作证据强弱，不再否决 rms 并列。
+    tied = rms_tied
+    fire("E4", f"前两名 rms 差 {gap_pp:.2f}pp（绝对阈值 {tie_pp:g}pp）、"
+               f"相对差 {gap_rel:.1f}%（阈值 {tie_rel:g}%）"
+               f" ⇒ {'rms 口径判并列' if rms_tied else 'rms 口径判可分'}；"
+               f"配对 Δelpd {'显著' if sig else '不显著'}"
+               f"（{pair['method']}：Δ={d_elpd if d_elpd is not None else float('nan'):.2f}、"
+               f"dse={dse if dse is not None else float('nan'):.2f}）"
+               f" ⇒ 最终{'并列（non_identifiable）' if tied else '不构成并列'}"
+               "（elpd 只作证据强弱，不单独改状态）",
          firm=False, disputed=True,
-         tie_pp=float(tie_pp), gap_pp=gap_pp, delta_elpd=d_elpd, delta_z=z,
-         pending_decision=("`tie_pp` 已于 2026-11-16 裁决为 1.0pp，依据是同条件重复的 "
-                           "`rms` sd≈1.05pp（3E-3 四次）／0.56pp（3E-2 三次）；"
-                           "它不是随手取的数，但仍是「重复性尺度」而非「统计显著性」"))
+         tie_pp=float(tie_pp), tie_rel=float(tie_rel),
+         gap_pp=gap_pp, gap_rel=gap_rel, rms_tied=rms_tied,
+         delta_elpd=d_elpd, delta_dse=dse, delta_z=z, elpd_method=pair["method"],
+         pending_decision=("`tie_pp=1.0pp` 依重复性 sd；`tie_rel=10%` 依用户判例"
+                           "（1.2/1.3/9.9 vs 1.8/1.0/9.5 不可分、1/1/9 vs 3/3/9 可分）。"
+                           "配对 elpd 显著性不再否决 rms 并列——它只写进证据强弱。"))
 
-    # 两个判据可能互相矛盾（残差说"分不开"、elpd 说"分得开"，或反之）。
+    # 两个判据可能互相矛盾（rms 说"分不开"、elpd 说"分得开"，或反之）。
     # 这不是 bug，是判据体系的现状；必须显式记账，否则会被读成"结论唯一"。
-    conflict = (gap_pp <= tie_pp) != (not sig)
+    conflict = rms_tied != (not sig)
     if conflict:
         caveats.append(
-            f"**判据冲突**：残差口径说{'并列' if gap_pp <= tie_pp else '可分'}"
-            f"（差 {gap_pp:.2f}pp vs 阈值 {tie_pp:g}pp），"
+            f"**判据冲突**：rms 口径说{'并列' if rms_tied else '可分'}"
+            f"（abs {gap_pp:.2f}pp / rel {gap_rel:.1f}%），"
             f"elpd 口径说{'可分' if sig else '不可分'}"
             f"（Δ={d_elpd if d_elpd is not None else float('nan'):.2f}、"
-            f"Δ/se={z if z is not None else float('nan'):.2f}）"
-            "；本状态按 elpd 口径给出，冲突本身作为证据保留（无仲裁规则）")
+            f"Δ/dse={z if z is not None else float('nan'):.2f}）"
+            "；本状态按 rms 口径给出，elpd 分歧作为证据保留（不仲裁、不宣称结论）")
 
     if tied:
         status = "non_identifiable"
         reason = "top2_within_tie_and_delta_insignificant"
+        # E9：不可区分时按元件数升序作**显示顺序**。不改 best/second 的语义
+        # （它们仍指向 rms 最低/次低这个事实），只让元件少的候选列前。
+        #
+        # 三条件门槛（2026-11-20，防"把真谱排掉、留元件少但不那么好的"）：
+        #   ① rms 差 ≤ tie_pp         —— 已在 tied 里
+        #   ② elpd 不显著             —— 已在 tied 里（sig=False）
+        #   ③ 分段连续比较：任一频段比 best 差超过容差 ⇒ 不进重排组（E10）
+        # 不用二值"过线/超线"：9.9(过) 与 10.1(超) 只差 0.2pp 却被分两类，
+        # 而 1.2(过) 与 3.4(过) 差 2.2pp 却同类 —— 二值化正好丢了连续信息。
+        # 容差用 tie_pp（1pp，同条件重复的 rms sd）：段间差 ≤1pp 视为同档，
+        # >1pp 视为实质更差。不引入新阈值。
+        tied_ids = [r["candidate_id"] for r in pool
+                    if (r["rms_rel"] - best["rms_rel"]) <= tie_pp]
+        reorderable = all(r.get("n_elements") is not None for r in pool)
+        if not reorderable:
+            caveats.append("候选行缺 `n_elements`（来自 candidate.elements）⇒ "
+                           "不可区分时无法按元件数排显示顺序")
+        best_bands = best.get("bands")
+        if not best_bands or len(best_bands) != 3:
+            caveats.append("rms 最低候选缺三段 `bands` ⇒ E10 分段门槛不可用，"
+                           "本次**不做**元件数重排（缺数据不等于分段一致）")
+            reorderable = False
+        else:
+            keep, dropped = [], []
+            for cid in tied_ids:
+                r = next(x for x in pool if x["candidate_id"] == cid)
+                rb = r.get("bands")
+                if not rb or len(rb) != 3:
+                    dropped.append((cid, "分段数据缺失"))
+                    continue
+                deltas = [float(rb[i]) - float(best_bands[i]) for i in range(3)]
+                worse = [d for d in deltas if d > tie_pp]
+                if worse:
+                    loc = ["低", "中", "高"][max(
+                        range(3), key=lambda i: deltas[i])]
+                    dropped.append((cid, f"分段连续比较：{loc}段比 best 高 "
+                                         f"{max(worse):.2f}pp（容差 {tie_pp:g}pp）"))
+                else:
+                    keep.append(cid)
+            tied_ids = keep
+            if dropped:
+                fire("E10", "任一频段比 best 实质更差（或缺分段数据）的候选"
+                            "不进元件数重排组："
+                            + "；".join(f"{c}（{why}）" for c, why in dropped)
+                            + "；它们仍在候选表、仍参与状态判定，只是不因元件少被提前",
+                     firm=True)
+
+        if reorderable and len(tied_ids) > 1:
+            order = sorted(tied_ids, key=lambda cid: (
+                next(r["n_elements"] for r in pool if r["candidate_id"] == cid), cid))
+            if order != tied_ids:
+                fire("E9", f"这些候选三条件均满足（rms 并列、配对 elpd 不显著、"
+                           f"分段连续比较无实质更差段）且元件数不同 ⇒ "
+                           f"显示顺序按元件数升序：{'、'.join(order)}"
+                           f"（只调整显示顺序，不宣布最优、不删候选）")
     else:
-        fire("E5", f"{best['candidate_id']} 在 rms 上领先 {gap_pp:.2f}pp、"
+        fire("E5", f"{best['candidate_id']} 的 rms 比 rms 次低的候选低 "
+                   f"{gap_pp:.2f}pp、"
                    f"Δelpd {'显著' if sig else '不显著'} ⇒ weak_preference")
         status = "weak_preference"
         reason = "best_leading_but_not_identified"
@@ -282,17 +451,23 @@ def evaluate(rows, *, tie_pp: float = DEFAULT_TIE_PP,
     fire("E6", "`identified` / `model_inadequate` 当前口径下不可达，不产出",
          unreachable=list(UNREACHABLE))
     return _finish(status, viable, rules, caveats, reason=reason, best=best,
-                   tie=dict(gap_pp=gap_pp, tie_pp=float(tie_pp),
-                            significant=bool(sig), delta_elpd=d_elpd, delta_z=z,
+                   tie=dict(gap_pp=gap_pp, gap_rel=gap_rel,
+                            tie_pp=float(tie_pp), tie_rel=float(tie_rel),
+                            rms_tied=bool(rms_tied),
+                            significant=bool(sig),
+                            delta_elpd=d_elpd, delta_z=z,
+                            delta_dse=dse, elpd_method=pair["method"],
                             criteria_conflict=bool(conflict)),
                    second=second, excluded=excluded,
                    sampling_failed=sampling_failed + failed_run,
-                   tie_pp=tie_pp, rms_accept=rms_accept,
+                   not_qualified=not_qualified,
+                   tie_pp=tie_pp, tie_rel=tie_rel, rms_accept=rms_accept,
                    candidate_set_complete=candidate_set_complete)
 
 
 def build_confirmation(*, status, best, tie, viable, excluded, sampling_failed,
-                       rms_accept, tie_pp, candidate_set_complete) -> dict:
+                       rms_accept, tie_pp, candidate_set_complete,
+                       tie_rel=DEFAULT_TIE_REL) -> dict:
     """把"已确认到哪一步"与"哪些不充分/为什么"分开写。
 
     **纪律**：`confirmed` 里只放**描述性事实**（谁跑了、谁被排除、残差多少、
@@ -318,15 +493,18 @@ def build_confirmation(*, status, best, tie, viable, excluded, sampling_failed,
     cf("sampling",
        f"{len(viable)}/{n_all} 个候选通过采样门槛（R̂≤{RHAT_MAX} 且 0 发散）")
     if best is not None:
-        line = (f"最优候选 `{best['candidate_id']}` 的 rms_rel = "
+        line = (f"rms 最低候选 `{best['candidate_id']}` 的 rms_rel = "
                 f"{best['rms_rel']:.2f}%")
         line += ("，在 §14 接受线内" if best["rms_rel"] <= rms_accept
                  else f"，**已超接受线 {rms_accept:g}%**")
         cf("residual_floor", line)
     if tie is not None:
+        _rel = tie.get("gap_rel")
         tie_txt = ("残差口径：前两名差 "
-                   f"{tie['gap_pp']:.2f}pp vs 重复性尺度 {tie_pp:g}pp ⇒ "
-                   + ("不可分" if tie["gap_pp"] <= tie_pp else "可分"))
+                   f"{tie['gap_pp']:.2f}pp（阈值 {tie_pp:g}pp）"
+                   + (f"、相对 {_rel:.1f}%（阈值 {tie_rel:g}%）" if _rel is not None else "")
+                   + " ⇒ " + ("不可分" if tie.get("rms_tied",
+                                                tie["gap_pp"] <= tie_pp) else "可分"))
         el_txt = ("elpd 口径：" + ("显著" if tie["significant"] else "不显著")
                   + (f"（Δ={tie['delta_elpd']:.2f}、Δ/se={tie['delta_z']:.2f}）"
                      if tie.get("delta_elpd") is not None
@@ -348,10 +526,13 @@ def build_confirmation(*, status, best, tie, viable, excluded, sampling_failed,
        "本批 `predictive.valid_for_comparison=False`：Δelpd 只是候选间相对参考（R21）",
        "同上；在解开之前，「选得更好」不等于「样本外预测更好」")
     if not candidate_set_complete:
+        # 文案按 registry 实际状态生成（2026-11-20）：三个 Warburg 元件已 wired=True
+        # 且有槽位，写死名单会一直说"w_inf/w_open/w_short 没接"——与产物不符。
+        _unwired = [e for e in CR.list_elements() if not CR.get_element(e).wired]
         nc("candidate_set_completeness",
-           "registry 里仍有 `wired=False` 的元件（`w_inf`/`w_open`/`w_short`/`adsorption`）"
-           "且没有拓扑提供槽位 ⇒ 本次结论的作用域仅限已登记候选集（R12）",
-           "给拓扑加扩散/吸附槽位，把 `wired` 翻成 True")
+           f"registry 里仍有 `wired=False` 的元件 `{'/'.join(_unwired)}`"
+           "（没有拓扑槽位或接点语义未定）⇒ 本次结论的作用域仅限已登记候选集（R12）",
+           "给对应拓扑加槽位、把该元件的 `wired` 翻成 True（并同步预注册新臂）")
 
     return dict(
         confirmed=confirmed,
@@ -362,8 +543,9 @@ def build_confirmation(*, status, best, tie, viable, excluded, sampling_failed,
 
 
 def _finish(status, viable, rules, caveats, *, reason, best, tie,
-            second=None, excluded=(), sampling_failed=(),
-            tie_pp=DEFAULT_TIE_PP, rms_accept=DEFAULT_RMS_ACCEPT,
+            second=None, excluded=(), sampling_failed=(), not_qualified=(),
+            tie_pp=DEFAULT_TIE_PP, tie_rel=DEFAULT_TIE_REL,
+            rms_accept=DEFAULT_RMS_ACCEPT,
             candidate_set_complete=True) -> dict:
     """组装并通过 `evidence_block` 的 schema 校验（校验失败当场 raise，不降级）。"""
     block = CR.evidence_block(
@@ -380,7 +562,7 @@ def _finish(status, viable, rules, caveats, *, reason, best, tie,
     confirm = build_confirmation(
         status=status, best=best, tie=tie, viable=viable, excluded=ex_ids,
         sampling_failed=sf_ids, rms_accept=rms_accept, tie_pp=tie_pp,
-        candidate_set_complete=candidate_set_complete)
+        tie_rel=tie_rel, candidate_set_complete=candidate_set_complete)
     return dict(
         verdict=block,
         status=status,
@@ -390,6 +572,7 @@ def _finish(status, viable, rules, caveats, *, reason, best, tie,
         second=(None if second is None else second["candidate_id"]),
         tie=tie,
         n_viable=len(viable),
+        not_qualified=[r["candidate_id"] for r in not_qualified],
         viable=[r["candidate_id"] for r in viable],
         excluded=ex_ids,
         sampling_failed=sf_ids,
@@ -411,7 +594,7 @@ def render(ev: dict, *, title: str = "") -> str:
         L += [f"## {title}", ""]
     L += [f"**状态**：`{ev['status']}`（{ev['reason']}）", ""]
     L += [f"- viable 候选：{ev['n_viable']} 个"
-          + (f"，最优 `{ev['best']}`" if ev["best"] else ""), ""]
+          + (f"，rms 最低 `{ev['best']}`" if ev["best"] else ""), ""]
     conf = ev.get("confirmation") or {}
     if conf:
         L += ["**已确认（描述性事实，不含「模型正确」）**", ""]
@@ -425,10 +608,15 @@ def render(ev: dict, *, title: str = "") -> str:
     if ev["tie"]:
         t = ev["tie"]
         de = ("—" if t["delta_elpd"] is None else f"{t['delta_elpd']:.2f}")
-        L += [f"- 前两名：rms 差 **{t['gap_pp']:.2f}pp**（并列阈值 {t['tie_pp']:g}pp）、"
-              f"`Δelpd={de}`"
-              + (f"、`Δ/se={t['delta_z']:.2f}`" if t.get("delta_z") is not None else "")
-              + f"，显著={t['significant']}"
+        L += [f"- 前两名：rms 绝对差 **{t['gap_pp']:.2f}pp**（阈值 {t['tie_pp']:g}pp）"
+              + (f"、相对差 **{t['gap_rel']:.1f}%**"
+                 f"（阈值 {t.get('tie_rel', DEFAULT_TIE_REL):g}%）"
+                 if t.get("gap_rel") is not None else "")
+              + f" ⇒ rms 口径{'并列' if t.get('rms_tied', t['gap_pp'] <= t['tie_pp']) else '可分'}"
+              + f"；`Δelpd={de}`"
+              + (f"、`Δ/dse={t['delta_z']:.2f}`" if t.get("delta_z") is not None else "")
+              + f"（{'paired' if t.get('elpd_method') == 'paired' else '边缘 se'}、"
+              f"显著={t['significant']}；只作证据强弱，不改状态）"
               + ("，**两口径冲突**" if t.get("criteria_conflict") else "")]
     L += ["", "| 候选 | 预检 | 运行 | 采样 | rms% | acf | R̂ | div | elpd |",
           "|---|---|---|---|---|---|---|---|---|"]
@@ -455,8 +643,9 @@ def render(ev: dict, *, title: str = "") -> str:
 # 自检
 # --------------------------------------------------------------------------
 def _obs(cid, *, pre="not_excluded", run="completed", sampling="passed",
-         rms=5.0, acf=0.5, rhat=1.01, div=0, elpd=-100.0, se=5.0):
-    return CR.observation_block(
+         rms=5.0, acf=0.5, rhat=1.01, div=0, elpd=-100.0, se=5.0,
+         bands=None):
+    ob = CR.observation_block(
         candidate_id=cid, run_status=run, sampling_status=sampling,
         rms_rel=(None if run != "completed" else rms),
         acf=(None if run != "completed" else acf),
@@ -465,12 +654,22 @@ def _obs(cid, *, pre="not_excluded", run="completed", sampling="passed",
         predictive={"elpd": elpd, "se": se, "valid_for_comparison": False,
                     "reason": "R21"},
         interpretation=(None if sampling == "passed" else "descriptive_only"))
+    if bands is not None:
+        fo = ob.setdefault("fit_observation", {})
+        fo["bands"] = list(bands)
+    return ob
 
 
 def _row(cid, **kw):
     pre = kw.pop("pre", "not_excluded")
+    n_el = kw.pop("n_elements", None)
+    pw = kw.pop("pw", None)
     ob = _obs(cid, pre=pre, **kw)
-    return tabulate([dict(observation=ob, precheck=dict(precheck_state=pre))])[0]
+    cand = {"elements": [("e", "r")] * n_el} if n_el is not None else {}
+    rec = dict(observation=ob, precheck=dict(precheck_state=pre), candidate=cand)
+    if pw is not None:
+        rec["pointwise_elpd"] = list(pw)
+    return tabulate([rec])[0]
 
 
 def _selftest() -> int:
@@ -499,8 +698,9 @@ def _selftest() -> int:
       ev["tie"]["criteria_conflict"] is False)
 
     print("\nE5：残差差得远且 Δelpd 显著 ⇒ weak_preference")
+    # 两条都放在 10% 验收线内（16% 那档现在归 E8，不参与 E5 比较）
     rows = [_row("C-a", rms=8.0, elpd=-300.0, se=5.0),
-            _row("C-b", rms=16.0, elpd=-400.0, se=5.0)]
+            _row("C-b", rms=9.0, elpd=-400.0, se=5.0)]
     ev2 = evaluate(rows)
     c("状态 weak_preference", ev2["status"] == "weak_preference")
     c("best 是 rms 最小的那个", ev2["best"] == "C-a")
@@ -528,7 +728,7 @@ def _selftest() -> int:
     c("best 为 None", ev5["best"] is None)
 
     print("\nE6：两个状态永不产出")
-    rows = [_row("C-a", rms=1.0, elpd=-10.0), _row("C-b", rms=90.0, elpd=-900.0)]
+    rows = [_row("C-a", rms=1.0, elpd=-10.0), _row("C-b", rms=9.5, elpd=-900.0)]
     ev6 = evaluate(rows)
     c("即使拟合极好也不会 identified", ev6["status"] != "identified")
     c("也不会 model_inadequate", ev6["status"] != "model_inadequate")
@@ -536,19 +736,140 @@ def _selftest() -> int:
       set(ev6["unreachable_states"]) == {"identified", "model_inadequate"}
       and all(ev6["unreachable_states"].values()))
 
+    print("\nE8/E9/E10：先过验收线再比较，三条件都满足才按元件数列前")
+    # 三条都过 10% 线：rms 6.0(3 元件) / 6.2(6 元件) / 6.1(9 元件)。
+    # rms 差都在 tie_pp=1pp 内、Δelpd 不显著、分段模式全过 ⇒ non_identifiable 且重排。
+    _allpass = (2.0, 3.0, 4.0)
+    rows = [_row("C-many", rms=6.0, elpd=-100.0, se=5.0, n_elements=9,
+                 bands=_allpass),
+            _row("C-few", rms=6.2, elpd=-102.0, se=5.0, n_elements=3,
+                 bands=_allpass),
+            _row("C-mid", rms=6.1, elpd=-101.0, se=5.0, n_elements=6,
+                 bands=_allpass)]
+    ev8 = evaluate(rows)
+    c("三条过线 ⇒ non_identifiable", ev8["status"] == "non_identifiable")
+    c("E9 触发（三条件满足，按元件数排显示）",
+      any(r["id"] == "E9" for r in ev8["rules"]))
+    c("best 仍是 rms 最低的事实指针", ev8["best"] == "C-many")
+    c("E10 不触发（分段模式全一致）",
+      not any(r["id"] == "E10" for r in ev8["rules"]))
+
+    # E10 核心：rms 差在并列带内、elpd 不显著，但一条分段模式不同 ⇒ 不进重排组。
+    # 这正是 3e 里 5.81(nested,L=2,全过) vs 6.28(voigt K=1,高频超) 的情形。
+    rows_e10 = [_row("C-lowrms", rms=5.81, elpd=-100.0, se=5.0,
+                     n_elements=3, bands=(1.8, 1.0, 9.5)),
+                _row("C-hfover", rms=6.28, elpd=-102.0, se=5.0,
+                     n_elements=2, bands=(3.4, 3.5, 10.1))]
+    ev10 = evaluate(rows_e10)
+    c("分段不一致时状态仍 non_identifiable（E10 只管显示顺序）",
+      ev10["status"] == "non_identifiable")
+    c("E10 触发（分段模式不同者被踢出重排组）",
+      any(r["id"] == "E10" for r in ev10["rules"]))
+    c("E9 不触发（重排组只剩 1 个）",
+      not any(r["id"] == "E9" for r in ev10["rules"]))
+    c("best 仍是 rms 最低（真谱没被元件少的挤掉）",
+      ev10["best"] == "C-lowrms")
+
+    # E10 降级：bands 缺失 ⇒ 不重排，记 caveat，绝不拿缺失当"分段一致"。
+    rows_nb = [_row("C-a", rms=5.8, elpd=-100.0, se=5.0, n_elements=3),
+               _row("C-b", rms=6.1, elpd=-102.0, se=5.0, n_elements=2)]
+    evnb = evaluate(rows_nb)
+    c("缺 bands 时 E9 不触发（保守不重排）",
+      not any(r["id"] == "E9" for r in evnb["rules"]))
+    c("缺 bands 时记 caveat（缺数据≠分段一致）",
+      any("bands" in x for x in evnb["caveats"]))
+
+    print("\n配对 dse：边缘 se 大但配对差小 ⇒ 判显著（不再漏判）")
+    # 两条逐点 elpd 各自波动大（边缘 se≈5），但逐点**差**恒定 ⇒ dse≈0 ⇒ 显著。
+    _pw_a = [-100.0, -105.0, -110.0, -115.0, -120.0]
+    _pw_b = [x - 9.0 for x in _pw_a]          # 逐点差恒为 +9
+    rows_pw = [_row("C-pwa", rms=5.0, elpd=sum(_pw_a), se=8.0, pw=_pw_a),
+               _row("C-pwb", rms=5.9, elpd=sum(_pw_b), se=8.0, pw=_pw_b)]
+    evpw = evaluate(rows_pw)
+    c("配对 dse 口径被采用", evpw["tie"]["elpd_method"] == "paired")
+    c("配对 dse≈0（逐点差恒定）", abs(evpw["tie"]["delta_dse"]) < 1e-6)
+    c("边缘 se 会漏判、配对判显著 ⇒ weak_preference",
+      evpw["status"] == "weak_preference")
+    c("E4 文本标出 paired",
+      any("paired" in (r.get("text") or "") for r in evpw["rules"] if r["id"] == "E4"))
+    # 用户判例：rms 差 0.16pp、rel 2.8%、三段同档 ⇒ 即使配对 elpd z=6 也必须判不可分。
+    _pw_c = [-100.0 + i * 0.1 for i in range(5)]
+    rows_case = [
+        _row("C-low", rms=5.97, elpd=sum(_pw_c), se=8.0, pw=_pw_c,
+             bands=(1.2, 1.3, 9.9), n_elements=2),
+        _row("C-high", rms=5.81, elpd=sum(x - 7 for x in _pw_c), se=8.0,
+             pw=[x - 7 for x in _pw_c], bands=(1.8, 1.0, 9.5), n_elements=3),
+    ]
+    evcase = evaluate(rows_case)
+    c("1.2/1.3/9.9 vs 1.8/1.0/9.5 ⇒ 不可区分（elpd 显著也不否决）",
+      evcase["status"] == "non_identifiable")
+    c("该判例 rel 2.8% 被记录",
+      abs(evcase["tie"]["gap_rel"] - 2.8) < 0.5)
+    c("该判例 elpd 仍显著、冲突被记账",
+      evcase["tie"]["significant"] and evcase["tie"]["criteria_conflict"])
+    # 用户判例：1/1/9 vs 3/3/9 ⇒ abs 2pp、rel 200% ⇒ 可分
+    rows_far = [_row("C-a", rms=1.0, bands=(1.0, 1.0, 9.0)),
+                _row("C-b", rms=3.0, bands=(3.0, 3.0, 9.0))]
+    c("1/1/9 vs 3/3/9 ⇒ 可分",
+      evaluate(rows_far)["status"] == "weak_preference")
+    # 无逐点时降级为边缘 se，记 caveat，不冒充配对
+    evmarg = evaluate([_row("C-a", rms=5.0, elpd=-100.0, se=6.0),
+                       _row("C-b", rms=5.9, elpd=-101.0, se=6.0)])
+    c("无逐点时降级为 marginal_se", evmarg["tie"]["elpd_method"] == "marginal_se")
+    c("降级时记 caveat", any("边缘 se" in x for x in evmarg["caveats"]))
+
+    print("\n分段连续比较：9.9 vs 10.1 不因二值被拆，1.2 vs 3.4 被识别为实质差异")
+    # 两条三段都过线，但一条三段 1.x、另一条低中频 3.x（差 >1pp）⇒ 踢出重排组
+    rows_cont = [_row("C-1x", rms=5.0, elpd=-100.0, se=5.0,
+                      n_elements=3, bands=(1.2, 1.3, 1.5)),
+                 _row("C-3x", rms=5.4, elpd=-101.0, se=5.0,
+                      n_elements=2, bands=(3.4, 3.5, 2.0))]
+    evc = evaluate(rows_cont)
+    c("1.x vs 3.x：E10 识别为实质更差段",
+      any(r["id"] == "E10" for r in evc["rules"]))
+    c("1.x vs 3.x：元件少者不排前（E9 不触发）",
+      not any(r["id"] == "E9" for r in evc["rules"]))
+    # 9.9 vs 10.1 只差 0.2pp（<1pp 容差）⇒ 不被拆，仍可重排
+    rows_edge = [_row("C-99", rms=5.0, elpd=-100.0, se=5.0,
+                      n_elements=3, bands=(1.0, 1.0, 9.9)),
+                 _row("C-101", rms=5.3, elpd=-101.0, se=5.0,
+                      n_elements=2, bands=(1.1, 1.1, 10.1))]
+    eve = evaluate(rows_edge)
+    c("9.9 vs 10.1：差 0.2pp < 容差 ⇒ E10 不触发",
+      not any(r["id"] == "E10" for r in eve["rules"]))
+    c("9.9 vs 10.1：元件少者列前（E9 触发）",
+      any(r["id"] == "E9" for r in eve["rules"]))
+    # 部分过线：一条 15% 超线，两条过线 ⇒ 超线的单列、不删、不进比较
+    rows2 = [_row("C-ok1", rms=6.0, elpd=-100.0, se=5.0, n_elements=3),
+             _row("C-ok2", rms=6.2, elpd=-102.0, se=5.0, n_elements=6),
+             _row("C-over", rms=15.0, elpd=-90.0, se=5.0, n_elements=1)]
+    ev8b = evaluate(rows2)
+    c("E8 触发（超线者单列）", any(r["id"] == "E8" for r in ev8b["rules"]))
+    c("超线者在 not_qualified 里", ev8b["not_qualified"] == ["C-over"])
+    c("超线者仍在候选表里不丢", "C-over" in [r["candidate_id"] for r in ev8b["candidates"]])
+    c("比较只在两条过线者间做", set(ev8b["viable"]) == {"C-ok1", "C-ok2", "C-over"}
+      and ev8b["best"] in ("C-ok1", "C-ok2"))
+
     print("\n状态一定落在 registry 允许的集合里")
-    for evx in (ev, ev2, ev3, ev4, ev5, ev6):
+    for evx in (ev, ev2, ev3, ev4, ev5, ev6, ev8, ev8b):
         c(f"状态 {evx['status']} 合法", evx["status"] in CR.EVIDENCE_STATES)
         c(f"evidence_block 已通过校验（{evx['status']}）",
           evx["verdict"]["status"] == evx["status"]
           and evx["verdict"]["scope"] == CR.EVIDENCE_SCOPE)
 
-    print("\ntie_pp 是显式参数，不是硬编码")
-    rows = [_row("C-a", rms=10.0), _row("C-b", rms=11.5)]
+    print("\ntie_pp / tie_rel 是显式参数，不是硬编码")
+    # 两条都在验收线内，rel 也调宽以单独测 tie_pp 本身，不是验收线/rel 门槛
+    rows = [_row("C-a", rms=8.0), _row("C-b", rms=9.5)]
     c("tie_pp=1.0 → 差 1.5pp 判 weak_preference",
-      evaluate(rows, tie_pp=1.0)["status"] == "weak_preference")
+      evaluate(rows, tie_pp=1.0, tie_rel=100.0)["status"] == "weak_preference")
     c("tie_pp=2.0 → 同一个输入判 non_identifiable",
-      evaluate(rows, tie_pp=2.0)["status"] == "non_identifiable")
+      evaluate(rows, tie_pp=2.0, tie_rel=100.0)["status"] == "non_identifiable")
+    # rel 门槛单独生效：abs 够小但 rel 超线 ⇒ 仍判可分（低 rms 谱的 1pp 不是小差异）
+    rows_rel = [_row("C-a", rms=1.0), _row("C-b", rms=1.8)]
+    c("abs 0.8pp<1.0 但 rel 80%>10% ⇒ 判可分",
+      evaluate(rows_rel, tie_pp=1.0, tie_rel=10.0)["status"] == "weak_preference")
+    c("tie_rel=100% → 同一对判不可分（证明 rel 生效）",
+      evaluate(rows_rel, tie_pp=1.0, tie_rel=100.0)["status"] == "non_identifiable")
 
     print("\nE7（disputed）：所有候选都超接受线 ⇒ insufficient_evidence")
     rows = [_row("C-a", rms=19.3, elpd=-1251.0), _row("C-b", rms=20.2, elpd=-1252.0)]
@@ -592,6 +913,16 @@ def _selftest() -> int:
     c("含 disputed 标记", "disputed" in md)
     c("含不可达状态段", "不可达的状态" in md)
 
+    print("\n给事实不排序：人读文案不含排序/推荐结论词")
+    # 内部字段名 `best` / `second` 只指向「rms 最低/次低」这个事实（显示顺序可用），
+    # 禁的是把它们说成「最优模型 / 推荐 / 选中」这类结论。检查范围只覆盖人读文案。
+    prose = "\n".join(
+        [md, render(ev2), render(ev7)]
+        + [r["text"] for r in ev["rules"] + ev2["rules"] + ev7["rules"]]
+        + [x["text"] for e in (ev, ev2, ev7) for x in e["confirmation"]["confirmed"]])
+    for word in ("最优", "最佳", "推荐", "选中", "胜出", "领先"):
+        c(f"人读文案无「{word}」", word not in prose)
+
     print(f"\n自检 {ok}/{total} 通过" if not bad else f"\nFAIL {len(bad)}/{total}: {bad}")
     return 0 if not bad else 1
 
@@ -622,13 +953,14 @@ def expand_runs(pattern: str) -> list:
 
 
 def evaluate_run(run_dir: str, *, tie_pp: float = DEFAULT_TIE_PP,
+                 tie_rel: float = DEFAULT_TIE_REL,
                  rms_accept: float = DEFAULT_RMS_ACCEPT) -> dict:
     """读目录 → 评价 → 落 `evaluation.json` / `evaluation.md`。"""
     d = load_run(run_dir)
     rows = tabulate(d["records"])
     complete = not [e for e in CR.list_elements()
                     if not CR.get_element(e).wired]
-    ev = evaluate(rows, tie_pp=tie_pp, rms_accept=rms_accept,
+    ev = evaluate(rows, tie_pp=tie_pp, tie_rel=tie_rel, rms_accept=rms_accept,
                   candidate_set_complete=complete)
     ev["inputs"] = dict(run_dir=run_dir,
                         data_path=(d["plan"] or {}).get("data_path"),
@@ -637,7 +969,8 @@ def evaluate_run(run_dir: str, *, tie_pp: float = DEFAULT_TIE_PP,
                         n_records=len(d["records"]),
                         registry_version=CR.REGISTRY_VERSION,
                         registry_digest=CR.registry_digest(),
-                        tie_pp=float(tie_pp), rms_accept=float(rms_accept))
+                        tie_pp=float(tie_pp), tie_rel=float(tie_rel),
+                        rms_accept=float(rms_accept))
     stem = os.path.basename(os.path.normpath(run_dir))
     with open(os.path.join(run_dir, "evaluation.json"), "w", encoding="utf-8") as fh:
         json.dump(ev, fh, ensure_ascii=False, indent=1, allow_nan=False, default=str)
@@ -651,7 +984,10 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="观测 → evidence 状态（推导层）")
     ap.add_argument("--eval", default=None, help="circuit_runner 输出目录或 glob")
     ap.add_argument("--tie-pp", type=float, default=DEFAULT_TIE_PP,
-                    help=f"并列阈值（百分点，默认 {DEFAULT_TIE_PP:g}；有争议，需裁决）")
+                    help=f"并列绝对阈值（百分点，默认 {DEFAULT_TIE_PP:g}；有争议，需裁决）")
+    ap.add_argument("--tie-rel", type=float, default=DEFAULT_TIE_REL,
+                    help=f"并列相对阈值（%%，默认 {DEFAULT_TIE_REL:g}；"
+                         "须与 --tie-pp 同时满足才算并列）")
     ap.add_argument("--rms-accept", type=float, default=DEFAULT_RMS_ACCEPT,
                     help=f"残差接受线（默认 {DEFAULT_RMS_ACCEPT:g}%%=§14 RMS_MAX；"
                          "有争议，传 1e9 可关闭）")
@@ -670,7 +1006,8 @@ def main(argv=None) -> int:
         print(f"没有找到可评价的 runner 目录：{a.eval}", file=sys.stderr)
         return 2
     for r in runs:
-        ev = evaluate_run(r, tie_pp=a.tie_pp, rms_accept=a.rms_accept)
+        ev = evaluate_run(r, tie_pp=a.tie_pp, tie_rel=a.tie_rel,
+                          rms_accept=a.rms_accept)
         if not a.quiet:
             print(render(ev, title=os.path.basename(os.path.normpath(r))))
             print()

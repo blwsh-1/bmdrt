@@ -40,6 +40,7 @@ ROLE = {
     "bm_diff.py": ("L0", "Warburg 族扩散元件与 HN↔Warburg 退化诊断", "core", "stable"),
     "bm_ad.py": ("L0", "低频吸附电感元件 `Z_ad`", "opt", "stable"),
     "bm_ws.py": ("L0", "Ws 判据候选量（生产模块，被 `bm_real` 消费）", "core", "frozen"),
+    "sampling_hook.py": ("L0", "采样构造点中立钩子（零项目依赖、默认 no-op；内核只连它，捕获实现由调用方 install）", "core", "stable"),
     "drt.py": ("L0", "DRT 粗解（只报过程数/时间常数/电阻）", "opt", "stable"),
     "bm_circuit.py": ("L0", "等效电路图绘制（模式 A：voigt 串联骨架）", "no", "stable"),
     "bm_circuit_nested.py": ("L0", "nested 梯形网络电路图（只画 z_nested；符号复用 bm_circuit）", "no", "research"),
@@ -115,6 +116,7 @@ TEST_NOTE = {
     "test_include_L.py": "`include_L` 对照（单变量）",
     "test_seed.py": "sampler seed 传递链",
     "test_entry_parity.py": "两入口口径合并 T1–T6 + 差分（不跑 MCMC）",
+    "test_repo_integrity.py": "仓库完整性：生产依赖必须在 git 内（R1/R2/R3）",
 }
 
 
