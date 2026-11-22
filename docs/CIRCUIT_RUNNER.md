@@ -48,9 +48,18 @@ registry 里 `evidence_block` 是**校验器**不是推导器：状态要由调�
 - `DATASETS` / `--datasets` / `truth_candidate_for()`：三组数据的真值拓扑与文件定位；
 - 缓存键 `(candidate_id, data_sha256, seed, budget_profile)`，`observations.jsonl` append-only。
 
-**仍未接入**：`w_inf` / `w_open` / `w_short` / `adsorption` 在 registry 里 `wired=False`
-且**没有拓扑提供槽位**，所以它们不能进入候选集。这不是调度器遗漏，是 §5/§11 把扩散/吸附
-接入列为暂缓的如实反映；要接得先定义槽位与接点（`blocked_reason` 原文）。
+**2026-11-20 更新（扩散与 L 已接入，吸附仍锁）**：
+- `w_inf` / `w_open` / `w_short` 已 `wired=True` 并挂在 voigt/nested/adr 三族的
+  `diffusion` 槽位（`min_count=0`，默认关）；`build_candidates(include_diffusion=True)`
+  才生成，`compare --diffusion` 是唯一显式入口。`w_short` 另补了 `bm_core` 的采样分支。
+- `include_L`（顶层串联 `jωL`）三族同口径：registry 的 `series_inductor` 槽位 +
+  `_check_inductor_slot` 统一校验；**同批候选的 `include_L` 必须全同**
+  （`_assert_single_L`），否则两个模型空间混比。
+- `adsorption` 仍 `wired=False`：内核实现挂**顶层串联**，而 §9.4.12 的裁决是
+  **只允许第二并联节点**，接点冲突未裁 ⇒ 有意锁，不是漏接。
+
+**仍未接入**：只有 `adsorption`（理由见上）。扩散/L 的接入 ≠ 准入：§4 三条准入
+一条未满足，全部候选一律 research、默认关。
 
 ## 4. 实测（`quick` 档、seed 0、单条谱，**探索性，不是证据**）
 

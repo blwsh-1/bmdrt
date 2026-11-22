@@ -54,7 +54,7 @@ E4/E7 的 `disputed` 标记**保留**：两个参数已于 2026-11-16 裁决（1
 | `identified` | `out_of_sample_valid` 不能为 True（逐点 σ / `zmax` 依赖观测，R21） | 裁 σ/先验尺度口径（会重算 §13/§14/§18/§19 的 elpd） |
 | `model_inadequate` | 真实谱无 `truth_known` / `noise_calibrated` | CAL-01（开-短路+已知 RC）／合成数据 |
 | `out_of_sample_evidence` | Δelpd 只是候选间相对参考 | 同上 |
-| `candidate_set_completeness` | 扩散/吸附 `wired=False` 且无槽位（R12） | 给拓扑加槽位 |
+| `candidate_set_completeness` | registry 里仍有 `wired=False` 的元件（2026-11-20 起只剩 `adsorption`，接点冲突未裁） | 定接点后再把该元件的 `wired` 翻成 True |
 
 另有两条**条件触发**：`sampling_completeness`（有候选采样不达标时）、
 `confirmed.two_criteria`（当前两名都存在时，报告两条口径各说什么、是否冲突）。
