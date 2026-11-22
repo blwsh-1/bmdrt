@@ -1,0 +1,1113 @@
+{
+ "purpose": "M-b 判据在干净 2E/3E 谱上的外部验证",
+ "n_per_class": 20,
+ "budgets": {
+  "primary": "standard",
+  "rescue": "deep",
+  "deep_cfg": {
+   "n_warmup": 4000,
+   "n_samples": 2000,
+   "num_chains": 2,
+   "target_accept": 0.97,
+   "max_tree_depth": 11
+  }
+ },
+ "prior": "default (no zmax_override), same as §14",
+ "criteria": {
+  "A": "nested acf <= 0.50",
+  "B": "voigt acf - nested acf >= 0.20"
+ },
+ "summary": {
+  "n": 40,
+  "A": 22,
+  "B": 12,
+  "M_b": 7,
+  "A_subset_B": false,
+  "n_AB": 15,
+  "n_BA": 5,
+  "acf_median": 0.4203280278306144,
+  "transition_050_065": 5
+ },
+ "rows": [
+  {
+   "cls": "2E",
+   "name": "2EMC1-1_0150mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_2e\\2EMC1-1_0150mA.csv",
+   "include_L": true,
+   "n_pts": 56,
+   "budget": "standard",
+   "voigt": {
+    "acf": 0.42510611062808484,
+    "rms": 5.399589924223683,
+    "rhat": 1.0027934489186723,
+    "div": 0,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.435696760058418,
+    "rms": 5.368193210697421,
+    "rhat": 1.0064580595404982,
+    "div": 0,
+    "ess": 306.21133458820105
+   },
+   "improved": -0.010590649430333166,
+   "A": true,
+   "B": false,
+   "M_b": false,
+   "sampling_ok": true
+  },
+  {
+   "cls": "2E",
+   "name": "2EMC1-2_0005mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_2e\\2EMC1-2_0005mA.csv",
+   "include_L": true,
+   "n_pts": 56,
+   "budget": "standard",
+   "voigt": {
+    "acf": 0.6132455325255605,
+    "rms": 6.505198234509003,
+    "rhat": 1.0050721480887113,
+    "div": 1,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.5183556734287771,
+    "rms": 4.6735605565766205,
+    "rhat": 1.0619699503827789,
+    "div": 1,
+    "ess": 41.15671536464816
+   },
+   "improved": 0.09488985909678338,
+   "A": false,
+   "B": false,
+   "M_b": false,
+   "sampling_ok": false
+  },
+  {
+   "cls": "2E",
+   "name": "2EMC1-2_0500mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_2e\\2EMC1-2_0500mA.csv",
+   "include_L": true,
+   "n_pts": 56,
+   "budget": "standard",
+   "voigt": {
+    "acf": 0.3682491723642326,
+    "rms": 13.365166395457603,
+    "rhat": 1.005243838531011,
+    "div": 0,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.34081615835340145,
+    "rms": 11.665628706112518,
+    "rhat": 1.0045568420314626,
+    "div": 4,
+    "ess": 664.2498548877385
+   },
+   "improved": 0.027433014010831147,
+   "A": true,
+   "B": false,
+   "M_b": false,
+   "sampling_ok": false
+  },
+  {
+   "cls": "2E",
+   "name": "2EMC1-3_exp1_0150mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_2e\\2EMC1-3_exp1_0150mA.csv",
+   "include_L": true,
+   "n_pts": 56,
+   "budget": "standard",
+   "voigt": {
+    "acf": 0.21548590358676614,
+    "rms": 5.325531700000018,
+    "rhat": 1.0046589189305082,
+    "div": 0,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.21487686831119468,
+    "rms": 4.812714150115617,
+    "rhat": 1.0182342028010352,
+    "div": 0,
+    "ess": 188.0907468302439
+   },
+   "improved": 0.0006090352755714623,
+   "A": true,
+   "B": false,
+   "M_b": false,
+   "sampling_ok": true
+  },
+  {
+   "cls": "2E",
+   "name": "2EMC1-3_exp2_0005mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_2e\\2EMC1-3_exp2_0005mA.csv",
+   "include_L": true,
+   "n_pts": 56,
+   "budget": "standard",
+   "voigt": {
+    "acf": 0.7923651655991322,
+    "rms": 4.207712948819653,
+    "rhat": 1.0078111005075454,
+    "div": 0,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.6747932623320454,
+    "rms": 3.2547492113729626,
+    "rhat": 1.0021216911071118,
+    "div": 0,
+    "ess": 608.2298715624787
+   },
+   "improved": 0.11757190326708677,
+   "A": false,
+   "B": false,
+   "M_b": false,
+   "sampling_ok": true
+  },
+  {
+   "cls": "2E",
+   "name": "2EMC1-3_exp2_0350mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_2e\\2EMC1-3_exp2_0350mA.csv",
+   "include_L": true,
+   "n_pts": 56,
+   "budget": "standard",
+   "voigt": {
+    "acf": 0.3016667414640471,
+    "rms": 7.184419316457662,
+    "rhat": 1.0033934152610497,
+    "div": 0,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.3192929934915838,
+    "rms": 7.145010460501822,
+    "rhat": 1.00135631183339,
+    "div": 0,
+    "ess": 299.7830146860235
+   },
+   "improved": -0.017626252027536704,
+   "A": true,
+   "B": false,
+   "M_b": false,
+   "sampling_ok": true
+  },
+  {
+   "cls": "2E",
+   "name": "2EMC1-3_exp3_0100mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_2e\\2EMC1-3_exp3_0100mA.csv",
+   "include_L": true,
+   "n_pts": 56,
+   "budget": "standard",
+   "voigt": {
+    "acf": 0.36733527030038327,
+    "rms": 5.235533733000445,
+    "rhat": 1.005502846445109,
+    "div": 0,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.3078010295431628,
+    "rms": 4.447199154358488,
+    "rhat": 1.0469111060132168,
+    "div": 0,
+    "ess": 28.25366829665654
+   },
+   "improved": 0.05953424075722047,
+   "A": true,
+   "B": false,
+   "M_b": false,
+   "sampling_ok": true
+  },
+  {
+   "cls": "2E",
+   "name": "2EMC1-3_exp3_0750mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_2e\\2EMC1-3_exp3_0750mA.csv",
+   "include_L": true,
+   "n_pts": 56,
+   "budget": "standard",
+   "voigt": {
+    "acf": 0.4252306369652073,
+    "rms": 23.897864442724035,
+    "rhat": 1.0039415290459555,
+    "div": 0,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.3275101263962848,
+    "rms": 23.278003515986292,
+    "rhat": 1.0046717371986524,
+    "div": 0,
+    "ess": 220.1534254074012
+   },
+   "improved": 0.0977205105689225,
+   "A": true,
+   "B": false,
+   "M_b": false,
+   "sampling_ok": true
+  },
+  {
+   "cls": "2E",
+   "name": "2EMC2-1_0350mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_2e\\2EMC2-1_0350mA.csv",
+   "include_L": true,
+   "n_pts": 56,
+   "budget": "standard",
+   "voigt": {
+    "acf": 0.2175367544344303,
+    "rms": 4.766210608528541,
+    "rhat": 1.003772389034304,
+    "div": 0,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.21306065387029774,
+    "rms": 4.744453708364389,
+    "rhat": 1.0013422030266743,
+    "div": 0,
+    "ess": 352.60616151521566
+   },
+   "improved": 0.004476100564132557,
+   "A": true,
+   "B": false,
+   "M_b": false,
+   "sampling_ok": true
+  },
+  {
+   "cls": "2E",
+   "name": "2EMC2-2_0100mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_2e\\2EMC2-2_0100mA.csv",
+   "include_L": true,
+   "n_pts": 56,
+   "budget": "standard",
+   "voigt": {
+    "acf": 0.6188104225186355,
+    "rms": 4.767362416939768,
+    "rhat": 1.0038777871349436,
+    "div": 0,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.4030916476384767,
+    "rms": 3.48843795627673,
+    "rhat": 1.0110577335779283,
+    "div": 0,
+    "ess": 207.02946585616596
+   },
+   "improved": 0.21571877488015878,
+   "A": true,
+   "B": true,
+   "M_b": true,
+   "sampling_ok": true
+  },
+  {
+   "cls": "2E",
+   "name": "2EMC2-2_0750mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_2e\\2EMC2-2_0750mA.csv",
+   "include_L": true,
+   "n_pts": 56,
+   "budget": "standard",
+   "voigt": {
+    "acf": 0.25990492911667656,
+    "rms": 4.772919583986695,
+    "rhat": 1.0037064910014468,
+    "div": 0,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.2986806189605818,
+    "rms": 4.821646119018919,
+    "rhat": 1.0021989677437457,
+    "div": 0,
+    "ess": 257.83000225200817
+   },
+   "improved": -0.038775689843905226,
+   "A": true,
+   "B": false,
+   "M_b": false,
+   "sampling_ok": true
+  },
+  {
+   "cls": "2E",
+   "name": "2EP-1_exp1_0350mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_2e\\2EP-1_exp1_0350mA.csv",
+   "include_L": true,
+   "n_pts": 56,
+   "budget": "standard",
+   "voigt": {
+    "acf": 0.14258347862102422,
+    "rms": 6.4088644978594065,
+    "rhat": 1.0059027653448134,
+    "div": 0,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.17326007659874726,
+    "rms": 6.266542644419132,
+    "rhat": 1.0341092953700324,
+    "div": 0,
+    "ess": 97.7651797404682
+   },
+   "improved": -0.03067659797772304,
+   "A": true,
+   "B": false,
+   "M_b": false,
+   "sampling_ok": true
+  },
+  {
+   "cls": "2E",
+   "name": "2EP-1_exp2_0100mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_2e\\2EP-1_exp2_0100mA.csv",
+   "include_L": true,
+   "n_pts": 56,
+   "budget": "standard",
+   "voigt": {
+    "acf": 0.13318483795335231,
+    "rms": 4.866864210059734,
+    "rhat": 1.0044489863781185,
+    "div": 0,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.21579416219574182,
+    "rms": 4.414452507858018,
+    "rhat": 1.0060654249593652,
+    "div": 0,
+    "ess": 297.14659613755197
+   },
+   "improved": -0.08260932424238951,
+   "A": true,
+   "B": false,
+   "M_b": false,
+   "sampling_ok": true
+  },
+  {
+   "cls": "2E",
+   "name": "2EP-1_exp2_0750mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_2e\\2EP-1_exp2_0750mA.csv",
+   "include_L": true,
+   "n_pts": 56,
+   "budget": "standard",
+   "voigt": {
+    "acf": 0.36417297179794644,
+    "rms": 5.721083952402798,
+    "rhat": 1.0040882805918796,
+    "div": 0,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.32325709025372473,
+    "rms": 5.55499973718047,
+    "rhat": 1.0373900280953776,
+    "div": 0,
+    "ess": 99.50180689208646
+   },
+   "improved": 0.04091588154422171,
+   "A": true,
+   "B": false,
+   "M_b": false,
+   "sampling_ok": true
+  },
+  {
+   "cls": "2E",
+   "name": "2EP-1_exp3_0350mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_2e\\2EP-1_exp3_0350mA.csv",
+   "include_L": true,
+   "n_pts": 56,
+   "budget": "standard",
+   "voigt": {
+    "acf": 0.14145899801832276,
+    "rms": 7.232470930347355,
+    "rhat": 1.0023969483335924,
+    "div": 0,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.1182800518127612,
+    "rms": 7.347519763873995,
+    "rhat": 1.012290443254354,
+    "div": 0,
+    "ess": 161.89282080414404
+   },
+   "improved": 0.02317894620556156,
+   "A": true,
+   "B": false,
+   "M_b": false,
+   "sampling_ok": true
+  },
+  {
+   "cls": "2E",
+   "name": "2EP-2_exp1_0050mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_2e\\2EP-2_exp1_0050mA.csv",
+   "include_L": false,
+   "n_pts": 56,
+   "budget": "standard",
+   "voigt": {
+    "acf": 0.44499859392666574,
+    "rms": 6.548233829152301,
+    "rhat": 1.0020562847853993,
+    "div": 0,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.1837174930769479,
+    "rms": 5.324155268272986,
+    "rhat": 1.0087926105333607,
+    "div": 0,
+    "ess": 175.07041501931639
+   },
+   "improved": 0.26128110084971784,
+   "A": true,
+   "B": true,
+   "M_b": true,
+   "sampling_ok": true
+  },
+  {
+   "cls": "2E",
+   "name": "2EP-2_exp1_0670mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_2e\\2EP-2_exp1_0670mA.csv",
+   "include_L": false,
+   "n_pts": 56,
+   "budget": "standard",
+   "voigt": {
+    "acf": 0.7208289860173039,
+    "rms": 13.79428382405375,
+    "rhat": 1.004561337560455,
+    "div": 0,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.5767817592683104,
+    "rms": 10.27029118347309,
+    "rhat": 3.2647904120848863,
+    "div": 0,
+    "ess": 1.084802007552976
+   },
+   "improved": 0.1440472267489935,
+   "A": false,
+   "B": false,
+   "M_b": false,
+   "sampling_ok": false
+  },
+  {
+   "cls": "2E",
+   "name": "2EP-2_exp2_0200mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_2e\\2EP-2_exp2_0200mA.csv",
+   "include_L": true,
+   "n_pts": 56,
+   "budget": "standard",
+   "voigt": {
+    "acf": 0.14751199924715747,
+    "rms": 5.096104285539071,
+    "rhat": 1.0070217325431743,
+    "div": 0,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.194421309106526,
+    "rms": 5.148331653191042,
+    "rhat": 1.0076228382289816,
+    "div": 0,
+    "ess": 216.67130568921664
+   },
+   "improved": -0.04690930985936853,
+   "A": true,
+   "B": false,
+   "M_b": false,
+   "sampling_ok": true
+  },
+  {
+   "cls": "2E",
+   "name": "2EP-2_exp3_0050mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_2e\\2EP-2_exp3_0050mA.csv",
+   "include_L": true,
+   "n_pts": 56,
+   "budget": "standard",
+   "voigt": {
+    "acf": 0.6013036160787065,
+    "rms": 5.863699705064661,
+    "rhat": 1.0042886282566896,
+    "div": 0,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.2710573159040322,
+    "rms": 4.292998767276771,
+    "rhat": 1.0021643339893165,
+    "div": 0,
+    "ess": 302.63179733256675
+   },
+   "improved": 0.3302463001746743,
+   "A": true,
+   "B": true,
+   "M_b": true,
+   "sampling_ok": true
+  },
+  {
+   "cls": "2E",
+   "name": "2EP-2_exp3_0670mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_2e\\2EP-2_exp3_0670mA.csv",
+   "include_L": true,
+   "n_pts": 56,
+   "budget": "standard+deep(nested)",
+   "voigt": {
+    "acf": 0.29464854633742954,
+    "rms": 4.9781611747456145,
+    "rhat": 1.002214651095892,
+    "div": 0,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.24028012477159127,
+    "rms": 4.856071119406493,
+    "rhat": 1.001767515907402,
+    "div": 0,
+    "ess": 107.75619935485165
+   },
+   "improved": 0.054368421565838265,
+   "A": true,
+   "B": false,
+   "M_b": false,
+   "sampling_ok": true
+  },
+  {
+   "cls": "3E",
+   "name": "3E-1_HER_exp1_0150mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_3e\\3E-1_HER_exp1_0150mA.csv",
+   "include_L": true,
+   "n_pts": 67,
+   "budget": "standard",
+   "voigt": {
+    "acf": 0.8969746144321891,
+    "rms": 1.6855105656079343,
+    "rhat": 1.0059422821359194,
+    "div": 0,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.638254022600392,
+    "rms": 0.645844692910848,
+    "rhat": 1.0209006398907603,
+    "div": 0,
+    "ess": 104.51284424397856
+   },
+   "improved": 0.2587205918317971,
+   "A": false,
+   "B": true,
+   "M_b": false,
+   "sampling_ok": true
+  },
+  {
+   "cls": "3E",
+   "name": "3E-1_OER_exp1_0200mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_3e\\3E-1_OER_exp1_0200mA.csv",
+   "include_L": true,
+   "n_pts": 67,
+   "budget": "standard",
+   "voigt": {
+    "acf": 0.2807682183293831,
+    "rms": 1.3383740962026076,
+    "rhat": 1.0038815065693656,
+    "div": 0,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.2042833416389413,
+    "rms": 1.0649358265162905,
+    "rhat": 1.0147779760079398,
+    "div": 0,
+    "ess": 324.07521317009844
+   },
+   "improved": 0.0764848766904418,
+   "A": true,
+   "B": false,
+   "M_b": false,
+   "sampling_ok": true
+  },
+  {
+   "cls": "3E",
+   "name": "3E-1_full_electrolysis_cell_exp1_0300mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_3e\\3E-1_full_electrolysis_cell_exp1_0300mA.csv",
+   "include_L": true,
+   "n_pts": 67,
+   "budget": "standard",
+   "voigt": {
+    "acf": 0.7572600289817607,
+    "rms": 0.5303432699889732,
+    "rhat": 1.0021497137943296,
+    "div": 0,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.49248684220697303,
+    "rms": 0.3529897868889293,
+    "rhat": 1.0031632157287056,
+    "div": 0,
+    "ess": 290.1586222259978
+   },
+   "improved": 0.26477318677478767,
+   "A": true,
+   "B": true,
+   "M_b": true,
+   "sampling_ok": true
+  },
+  {
+   "cls": "3E",
+   "name": "3E-2_HER_exp2_0005mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_3e\\3E-2_HER_exp2_0005mA.csv",
+   "include_L": true,
+   "n_pts": 67,
+   "budget": "standard",
+   "voigt": {
+    "acf": 0.9247759794018903,
+    "rms": 14.98127102811714,
+    "rhat": 1.0030510250442608,
+    "div": 0,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.8426870462893294,
+    "rms": 2.409098280940525,
+    "rhat": 1.044465279426111,
+    "div": 0,
+    "ess": 73.5190711044697
+   },
+   "improved": 0.08208893311256082,
+   "A": false,
+   "B": false,
+   "M_b": false,
+   "sampling_ok": true
+  },
+  {
+   "cls": "3E",
+   "name": "3E-2_HER_exp3_0050mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_3e\\3E-2_HER_exp3_0050mA.csv",
+   "include_L": true,
+   "n_pts": 67,
+   "budget": "standard",
+   "voigt": {
+    "acf": 0.9507228435536956,
+    "rms": 2.758096250745389,
+    "rhat": 1.0009210351289144,
+    "div": 0,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.8592551092967964,
+    "rms": 0.4917194337804668,
+    "rhat": 1.0026682529703925,
+    "div": 0,
+    "ess": 409.441682028012
+   },
+   "improved": 0.09146773425689925,
+   "A": false,
+   "B": false,
+   "M_b": false,
+   "sampling_ok": true
+  },
+  {
+   "cls": "3E",
+   "name": "3E-2_OER_exp1_0100mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_3e\\3E-2_OER_exp1_0100mA.csv",
+   "include_L": false,
+   "n_pts": 67,
+   "budget": "standard",
+   "voigt": {
+    "acf": 0.9283359525482844,
+    "rms": 4.213780481596969,
+    "rhat": 1.0030537650349234,
+    "div": 0,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.7730145257083939,
+    "rms": 2.7945415541953853,
+    "rhat": 1.00127739701149,
+    "div": 0,
+    "ess": 551.4737458870279
+   },
+   "improved": 0.15532142683989048,
+   "A": false,
+   "B": false,
+   "M_b": false,
+   "sampling_ok": true
+  },
+  {
+   "cls": "3E",
+   "name": "3E-2_OER_exp2_0150mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_3e\\3E-2_OER_exp2_0150mA.csv",
+   "include_L": true,
+   "n_pts": 67,
+   "budget": "standard",
+   "voigt": {
+    "acf": 0.9380330570232239,
+    "rms": 2.841900315840032,
+    "rhat": 1.004399877051089,
+    "div": 0,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.6655719003857411,
+    "rms": 0.6040474837678159,
+    "rhat": 1.0031628300030389,
+    "div": 0,
+    "ess": 459.8230605243217
+   },
+   "improved": 0.2724611566374828,
+   "A": false,
+   "B": true,
+   "M_b": false,
+   "sampling_ok": true
+  },
+  {
+   "cls": "3E",
+   "name": "3E-2_OER_exp3_0200mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_3e\\3E-2_OER_exp3_0200mA.csv",
+   "include_L": true,
+   "n_pts": 67,
+   "budget": "standard",
+   "voigt": {
+    "acf": 0.9399896704802646,
+    "rms": 2.6258826812702734,
+    "rhat": 1.00654693804246,
+    "div": 0,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.6759143467210246,
+    "rms": 0.5561657814004902,
+    "rhat": 1.0062225349830858,
+    "div": 0,
+    "ess": 468.51843195678794
+   },
+   "improved": 0.26407532375924003,
+   "A": false,
+   "B": true,
+   "M_b": false,
+   "sampling_ok": true
+  },
+  {
+   "cls": "3E",
+   "name": "3E-2_OER_exp4_0300mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_3e\\3E-2_OER_exp4_0300mA.csv",
+   "include_L": true,
+   "n_pts": 67,
+   "budget": "standard",
+   "voigt": {
+    "acf": 0.8869424655198056,
+    "rms": 1.421937657476339,
+    "rhat": 1.0069966810128121,
+    "div": 0,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.6984422306917663,
+    "rms": 0.6549273449075805,
+    "rhat": 1.0050685016601535,
+    "div": 0,
+    "ess": 391.1591214582633
+   },
+   "improved": 0.18850023482803935,
+   "A": false,
+   "B": false,
+   "M_b": false,
+   "sampling_ok": true
+  },
+  {
+   "cls": "3E",
+   "name": "3E-2_full_electrolysis_cell_exp2_0005mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_3e\\3E-2_full_electrolysis_cell_exp2_0005mA.csv",
+   "include_L": true,
+   "n_pts": 67,
+   "budget": "standard",
+   "voigt": {
+    "acf": 0.9207942751290031,
+    "rms": 7.849309907181576,
+    "rhat": 1.0056406144800365,
+    "div": 0,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.9641333068555128,
+    "rms": 3.5059748801040556,
+    "rhat": 9.353820713070983,
+    "div": 0,
+    "ess": 1.0094574621101342
+   },
+   "improved": -0.04333903172650966,
+   "A": false,
+   "B": false,
+   "M_b": false,
+   "sampling_ok": false
+  },
+  {
+   "cls": "3E",
+   "name": "3E-2_full_electrolysis_cell_exp3_0050mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_3e\\3E-2_full_electrolysis_cell_exp3_0050mA.csv",
+   "include_L": true,
+   "n_pts": 67,
+   "budget": "standard",
+   "voigt": {
+    "acf": 0.915865915088538,
+    "rms": 1.4971060535786351,
+    "rhat": 1.0018521897176031,
+    "div": 0,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.8411929031735407,
+    "rms": 0.5766894545889579,
+    "rhat": 1.0042723463280976,
+    "div": 0,
+    "ess": 347.2150559909012
+   },
+   "improved": 0.07467301191499731,
+   "A": false,
+   "B": false,
+   "M_b": false,
+   "sampling_ok": true
+  },
+  {
+   "cls": "3E",
+   "name": "3E-3_HER_exp1_0100mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_3e\\3E-3_HER_exp1_0100mA.csv",
+   "include_L": true,
+   "n_pts": 67,
+   "budget": "standard",
+   "voigt": {
+    "acf": 0.9484466566130216,
+    "rms": 2.855081078748582,
+    "rhat": 1.0009381054317754,
+    "div": 0,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.6239347909141361,
+    "rms": 0.5261451786040066,
+    "rhat": 1.0067490030801816,
+    "div": 0,
+    "ess": 325.60867640125326
+   },
+   "improved": 0.32451186569888557,
+   "A": false,
+   "B": true,
+   "M_b": false,
+   "sampling_ok": true
+  },
+  {
+   "cls": "3E",
+   "name": "3E-3_HER_exp2_0150mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_3e\\3E-3_HER_exp2_0150mA.csv",
+   "include_L": true,
+   "n_pts": 67,
+   "budget": "standard",
+   "voigt": {
+    "acf": 0.9364304596176607,
+    "rms": 2.8723715926623226,
+    "rhat": 1.0021753625518477,
+    "div": 0,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.6317779821573637,
+    "rms": 0.4776713184555217,
+    "rhat": 1.008506116505451,
+    "div": 0,
+    "ess": 530.6790946259292
+   },
+   "improved": 0.304652477460297,
+   "A": false,
+   "B": true,
+   "M_b": false,
+   "sampling_ok": true
+  },
+  {
+   "cls": "3E",
+   "name": "3E-3_HER_exp3_0200mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_3e\\3E-3_HER_exp3_0200mA.csv",
+   "include_L": true,
+   "n_pts": 67,
+   "budget": "standard",
+   "voigt": {
+    "acf": 0.914571640841469,
+    "rms": 3.2487041837886457,
+    "rhat": 1.0031665068396858,
+    "div": 0,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.27233895582488254,
+    "rms": 0.8388463167044339,
+    "rhat": 1.0041332730094374,
+    "div": 0,
+    "ess": 539.1848251645497
+   },
+   "improved": 0.6422326850165865,
+   "A": true,
+   "B": true,
+   "M_b": true,
+   "sampling_ok": true
+  },
+  {
+   "cls": "3E",
+   "name": "3E-3_OER_exp1_0300mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_3e\\3E-3_OER_exp1_0300mA.csv",
+   "include_L": true,
+   "n_pts": 67,
+   "budget": "standard",
+   "voigt": {
+    "acf": 0.7040090933477686,
+    "rms": 1.5624550264111718,
+    "rhat": 1.0012043722388555,
+    "div": 0,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.4049592956028108,
+    "rms": 0.6837496078858187,
+    "rhat": 1.0063795830070847,
+    "div": 0,
+    "ess": 380.1534137449063
+   },
+   "improved": 0.2990497977449578,
+   "A": true,
+   "B": true,
+   "M_b": true,
+   "sampling_ok": true
+  },
+  {
+   "cls": "3E",
+   "name": "3E-3_OER_exp3_0005mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_3e\\3E-3_OER_exp3_0005mA.csv",
+   "include_L": true,
+   "n_pts": 67,
+   "budget": "standard",
+   "voigt": {
+    "acf": 0.7658875391006603,
+    "rms": 5.6674269828461,
+    "rhat": 1.0014693496052438,
+    "div": 0,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.8857256702360473,
+    "rms": 2.1434546105428285,
+    "rhat": 1.0247984384679356,
+    "div": 0,
+    "ess": 123.1306902828508
+   },
+   "improved": -0.119838131135387,
+   "A": false,
+   "B": false,
+   "M_b": false,
+   "sampling_ok": true
+  },
+  {
+   "cls": "3E",
+   "name": "3E-3_full_electrolysis_cell_exp1_0050mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_3e\\3E-3_full_electrolysis_cell_exp1_0050mA.csv",
+   "include_L": true,
+   "n_pts": 67,
+   "budget": "standard",
+   "voigt": {
+    "acf": 0.9505636568094631,
+    "rms": 1.2835786685168915,
+    "rhat": 1.0003203351758905,
+    "div": 0,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.8249214471813366,
+    "rms": 0.35189090901668474,
+    "rhat": 1.0039648842486912,
+    "div": 0,
+    "ess": 484.6993043121402
+   },
+   "improved": 0.12564220962812644,
+   "A": false,
+   "B": false,
+   "M_b": false,
+   "sampling_ok": true
+  },
+  {
+   "cls": "3E",
+   "name": "3E-3_full_electrolysis_cell_exp2_0100mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_3e\\3E-3_full_electrolysis_cell_exp2_0100mA.csv",
+   "include_L": true,
+   "n_pts": 67,
+   "budget": "standard",
+   "voigt": {
+    "acf": 0.916182326067227,
+    "rms": 1.9901092820260953,
+    "rhat": 1.0032716225589047,
+    "div": 0,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.8279909776015595,
+    "rms": 0.2777476545643948,
+    "rhat": 1.0041355867508104,
+    "div": 0,
+    "ess": 527.3207591139701
+   },
+   "improved": 0.08819134846566756,
+   "A": false,
+   "B": false,
+   "M_b": false,
+   "sampling_ok": true
+  },
+  {
+   "cls": "3E",
+   "name": "3E-3_full_electrolysis_cell_exp3_0150mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_3e\\3E-3_full_electrolysis_cell_exp3_0150mA.csv",
+   "include_L": true,
+   "n_pts": 67,
+   "budget": "standard",
+   "voigt": {
+    "acf": 0.9225696664554383,
+    "rms": 1.768253426082003,
+    "rhat": 1.005333875348371,
+    "div": 0,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.7593985007803878,
+    "rms": 0.16449486079308556,
+    "rhat": 1.010093401027464,
+    "div": 0,
+    "ess": 319.07199568034565
+   },
+   "improved": 0.1631711656750504,
+   "A": false,
+   "B": false,
+   "M_b": false,
+   "sampling_ok": true
+  },
+  {
+   "cls": "3E",
+   "name": "3E-3_full_electrolysis_cell_exp4_0200mA.csv",
+   "path": "D:\\eis训练数据\\bmdrt\\EISmeasurements/csv_3e\\3E-3_full_electrolysis_cell_exp4_0200mA.csv",
+   "include_L": true,
+   "n_pts": 67,
+   "budget": "standard",
+   "voigt": {
+    "acf": 0.836517263196548,
+    "rms": 0.987571037690098,
+    "rhat": 1.0039645392776686,
+    "div": 0,
+    "ess": 0.0
+   },
+   "nested": {
+    "acf": 0.38871323039418165,
+    "rms": 0.22850503456944343,
+    "rhat": 1.0077573738311094,
+    "div": 0,
+    "ess": 211.7854365382736
+   },
+   "improved": 0.4478040328023663,
+   "A": true,
+   "B": true,
+   "M_b": true,
+   "sampling_ok": true
+  }
+ ]
+}

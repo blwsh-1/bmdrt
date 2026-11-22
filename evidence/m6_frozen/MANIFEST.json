@@ -1,0 +1,22 @@
+{
+ "purpose": "§13/§14 验收基线产物的冻结副本（2026-11-10 / 11-11）",
+ "why": "out/ 被 .gitignore 忽略；不归档则 clone 后 4/14 与 0/3 不可复现",
+ "frozen_at": "2026-11-22",
+ "curve_policy": "legacy：Z(中位参数)。不是 F1（逐样本 Z 的逐点中位）",
+ "source": "out/m4_holdout2.json、out/m4_holdout2_ess.json、out/m4_holdout.json",
+ "files": {
+  "m4_holdout.json": {
+   "sha256": "6e555a3c4378df67c20ff7506c0f07b7cc694ca1bdcb88e31cf949a6f1335aac",
+   "bytes": 12880
+  },
+  "m4_holdout2.json": {
+   "sha256": "6949454e7a66dc3939d3578cc849f6f2c56ce329a2d83c4c6d4928b67096a471",
+   "bytes": 48122
+  },
+  "m4_holdout2_ess.json": {
+   "sha256": "a44272465ef1859e597ca23a1bf9e9410b17a5f0e97fd75fe70a774dc7e618b4",
+   "bytes": 56827
+  }
+ },
+ "warning": "重跑产物（新口径）不得覆盖本副本；本副本只代表旧口径。旧产物未落 z_fit / 后验样本 ⇒ 无法只读重算，只能重跑。"
+}
