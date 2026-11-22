@@ -77,19 +77,32 @@ def one(spec: str, seeds: list[int]) -> dict:
     f, Z = R.load_spectrum(path)
     sg = (SIGMA_PCT / 100.0 * np.abs(Z), SIGMA_PCT / 100.0 * np.abs(Z))
     w = np.abs(Z)
+    # F1 曲线口径的唯一实现在 circuit_runner；延迟 import，避免影响只读路径
+    import circuit_runner as CR
     rows = []
     for sd in seeds:
         o = T.fit_top(f, Z, branch=BRANCH, layers=LAYERS, seed=sd, sigma=sg,
                       progress=False, **BUDGET)
         names = [k for k in T.sampled_keys(BRANCH, LAYERS)]
         pm = {k: float(np.median(o["s"][k])) for k in names}
-        Zm = T.z_nested(f, pm, branch=BRANCH, layers=LAYERS)
-        met = _metrics(f, Z, Zm)
+        # 旧口径：Z(中位参数)。保留，否则既有 0/3 无法复现。
+        Zm_med = T.z_nested(f, pm, branch=BRANCH, layers=LAYERS)
+        met = _metrics(f, Z, Zm_med)
+        # F1 口径：逐样本算 Z 再逐点取中位（2026-11-20 契约）
+        Zm_f1 = CR._pointwise_median_z(
+            {"s": o["s"]}, "nested",
+            dict(branch=BRANCH, layers=LAYERS, diffusion=None, include_L=False), f)
+        met_f1 = _metrics(f, Z, Zm_f1)
         ci = {k: [float(np.percentile(o["s"][k], 5)), float(np.percentile(o["s"][k], 95))]
               for k in names}
         po = o["idata"].posterior
         ch = {k: np.asarray(po[k].values) for k in names}
-        rows.append(dict(seed=sd, **met, params=pm, ci90=ci,
+        rows.append(dict(seed=sd, **met, metrics_f1=met_f1,
+                         z_fit=dict(re=[float(v) for v in Zm_med.real],
+                                    im=[float(v) for v in Zm_med.imag]),
+                         z_fit_f1=dict(re=[float(v) for v in Zm_f1.real],
+                                       im=[float(v) for v in Zm_f1.imag]),
+                         params=pm, ci90=ci,
                          rhat_max=float(o["rhat_max"]), div=int(o["divergences"] or 0),
                          rs_plus_r1=[float(np.percentile(o["s"]["Rs"] + o["s"]["R1"], q))
                                      for q in (5, 50, 95)],
@@ -101,7 +114,15 @@ def one(spec: str, seeds: list[int]) -> dict:
     p = dict(R_inf=float(np.median(s["R_inf"])), W=float(np.median(s["W"])),
              pi=np.median(s["pi"], axis=0), tau=np.median(s["tau"], axis=0),
              phi=np.median(s["phi"], axis=0), zeta=np.median(s["zeta"], axis=0))
-    base = _metrics(f, Z, B.model_z(f, p, include_L=False))
+    Zm_base = B.model_z(f, p, include_L=False)
+    base = _metrics(f, Z, Zm_base)
+    # N-b 是"比 voigt 低≥0.20"的跨族差：两族必须用同一套曲线口径
+    Zm_base_f1 = CR._pointwise_median_z({"s": s}, "voigt", dict(include_L=False), f)
+    base["metrics_f1"] = _metrics(f, Z, Zm_base_f1)
+    base["z_fit"] = dict(re=[float(v) for v in Zm_base.real],
+                         im=[float(v) for v in Zm_base.imag])
+    base["z_fit_f1"] = dict(re=[float(v) for v in Zm_base_f1.real],
+                            im=[float(v) for v in Zm_base_f1.imag])
     from numpyro.diagnostics import summary
     sm = summary(mc.get_samples(group_by_chain=True), prob=0.9)
     base["rhat_max"] = max(float(np.max(np.asarray(v["r_hat"]))) for v in sm.values())
@@ -109,7 +130,7 @@ def one(spec: str, seeds: list[int]) -> dict:
     base["K"] = 1
 
     # 判定：逐 seed 全过才算过（N-c 是逐 seed 的）
-    verdict = []
+    verdict, verdict_f1 = [], []
     for r in rows:
         na = r["rms_rel"] <= RMS_MAX
         nb = (r["acf_max"] <= ACF_MAX) and (base["acf_max"] - r["acf_max"] >= ACF_DROP)
@@ -117,10 +138,18 @@ def one(spec: str, seeds: list[int]) -> dict:
         nd = True   # 报告义务：区间与简并对已落 JSON，见 §13.3 N-d
         verdict.append(dict(seed=r["seed"], Na=bool(na), Nb=bool(nb),
                             Nc=bool(nc), Nd=nd, passed=bool(na and nb and nc and nd)))
+        f1, b1 = r["metrics_f1"], base["metrics_f1"]
+        na1 = f1["rms_rel"] <= RMS_MAX
+        nb1 = (f1["acf_max"] <= ACF_MAX) and (b1["acf_max"] - f1["acf_max"] >= ACF_DROP)
+        verdict_f1.append(dict(seed=r["seed"], Na=bool(na1), Nb=bool(nb1),
+                               Nc=bool(nc), Nd=nd,
+                               passed=bool(na1 and nb1 and nc and nd)))
     return dict(spec=spec, n_pts=int(f.size), f_range=[float(f.min()), float(f.max())],
                 sigma_pct=SIGMA_PCT, budget=BUDGET, branch=BRANCH, layers=LAYERS,
                 seeds=seeds, rows=rows, voigt_base=base,
-                verdict=verdict, passed_all=all(v["passed"] for v in verdict))
+                verdict=verdict, passed_all=all(v["passed"] for v in verdict),
+                verdict_f1=verdict_f1,
+                passed_all_f1=all(v["passed"] for v in verdict_f1))
 
 
 def main(argv=None) -> int:
@@ -150,7 +179,7 @@ def main(argv=None) -> int:
         b = r["voigt_base"]
         print(f"  voigt K=1 同口径：rms {b['rms_rel']:6.2f}%  acf {b['acf_max']:.3f}  "
               f"R̂ {b['rhat_max']:.3f}  div {b['div']}")
-        for row, v in zip(r["rows"], r["verdict"]):
+        for row, v, v1 in zip(r["rows"], r["verdict"], r["verdict_f1"]):
             print(f"  seed{row['seed']} nested：rms {row['rms_rel']:6.2f}%  "
                   f"低/中/高 {row['bands'][0]:.1f}/{row['bands'][1]:.1f}/{row['bands'][2]:.1f}  "
                   f"acf {row['acf_max']:.3f}  R̂ {row['rhat_max']:.3f}  div {row['div']}  "
@@ -160,7 +189,12 @@ def main(argv=None) -> int:
                   + ("   简并对：" + ", ".join(f"{d['pair'][0]}-{d['pair'][1]} {d['rho']:.2f}"
                                               for d in row["degenerate"][:2])
                      if row["degenerate"] else ""))
-        print(f"  本谱：{'**过**' if r['passed_all'] else '未过'}")
+            m1 = row["metrics_f1"]
+            print(f"    [F1 口径] rms {m1['rms_rel']:6.2f}%  acf {m1['acf_max']:.3f}  "
+                  f"N-a {'✓' if v1['Na'] else '✗'}  N-b {'✓' if v1['Nb'] else '✗'}  "
+                  f"N-c {'✓' if v1['Nc'] else '✗'}  → {'过' if v1['passed'] else '未过'}")
+        print(f"  本谱：{'**过**' if r['passed_all'] else '未过'}"
+              f"（旧口径） / {'**过**' if r['passed_all_f1'] else '未过'}（F1 口径）")
         res.append(r)
 
     if a.json:
@@ -168,7 +202,9 @@ def main(argv=None) -> int:
             json.dump(dict(prereg="M6_VALIDATION_PLAN.md §13", rows=res), fh,
                       ensure_ascii=False, indent=1)
         ok = [r.get("spec") for r in res if r.get("passed_all")]
-        print(f"\n通过 {len(ok)}/{len(res)}：{ok}")
+        ok1 = [r.get("spec") for r in res if r.get("passed_all_f1")]
+        print(f"\n旧口径通过 {len(ok)}/{len(res)}：{ok}")
+        print(f"F1 口径通过 {len(ok1)}/{len(res)}：{ok1}")
         print(f"已写 {a.json}")
     return 0
 

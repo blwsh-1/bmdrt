@@ -182,3 +182,21 @@ Thumbs.db
 
 # 会话/项目记忆（本地数据，不是交付物）
 .workbuddy/
+
+# §13/§14 验收基线产物（2026-11-22 归档，旧口径 4/14 的唯一证据）
+!evidence/m6_frozen/
+!evidence/m6_frozen/MANIFEST.json
+!evidence/m6_frozen/m4_holdout.json
+!evidence/m6_frozen/m4_holdout2.json
+!evidence/m6_frozen/m4_holdout2_ess.json
+# §13/§14 曲线口径双报实测（2026-11-22）
+!evidence/m6_f1_2026-11-22/
+!evidence/m6_f1_2026-11-22/MANIFEST.json
+!evidence/m6_f1_2026-11-22/m4_holdout2_f1.json
+!evidence/m6_f1_2026-11-22/m4_holdout_f1.json
+
+# M-b 外部验证产物（2026-11-22）
+!evidence/m6_external_2026-11-22/
+!evidence/m6_external_2026-11-22/MANIFEST.json
+!evidence/m6_external_2026-11-22/mba_external_validate.json
+!evidence/m6_external_2026-11-22/mba_budget_calib.json

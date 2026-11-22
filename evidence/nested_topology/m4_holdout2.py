@@ -18,6 +18,21 @@
    **ESS 不进 M-c 判定**（M-c 仍是 §14.3 预注册的 `R̂≤1.05 且 div=0`），
    只作补充诊断与预警。
 
+2026-11-22 曲线口径双报（见 §14.6 变更日志 3）
+---------------------------------------------
+`BMDRT_RESULT_AND_FIGURE_DESIGN.md` 的 F1 契约（2026-11-20）规定曲线是
+**逐样本算 Z 再逐点取中位**，而本执行器此前用的是 `Z(中位参数)`——
+`Z(θ)` 对 θ 非线性，两者不相等，**旧产物（`out/m4_holdout2.json`，2026-11-10）
+是旧口径的**。本版同时算两套并各自判定：
+
+- `rms_rel` / `acf` / `verdict`：**旧口径**，保持不变 ⇒ 既有 `4/14` 仍可复现；
+- `metrics_f1` / `verdict_f1`：**F1 口径**，复用 `circuit_runner._pointwise_median_z`
+  （该函数是 F1 的唯一实现，本轮不另写一份）；
+- 两条曲线都落进 JSON（`z_fit` / `z_fit_f1`，50 点 re/im），
+  以后任何口径再变都能**只读重算** `_metrics`，不必重跑 MCMC。
+
+**判据（RMS_MAX / ACF_MAX / ACF_DROP / RHAT_MAX）一个没动**，动的只是曲线怎么算。
+
 用法
 ----
     python evidence/nested_topology/m4_holdout2.py --dry
@@ -133,13 +148,22 @@ def _fit_set(f, Z, seeds: list[int], save_dir: str | None = None,
     不必重跑 MCMC。旧执行器只落 `rhat_max`/`div`，外部审查因此拿不到后验。
     """
     sg = (SIGMA_PCT / 100.0 * np.abs(Z), SIGMA_PCT / 100.0 * np.abs(Z))
+    # F1 曲线口径的唯一实现在 circuit_runner；延迟 import，`--dry` 不必付加载成本。
+    import circuit_runner as CR
     rows = []
     for sd in seeds:
         o = T.fit_top(f, Z, branch=BRANCH, layers=LAYERS, seed=sd, sigma=sg,
                       sigma_from_data=True, progress=False, **BUDGET)
         names = list(T.sampled_keys(BRANCH, LAYERS))
         pm = {k: float(np.median(o["s"][k])) for k in names}
-        met = _metrics(f, Z, T.z_nested(f, pm, branch=BRANCH, layers=LAYERS))
+        # 旧口径：Z(中位参数)。**保留不动**，否则既有 4/14 无法复现。
+        Zm_med = T.z_nested(f, pm, branch=BRANCH, layers=LAYERS)
+        met = _metrics(f, Z, Zm_med)
+        # F1 口径：逐样本算 Z，再逐点取中位（2026-11-20 契约）。
+        Zm_f1 = CR._pointwise_median_z(
+            {"s": o["s"]}, "nested",
+            dict(branch=BRANCH, layers=LAYERS, diffusion=None, include_L=False), f)
+        met_f1 = _metrics(f, Z, Zm_f1)
         po = o["idata"].posterior
         ch = {k: np.asarray(po[k].values) for k in names}
         if save_dir:
@@ -150,10 +174,22 @@ def _fit_set(f, Z, seeds: list[int], save_dir: str | None = None,
                 pointwise_elpd=np.asarray(o["pointwise_elpd"], float),
                 elpd=np.float64(o["elpd"]), elpd_se=np.float64(o["elpd_se"]),
                 rms_rel=np.float64(met["rms_rel"]), acf=np.float64(met["acf"]),
+                rms_rel_f1=np.float64(met_f1["rms_rel"]),
+                acf_f1=np.float64(met_f1["acf"]),
+                z_fit_median_re=np.asarray(Zm_med.real, float),
+                z_fit_median_im=np.asarray(Zm_med.imag, float),
+                z_fit_f1_re=np.asarray(Zm_f1.real, float),
+                z_fit_f1_im=np.asarray(Zm_f1.imag, float),
                 sigma_re_perpoint=np.asarray(sg[0], float),
                 sigma_im_perpoint=np.asarray(sg[1], float),
                 f=np.asarray(f, float))
-        rows.append(dict(seed=sd, **met, params=pm,
+        rows.append(dict(seed=sd, **met, metrics_f1=met_f1,
+                         # 两条曲线都落盘：口径再变时可只读重算 _metrics
+                         z_fit=dict(re=[float(v) for v in Zm_med.real],
+                                    im=[float(v) for v in Zm_med.imag]),
+                         z_fit_f1=dict(re=[float(v) for v in Zm_f1.real],
+                                       im=[float(v) for v in Zm_f1.imag]),
+                         params=pm,
                          ci90={k: [float(np.percentile(o["s"][k], 5)),
                                    float(np.percentile(o["s"][k], 95))] for k in names},
                          rhat_max=float(o["rhat_max"]), div=int(o["divergences"] or 0),
@@ -173,21 +209,36 @@ def _fit_set(f, Z, seeds: list[int], save_dir: str | None = None,
     p = dict(R_inf=float(np.median(s["R_inf"])), W=float(np.median(s["W"])),
              pi=np.median(s["pi"], axis=0), tau=np.median(s["tau"], axis=0),
              phi=np.median(s["phi"], axis=0), zeta=np.median(s["zeta"], axis=0))
-    base = _metrics(f, Z, B.model_z(f, p, include_L=False))
+    Zm_base = B.model_z(f, p, include_L=False)
+    base = _metrics(f, Z, Zm_base)
+    # voigt 基线也必须同口径：M-b 是"比 voigt 低≥0.20"的**跨族差**，
+    # 两族若用不同曲线口径，这个差就没有意义。
+    Zm_base_f1 = CR._pointwise_median_z({"s": s}, "voigt", dict(include_L=False), f)
+    base["metrics_f1"] = _metrics(f, Z, Zm_base_f1)
+    base["z_fit"] = dict(re=[float(v) for v in Zm_base.real],
+                         im=[float(v) for v in Zm_base.imag])
+    base["z_fit_f1"] = dict(re=[float(v) for v in Zm_base_f1.real],
+                            im=[float(v) for v in Zm_base_f1.imag])
     from numpyro.diagnostics import summary
     sm = summary(mc.get_samples(group_by_chain=True), prob=0.9)
     base["rhat_max"] = max(float(np.max(np.asarray(v["r_hat"]))) for v in sm.values())
     base["ess_min"] = min(float(np.min(np.asarray(v["n_eff"]))) for v in sm.values())
     base["div"] = int(np.sum(mc.get_extra_fields()["diverging"]))
 
-    verdict = []
+    verdict, verdict_f1 = [], []
     for r in rows:
         na = r["rms_rel"] <= RMS_MAX
         nb = (r["acf"] <= ACF_MAX) and (base["acf"] - r["acf"] >= ACF_DROP)
         nc = (r["rhat_max"] <= RHAT_MAX) and (r["div"] == 0)
         verdict.append(dict(seed=r["seed"], Ma=bool(na), Mb=bool(nb), Mc=bool(nc),
                             Md=True, passed=bool(na and nb and nc)))
-    return dict(rows=rows, voigt_base=base, verdict=verdict)
+        # 同一套判据、换曲线口径。M-c 只看采样诊断，与曲线无关，直接复用。
+        f1, b1 = r["metrics_f1"], base["metrics_f1"]
+        na1 = f1["rms_rel"] <= RMS_MAX
+        nb1 = (f1["acf"] <= ACF_MAX) and (b1["acf"] - f1["acf"] >= ACF_DROP)
+        verdict_f1.append(dict(seed=r["seed"], Ma=bool(na1), Mb=bool(nb1),
+                               Mc=bool(nc), Md=True, passed=bool(na1 and nb1 and nc)))
+    return dict(rows=rows, voigt_base=base, verdict=verdict, verdict_f1=verdict_f1)
 
 
 def one(spec: str, seeds: list[int], save_dir: str | None = None) -> dict:
@@ -205,24 +256,35 @@ def one(spec: str, seeds: list[int], save_dir: str | None = None) -> dict:
         nocut["identical"] = False
     else:
         nocut = dict(rows=cut["rows"], voigt_base=cut["voigt_base"],
-                     verdict=cut["verdict"], identical=True)
+                     verdict=cut["verdict"], verdict_f1=cut["verdict_f1"],
+                     identical=True)
 
     # 两套都过才算过；一套过一套不过 = 口径敏感，不计为过（§14.4b）
     cut_ok = all(v["passed"] for v in cut["verdict"])
     no_ok = all(v["passed"] for v in nocut["verdict"])
     state = "过" if (cut_ok and no_ok) else ("未过" if not (cut_ok or no_ok)
                                             else "口径敏感(cut_sensitive)")
+    # F1 口径并列判定（同一套判据，只换曲线怎么算）
+    cut_ok_f1 = all(v["passed"] for v in cut["verdict_f1"])
+    no_ok_f1 = all(v["passed"] for v in nocut["verdict_f1"])
+    state_f1 = "过" if (cut_ok_f1 and no_ok_f1) else (
+        "未过" if not (cut_ok_f1 or no_ok_f1) else "口径敏感(cut_sensitive)")
     return dict(spec=spec, n_pts=int(f_all.size), n_kept=int(keep.sum()),
                 dropped_hz=c["dropped"], n_trace=c["n_trace"],
                 sigma_pct=SIGMA_PCT, budget=BUDGET, branch=BRANCH, layers=LAYERS,
                 seeds=seeds, rows=cut["rows"], voigt_base=cut["voigt_base"],
-                verdict=cut["verdict"], nocut=dict(
+                verdict=cut["verdict"], verdict_f1=cut["verdict_f1"],
+                nocut=dict(
                     rows=[] if nocut["identical"] else nocut["rows"],
                     voigt_base=nocut["voigt_base"], verdict=nocut["verdict"],
+                    verdict_f1=nocut["verdict_f1"],
                     identical=nocut["identical"]),
                 cut_ok=bool(cut_ok), nocut_ok=bool(no_ok),
                 cut_sensitive=bool(cut_ok != no_ok), state=state,
-                passed_all=bool(cut_ok and no_ok))
+                passed_all=bool(cut_ok and no_ok),
+                cut_ok_f1=bool(cut_ok_f1), nocut_ok_f1=bool(no_ok_f1),
+                cut_sensitive_f1=bool(cut_ok_f1 != no_ok_f1), state_f1=state_f1,
+                passed_all_f1=bool(cut_ok_f1 and no_ok_f1))
 
 
 def main(argv=None) -> int:
@@ -260,7 +322,7 @@ def main(argv=None) -> int:
               f"保留 {r['n_kept']}/{r['n_pts']}")
         print(f"  voigt K=1：rms {b['rms_rel']:6.2f}%  acf {b['acf']:.3f}  "
               f"R̂ {b['rhat_max']:.3f}  ESS {b['ess_min']:.0f}")
-        for row, v in zip(r["rows"], r["verdict"]):
+        for row, v, v1 in zip(r["rows"], r["verdict"], r["verdict_f1"]):
             print(f"  seed{row['seed']} nested：rms {row['rms_rel']:6.2f}%  "
                   f"低/中/高 {row['bands'][0]:.1f}/{row['bands'][1]:.1f}/{row['bands'][2]:.1f}  "
                   f"acf {row['acf']:.3f}  R̂ {row['rhat_max']:.3f}  div {row['div']}  "
@@ -268,9 +330,14 @@ def main(argv=None) -> int:
                   f"RsR1 {row['params']['Rs'] + row['params']['R1']:.1f}"
                   f"  M-a {'✓' if v['Ma'] else '✗'} M-b {'✓' if v['Mb'] else '✗'} "
                   f"M-c {'✓' if v['Mc'] else '✗'} → {'过' if v['passed'] else '未过'}")
+            m1 = row["metrics_f1"]
+            print(f"    [F1 口径] rms {m1['rms_rel']:6.2f}%  acf {m1['acf']:.3f}  "
+                  f"(旧口径 rms {row['rms_rel']:.2f}% / acf {row['acf']:.3f})  "
+                  f"M-a {'✓' if v1['Ma'] else '✗'} M-b {'✓' if v1['Mb'] else '✗'} "
+                  f"M-c {'✓' if v1['Mc'] else '✗'} → {'过' if v1['passed'] else '未过'}")
         print(f"  M4b 未剔点：{'与剔点版逐位相同（M1 未剔点）' if r['nocut']['identical'] else r['nocut']['verdict']}"
               f"  两套都过={r['cut_ok'] and r['nocut_ok']}  口径敏感={r['cut_sensitive']}")
-        print(f"  本谱：{r['state']}", flush=True)
+        print(f"  本谱：{r['state']}（旧口径） / {r['state_f1']}（F1 口径）", flush=True)
         res.append(r)
 
     if a.json:
@@ -284,12 +351,21 @@ def main(argv=None) -> int:
                                elpd_used_as_criterion=False,
                                # ESS 只作补充诊断，M-c 仍是 R̂≤1.05 且 div=0
                                ess_ref=ESS_REF, ess_in_verdict=False,
+                               # 两套曲线口径并列，判据一个没动
+                               curve_policy=dict(
+                                   legacy="Z(中位参数)",
+                                   f1="逐样本 Z 的逐点中位（F1 契约 2026-11-20；"
+                                      "实现 circuit_runner._pointwise_median_z）",
+                                   verdict_uses="legacy（与既有 4/14 可比）；"
+                                                "F1 并列报出，不替代"),
                                executor="m4_holdout2.py",
                            ),
                            rows=res), fh,
                       ensure_ascii=False, indent=1)
         ok = [r.get("spec") for r in res if r.get("passed_all")]
-        print(f"\n通过 {len(ok)}/{len(res)}：{ok}")
+        ok1 = [r.get("spec") for r in res if r.get("passed_all_f1")]
+        print(f"\n旧口径通过 {len(ok)}/{len(res)}：{ok}")
+        print(f"F1 口径通过 {len(ok1)}/{len(res)}：{ok1}")
         print(f"已写 {a.json}")
     return 0
 
