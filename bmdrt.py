@@ -32,6 +32,14 @@
     --no-move   --out DIR   --inbox DIR   --interval 30
     --ref-rwp    # 额外落一份参考性 Rwp（独立 LS + 逐点相对权重重拟合）
                  # **只读对照**：不进 kk 门禁、不参与选 K、不改参数推断
+    --likelihood free|perpoint
+                 # 噪声口径。free（默认）= σ 被采样，与 2026-11-23 之前逐位一致；
+                 # perpoint = 固定 σ_j = 2%·|Z_j|（σ 不进采样）。
+                 # **两个口径的 rms / ELPD / acf 不可直接比**，所以口径会写进
+                 # 结果 json 的 `likelihood` 字段——看那里，不要相信命令行。
+                 # `bmdrt compare` 的默认是 perpoint（与验收口径对齐，voigt 与
+                 # nested 必须同口径才可比）；这里默认 free（与历史台账对齐）。
+                 # 这不是不一致，是两个入口对"跟谁比"的回答不同，不要统一。
 
     --seed 默认 0（= bm_real.KW 的默认值，旧命令逐位不变）。它换的是 NUTS 的
     随机流：同 seed 重跑逐位相同，不同 seed 才可能改变采样诊断与后验读数。
@@ -122,7 +130,8 @@ DEFAULTS = {
             "ta": None, "include_L": None, "zeta": "1.0",
             "sigma_floor": 0.0, "seed": None, "auto_mechanism": False,
             "auto_mechanism_full": False,
-            "adsorption": None, "auto_adsorption": False},
+            "adsorption": None, "auto_adsorption": False,
+            "likelihood": "free"},
     "kk": {"mode": "gate", "c": 0.85, "max_M": 50, "res_tol": 0.05,
            "auto_L": True, "auto_tail": True, "auto_cap": True},
     "drt": {"deinduce": True, "n_hi": 5, "min_share": 5e-3,
@@ -545,7 +554,9 @@ def process_one(path: Path, cfg: dict) -> dict:
                                   else str(fit.get("adsorption"))),
                       auto_adsorption=bool(fit.get("auto_adsorption", False)),
                       # 参考性 Rwp：唯读对照，不参与任何判定（默认 False）
-                      ref_rwp=bool(fit.get("ref_rwp", False)))
+                      ref_rwp=bool(fit.get("ref_rwp", False)),
+                      # 噪声口径：free(默认，逐位不变) / perpoint(固定 2%·|Z|)
+                      likelihood=str(fit.get("likelihood") or "free"))
                 js = outdir / f"real_{stem}.json"
                 rec["ok"] = js.exists()
                 rec["json"] = str(js) if js.exists() else None
@@ -822,7 +833,7 @@ def _apply_cli(cfg: dict, opt: dict):
     fit = cfg["fit"]
     for k in ("krange", "wide", "kmax", "quick", "ta", "zeta", "diffusion",
               "auto_mechanism", "auto_mechanism_full", "auto_adsorption",
-              "seed"):
+              "seed", "likelihood"):
         if opt.get(k) is not None:
             fit[k] = opt[k]
     # --adsorption：与 --diffusion 同处理，"none"/""/"null" 归一成 None。
@@ -1041,17 +1052,19 @@ def parse_opts(argv: list[str]) -> tuple[list[str], dict]:
     """
     # 白名单（post-alias 键名）：
     _VAL_KEYS = {"krange", "kmax", "ta", "zeta", "out", "inbox", "interval",
-                 "kk", "adsorption", "sigma_floor", "seed", "diffusion"}
+                 "kk", "adsorption", "sigma_floor", "seed", "diffusion",
+                 "likelihood"}
     _KK_MODES = {"gate", "warn", "off"}
     _AD_VALS = {"rl", "none", "null", ""}
     _DIFF_VALS = {"none", "Ws", "Wo", "Wshort", "both"}
+    _LIKELIHOOD_VALS = {"free", "perpoint"}
     opt = {"krange": None, "wide": None, "kmax": None, "quick": None,
            "ta": None, "zeta": None, "L": None, "no_move": False,
            "out": None, "inbox": None, "interval": None, "kk": None,
            "auto_mechanism": None, "auto_mechanism_full": None,
            "adsorption": None, "auto_adsorption": None,
            "sigma_floor": None, "no_deinduce": False,
-           "seed": None, "diffusion": None,
+           "seed": None, "diffusion": None, "likelihood": None,
            "ref_rwp": False,
            "fit": False, "fast": False}
     paths, i = [], 0
@@ -1129,6 +1142,17 @@ def parse_opts(argv: list[str]) -> tuple[list[str], dict]:
     if opt["diffusion"] is not None and opt["diffusion"] not in _DIFF_VALS:
         sys.exit(f"[bmdrt] --diffusion 只接受 {'/'.join(sorted(_DIFF_VALS))}，"
                  f"收到 {opt['diffusion']!r}")
+    if opt["likelihood"] is not None:
+        _lk = str(opt["likelihood"]).strip().lower()
+        # 允许 per-point 这类写法，但落盘一律用规范名，否则下游
+        # `likelihood == "perpoint"` 的判据会静默失效（同 --adsorption 的坑）。
+        _lk = {"per-point": "perpoint", "per_point": "perpoint",
+               "fixed": "perpoint", "sampled": "free"}.get(_lk, _lk)
+        if _lk not in _LIKELIHOOD_VALS:
+            sys.exit(f"[bmdrt] --likelihood 只接受 "
+                     f"{'/'.join(sorted(_LIKELIHOOD_VALS))}，"
+                     f"收到 {opt['likelihood']!r}")
+        opt["likelihood"] = _lk
     return paths, opt
 
 

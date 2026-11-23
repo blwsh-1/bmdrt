@@ -243,7 +243,8 @@ def build_candidates(ks=DEFAULT_KS, layers=DEFAULT_LAYERS,
                      init_profile: str = "uniform",
                      branches=("parallel",),
                      include_adr: bool = False,
-                     include_diffusion: bool = False) -> list:
+                     include_diffusion: bool = False,
+                     likelihood: str = "free") -> list:
     """按 registry 构造候选。
 
     `branches` 默认只有 `parallel`（与 `nested_fit.py` 一致）。**`测试数据/` 的
@@ -260,7 +261,19 @@ def build_candidates(ks=DEFAULT_KS, layers=DEFAULT_LAYERS,
     扩散候选：`w_inf`→Ws、`w_open`→Wo、`w_short`→Wshort。默认 False（既有
     调用点逐位不变）。**接入≠准入**：这只是让候选能被生成和评价，判据只给
     统计事实，不宣称数据里有扩散机制；§4 三条准入仍未满足。
+
+    `likelihood`（2026-11-23）：噪声口径，只影响候选登记里的 `likelihood_profile`
+    **和 candidate_id**，不参与拟合。`free` 登记为 `"free"`、`perpoint` 登记为
+    `"perpoint-2pct"`。此前这里恒写 `"perpoint-2pct"`，于是 `run(likelihood="free")`
+    会产出登记成 perpoint 的候选——candidate_id 也把两种口径混成一个。**`free`
+    是默认值，所以默认路径的 id 与 2026-11-23 之前不同**；perpoint 路径逐位不变。
     """
+    if likelihood not in ("free", "perpoint"):
+        raise ValueError(f"未知 likelihood={likelihood!r}（可用 free / perpoint）")
+    # 口径 → 登记名。`free` 用短名而不是 `free-sampled`：候选 id 里的这个字段
+    # 必须与 `spectrum_metrics.elpd_validity` 的取值域同构，否则读的人要在两套
+    # 词汇之间翻译。perpoint 沿用历史名，保证既有产物 id 不变。
+    lp = "free" if likelihood == "free" else "perpoint-2pct"
     for b in branches:
         if b not in BRANCH_ELEMENT:
             raise ValueError(f"branch={b!r} 不在 {sorted(BRANCH_ELEMENT)}")
@@ -275,7 +288,7 @@ def build_candidates(ks=DEFAULT_KS, layers=DEFAULT_LAYERS,
             "voigt", els,
             {"K": int(K), "include_L": bool(include_L), "adsorption": None},
             init_profile=init_profile, budget_profile=budget_profile,
-            likelihood_profile="perpoint-2pct"))
+            likelihood_profile=lp))
         if include_diffusion:
             for elem_id, diff_val in (("w_inf", "Ws"), ("w_open", "Wo"),
                                       ("w_short", "Wshort")):
@@ -285,7 +298,7 @@ def build_candidates(ks=DEFAULT_KS, layers=DEFAULT_LAYERS,
                     {"K": int(K), "include_L": bool(include_L),
                      "adsorption": None, "diffusion": diff_val},
                     init_profile=init_profile, budget_profile=budget_profile,
-                    likelihood_profile="perpoint-2pct"))
+                    likelihood_profile=lp))
     for b in branches:
         for L in layers:
             n_els = ([("outer_cpe", "cpe")]
@@ -302,7 +315,7 @@ def build_candidates(ks=DEFAULT_KS, layers=DEFAULT_LAYERS,
                 "nested", n_all,
                 n_cfg,
                 init_profile=init_profile, budget_profile=budget_profile,
-                likelihood_profile="perpoint-2pct"))
+                likelihood_profile=lp))
             if include_diffusion:
                 for elem_id, diff_val in (("w_inf", "Ws"), ("w_open", "Wo"),
                                           ("w_short", "Wshort")):
@@ -310,7 +323,7 @@ def build_candidates(ks=DEFAULT_KS, layers=DEFAULT_LAYERS,
                         "nested", n_all + [("diffusion", elem_id)],
                         dict(n_cfg, diffusion=diff_val),
                         init_profile=init_profile, budget_profile=budget_profile,
-                        likelihood_profile="perpoint-2pct"))
+                        likelihood_profile=lp))
     if include_adr:
         # adr 无 config（Rs 是拓扑固有参数，不进槽位，同 nested 的 Rs）
         adr_base = [("cpe_branch", "cpe"), ("charge_transfer", "resistor"),
@@ -322,7 +335,7 @@ def build_candidates(ks=DEFAULT_KS, layers=DEFAULT_LAYERS,
             "adr", a_els,
             a_cfg,
             init_profile=init_profile, budget_profile=budget_profile,
-            likelihood_profile="perpoint-2pct"))
+            likelihood_profile=lp))
         if include_diffusion:
             for elem_id, diff_val in (("w_inf", "Ws"), ("w_open", "Wo"),
                                       ("w_short", "Wshort")):
@@ -330,7 +343,7 @@ def build_candidates(ks=DEFAULT_KS, layers=DEFAULT_LAYERS,
                     "adr", a_els + [("diffusion", elem_id)],
                     dict(a_cfg, diffusion=diff_val),
                     init_profile=init_profile, budget_profile=budget_profile,
-                    likelihood_profile="perpoint-2pct"))
+                    likelihood_profile=lp))
     return out
 
 
@@ -356,13 +369,22 @@ def find_dataset_files(key: str, project_root: str = "..", limit: int | None = N
 
 
 def truth_candidate_for(key: str, *, budget_profile: str = "quick",
-                        init_profile: str = "uniform"):
-    """返回该数据集真值拓扑对应的**候选对象**（用于"它到底在不在候选集里"）。"""
+                        init_profile: str = "uniform",
+                        likelihood: str = "free"):
+    """返回该数据集真值拓扑对应的**候选对象**（用于"它到底在不在候选集里"）。
+
+    `likelihood` 必须与 `run(..., likelihood=)` 一致：`candidate_id` 含这个字段，
+    口径不同就是两个 id，拿 free 的真值去比 perpoint 的候选集会全部落空。
+    """
+    if likelihood not in ("free", "perpoint"):
+        raise ValueError(f"未知 likelihood={likelihood!r}（可用 free / perpoint）")
+    lp = "free" if likelihood == "free" else "perpoint-2pct"
     t = DATASETS[key]["truth"]
     if t["topology_id"] == "voigt":
         return build_candidates(ks=(int(t["layers"]),), layers=(),
                                 budget_profile=budget_profile,
-                                init_profile=init_profile)[0]
+                                init_profile=init_profile,
+                                likelihood=likelihood)[0]
     el = [("outer_cpe", "cpe")]
     if int(t["layers"]) == 2:
         el.append(("inner_cpe", "cpe"))
@@ -371,7 +393,7 @@ def truth_candidate_for(key: str, *, budget_profile: str = "quick",
                              {"layers": int(t["layers"]), "branch": t["branch"]},
                              init_profile=init_profile,
                              budget_profile=budget_profile,
-                             likelihood_profile="perpoint-2pct")
+                             likelihood_profile=lp)
 
 
 def expand_inputs(path: str, limit: int | None = None) -> list:
@@ -796,7 +818,8 @@ def run(data_path: str, *, seed: int = 0, budget_profile: str = "quick",
     out_dir = out_dir or os.path.join(OUT_ROOT, stem)
     os.makedirs(out_dir, exist_ok=True)
 
-    cands = build_candidates(budget_profile=budget_profile, **plan_kw)
+    cands = build_candidates(budget_profile=budget_profile,
+                             likelihood=likelihood, **plan_kw)
     if max_candidates:
         cands = cands[:int(max_candidates)]
     # L 是**全局能力开关**：同一批候选里不许出现"有的带 L、有的不带"。
@@ -807,6 +830,10 @@ def run(data_path: str, *, seed: int = 0, budget_profile: str = "quick",
     with open(os.path.join(out_dir, "plan.json"), "w", encoding="utf-8") as fh:
         json.dump(dict(data_path=data_path, data_sha256=dsha,
                        n_points=int(f.size), budget_profile=budget_profile,
+                       # 噪声口径落在这里（不是只落 observations）：看计划就该知道
+                       # "这一批候选是在哪个 σ 下比的"，否则事后只能靠 candidate_id
+                       # 反推。free 与 perpoint 的 rms/elpd/acf 不可直接比。
+                       likelihood=likelihood,
                        # L 是全局开关，单独记一份：这样不用翻每个 candidate 的
                        # config 也知道整批的口径（图上"元件数"也据此解释）。
                        include_L=(bool(dict(cands[0].config).get("include_L", False))

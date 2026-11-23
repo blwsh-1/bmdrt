@@ -386,7 +386,17 @@ def t6_sampler_args():
     c("bm_core diffusion 默认 None（Wshort 只是可选分支）",
       "diffusion: str | None = None" in _core_src
       and _core_src.count('diffusion == "Wshort"') == 1)
-    c("bm_real 未修改", "bm_real.py" not in out, f"改了 bm_real.py")
+    # 2026-11-23 用户授权在 bm_real 增加 `likelihood` 形参（默认 free）。
+    # 原守卫是"本轮禁改 bm_real"，属一次性断言；这里换成**语义守卫**：
+    # 默认口径必须还是 free、固定 σ 只能在显式 perpoint 分支里产生。
+    # 比"文件没动"更硬——以后谁把默认值改成 perpoint，这条会直接 FAIL。
+    _br_src = (ROOT / "bm_real.py").read_text(encoding="utf-8")
+    c("bm_real 默认噪声口径仍是 free（perpoint 必须显式传入）",
+      'ref_rwp=False, likelihood="free")' in _br_src
+      and 'if likelihood == "perpoint":' in _br_src
+      and "sigma_fixed = None" in _br_src
+      and _br_src.count("sigma_fixed = None") == 1,
+      "run() 默认值不是 free，或固定 σ 在 perpoint 分支之外被赋值")
     # bm_top 2026-11-20：除钩子替换外，新增三族扩散分支。逐行白名单不现实，
     # 改用**语义守卫**（比逐行更硬）：扩散开关默认 None 才不改默认采样；
     # `_diffusion_*` 在 None 时必须返回 0.0（不引入额外项）；`sampled_keys()`
@@ -691,9 +701,16 @@ def t8_provisional_admission():
       'if fam == "not_excluded":' in src_bd
       and src_bd.count("_run_nested_branch(") == 2)  # 定义 1 次 + 调用 1 次
 
-    # Windows 入口只留一个（2026-11-16 用户裁决「统一一个 bat，这样不用选」）
+    # Windows 入口只留一个（2026-11-16 用户裁决「统一一个 bat，这样不用选」）。
+    # 2026-11-23：`app.bat` 是 S1 本地服务启动器（`python -m app.api`），不转发
+    # 任何 CLI 子命令。把守卫收紧成"**转发 CLI 的** bat 只有一个"，而不是把
+    # 文件名加进白名单——真正会造成"要选"的是两个 bat 都能跑 bmdrt.py 子命令。
     bats = sorted(p.name for p in ROOT.glob("*.bat"))
-    c("仓库顶层只有一个 .bat", bats == ["bmdrt.bat"], f"实际 {bats}")
+    cli_bats = [b for b in bats
+                if "bmdrt.py" in (ROOT / b).read_text(encoding="utf-8",
+                                                      errors="replace")]
+    c("转发 CLI 的 .bat 只有一个（服务启动器不算入口）",
+      cli_bats == ["bmdrt.bat"], f"实际 bat={bats}，转发 CLI 的={cli_bats}")
     bat = (ROOT / "bmdrt.bat").read_text(encoding="utf-8", errors="replace")
     c("bmdrt.bat 用 %* 透传参数（子命令才能用）", "%*" in bat)
     c("bmdrt.bat 不硬编码子命令（不会把 nested 吞成 auto）",

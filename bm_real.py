@@ -2627,6 +2627,9 @@ def save_out(stem, f, Z, res, pres, include_L, zeta, tips, K_sel_note,
         # DRT 去电感通道的决策（used/L/四道检查/扣前后残差）+ 噪声地板
         drt_deinduce=res.get("drt_deinduce"),
         sigma_floor=res.get("sigma_floor"),
+        # 噪声口径：`free`=σ 被采样 / `perpoint`=固定 2%·|Z|。缺省写 "free"，
+        # 因为加这个字段之前生产路径只可能是 free（历史 json 因此仍自洽）。
+        likelihood=str(res.get("likelihood") or "free"),
         # 扩散项：写进 json 才能让 status / 事后复核不重跑就看得到
         diffusion=res.get("diffusion"),
         n_warburg_like=res.get("n_warburg_like", 0),
@@ -2677,7 +2680,7 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
         diffusion=None, kk_mode="gate", kk_opts=None, diag=None,
         drt_opts=None, sigma_floor=0.0, auto_mechanism=False,
         auto_mechanism_full=False, adsorption=None, auto_adsorption=False,
-        seed=None, ref_rwp=False):
+        seed=None, ref_rwp=False, likelihood="free"):
     """kk_mode: gate(fail 即拒绝定 K) | warn(只报告) | off(不跑门禁)。
     kk_opts 是传给 kk_check 的数值参数（c/max_M/res_tol/auto_L/...），
     不在代码里写死，由 config.json 统一管。
@@ -2692,12 +2695,37 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
     ref_rwp：True 时额外落一份 `reference_rwp` 参考指标（独立 LS + 逐点相对
     权重重拟合的 Rwp）。**只读对照**：不进 kk 门禁、不参与选 K、不改参数推断，
     默认 False（默认输出的 json 逐位不变）。见 bm_ref_rwp.py。
+    likelihood：噪声口径，只换似然里的 σ，不改模型结构、不改 K、不改先验尺度。
+      `free`（默认）= σ 被采样，与改动前**逐位一致**；
+      `perpoint` = 固定 σ_j = 2%·|Z_j|（§13/§14 验收口径），σ 不进采样。
+    两种口径下的 rms / ELPD / acf **不可直接比**，所以口径必须落盘
+    （`likelihood` 字段）而不是靠调用方记着。perpoint 与 sigma_floor 同时给时
+    地板不生效（固定 σ 分支根本不经过地板），会打印提示而不是静默忽略。
     """
     drt_opts = drt_opts or {}
     sigma_floor = float(sigma_floor or 0.0)
     diag = diag or {}
     print(f"\n=== 读数据 {path} ===")
     f, Z = load_spectrum(path)
+
+    # ---- 噪声口径 → 似然里的 σ ----
+    # 只算一次、全家族共用：若每个 K / 每个扩散家族各算一份，同一批比较就会
+    # 跨口径，rms 差多少都说不清是哪来的。`free` 传 None 走采样分支（默认
+    # 逐位不变）；`perpoint` 传固定数组，σ 不进采样。
+    if likelihood not in ("free", "perpoint"):
+        raise SystemExit(f"[bm_real] 未知 likelihood={likelihood!r}"
+                         f"（可用 free / perpoint）")
+    sigma_fixed = None
+    if likelihood == "perpoint":
+        import spectrum_metrics as _SM
+        sigma_fixed = _SM.sigma_perpoint(Z, _SM.SIGMA_PCT)
+        print(f"  噪声口径：逐点固定 σ = {_SM.SIGMA_PCT:.0f}%·|Z|（σ 不采样）；"
+              f"与自由 σ 口径的 rms/ELPD/acf 不可直接比")
+        if sigma_floor > 0:
+            # 固定 σ 分支在 make_model 里直接 return，根本不经过地板逻辑。
+            # 静默忽略会让"我明明加了地板"变成事后查不出的错觉。
+            print(f"  ** 注意：固定 σ 下 --sigma-floor={sigma_floor:g} 不生效"
+                  f"（地板只作用于被采样的 σ）**")
 
     if diffusion:
         print(f"  扩散项：{diffusion}（对比基线时用 --diffusion none）")
@@ -2827,7 +2855,8 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
             r = fit_one(f, Z, K, include_L, zeta, init=init, kw=kw,
                         seed=kw.get("seed", KW["seed"]),
                         diffusion=diffusion_use, diag=diag,
-                        sigma_floor=sigma_floor, adsorption=adsorption_use)
+                        sigma_floor=sigma_floor, adsorption=adsorption_use,
+                        sigma=sigma_fixed)
             print(f"      {r['t']:.0f}s  R̂max={r['rhat_max']:.3f} "
                   f"bulk={r['bulk_min']:.0f} tail={r['tail_min']:.0f} "
                   f"div={r['ndiv']} 触顶={r['tds']['frac_cap'] * 100:.1f}% "
@@ -3006,6 +3035,10 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
     # "这次 DRT 用的是原始 Z 还是扣过 L 的 Z"、"σ 有没有被地板截住"。
     best["drt_deinduce"] = deind
     best["sigma_floor"] = sigma_floor
+    # 噪声口径必须落盘：只看 json 里的 rms/ELPD 无法分辨它是自由 σ 还是固定
+    # 2%·|Z| 算出来的，而这两者不可直接比。缺这个字段的历史结果一律视为
+    # free（2026-11-23 之前生产路径只有 free 一种可能）。
+    best["likelihood"] = likelihood
 
     report(best, include_L, zeta, f)
     best["component_review"] = component_review(best, f)
