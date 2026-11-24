@@ -9,9 +9,10 @@
   },
 
   "fit": {
-    "_说明": "krange=null 表示按 DRT 预判断自动取 [K_drt-1, K_drt+1]；wide=true 则扫 1..kmax",
+    "_说明": "krange=null 表示按 DRT 预判断自动取 [K_drt-1, K_drt+1]；wide=true 则扫 1..kmax；allow_large_k=false 时播种前跳过 K_drt+1>=4（历史 0/69 被选中），设 true 或 --krange/--wide 放行",
     "krange": null,
     "wide": false,
+    "allow_large_k": false,
     "kmax": 5,
     "quick": false,
     "ta": null,

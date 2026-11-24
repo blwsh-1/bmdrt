@@ -100,6 +100,11 @@ KW = dict(n_warmup=3000, n_samples=1000, num_chains=3, seed=0,
 # 上面的 seed=0 是**默认值**，不是硬编码：`run(seed=)` / CLI `--seed` 可以覆盖，
 # 优先级见 `_resolve_seed()`。改 seed 只换随机流，不换模型、不换初值策略。
 K_MAX = 5
+#: 播种前大 K 跳过阈值（2026-11-24）：`K_drt+1 ≥ 此值` 且由劈开得来时默认
+#: 不试跑。69 条含 K≥4 案例里 K≥4 最终选中 0 次、分级 0 占 61%。
+#: 不写进 config.json 是刻意的——它是数据核查得出的固定事实，不是可调超参；
+#: 要越过的通道是 allow_large_k / --krange / --wide，不是调这个数。
+LARGE_K_MIN = 4
 OUT = Path("figures")
 
 LOG2PI = float(np.log(2 * np.pi))
@@ -1101,9 +1106,23 @@ def fit_one(f, Z, K, include_L, zeta, init=None, seed=None, kw=None, diffusion=N
         s_re = float(np.median(s["s_re"]))
         s_im = float(np.median(s["s_im"]))
     elif sigma is not None:
-        sr, si = (sigma if isinstance(sigma, (tuple, list)) else (sigma, sigma))
+        # sigma_perpoint 返回的是 (2, n_freq) ndarray（不是 tuple），
+        # 当成标量对会让 np.median 把两行混起来、广播更是直接失败。
+        if isinstance(sigma, np.ndarray) and sigma.ndim == 2:
+            sr, si = sigma[0], sigma[1]
+        elif isinstance(sigma, (tuple, list)):
+            sr, si = sigma
+        else:
+            sr = si = sigma
         s_re = float(np.median(np.asarray(sr, float)))
         s_im = float(np.median(np.asarray(si, float)))
+        # 固定 σ 路径下样本里本来没有 s_re/s_im，但 npz 落盘与面板加载都按
+        # `s["s_re"][i]` 逐 draw 取噪声，缺字段会直接 KeyError。σ 既然固定，
+        # 按 draw 展开成常量数组不是"造样本"，是把本次实际使用的逐点 σ 如实
+        # 带下去；PPC / loglik 仍优先用显式 sigma 入参，不会被这里改写口径。
+        _ns = int(np.asarray(s["R_inf"]).size)
+        s["s_re"] = np.broadcast_to(np.asarray(sr, float), (_ns, f.size)).copy()
+        s["s_im"] = np.broadcast_to(np.asarray(si, float), (_ns, f.size)).copy()
     else:
         s_re = s_im = float("nan")
     bins = resid_bins(res, f)
@@ -2559,7 +2578,7 @@ def _write_kk_reject(path, f, Z, kk, kk_mode, seed=None):
 
 
 def save_out(stem, f, Z, res, pres, include_L, zeta, tips, K_sel_note,
-             ref_rwp_block=None):
+             ref_rwp_block=None, k_precheck=None):
     OUT.mkdir(exist_ok=True)
     js = OUT / f"real_{stem}.json"
     # P3（二轮审查）：结果按 stem 命名，同名谱/重跑会静默覆盖——至少让
@@ -2605,6 +2624,9 @@ def save_out(stem, f, Z, res, pres, include_L, zeta, tips, K_sel_note,
         diag={r["name"]: {k: r[k] for k in ("rhat", "bulk", "tail")}
               for r in res["rows"]},
         k_selection=K_sel_note, warnings=tips,
+        # 播种前的大 K 跳过（2026-11-24）：写「未试跑」的事实，不是「剔除」。
+        # 旧调用方不传 k_precheck 时不落这个键，历史产物 schema 不变。
+        k_precheck=k_precheck,
         # 事前门禁 / 模型选择状态 / 后处理诊断：全部「有则写、缺则跳过」，
         # 保证旧结果文件与未启用新模块的调用方仍能读。
         fit_performed=True,
@@ -2680,7 +2702,7 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
         diffusion=None, kk_mode="gate", kk_opts=None, diag=None,
         drt_opts=None, sigma_floor=0.0, auto_mechanism=False,
         auto_mechanism_full=False, adsorption=None, auto_adsorption=False,
-        seed=None, ref_rwp=False, likelihood="free"):
+        seed=None, ref_rwp=False, likelihood="free", allow_large_k=False):
     """kk_mode: gate(fail 即拒绝定 K) | warn(只报告) | off(不跑门禁)。
     kk_opts 是传给 kk_check 的数值参数（c/max_M/res_tol/auto_L/...），
     不在代码里写死，由 config.json 统一管。
@@ -2701,6 +2723,12 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
     两种口径下的 rms / ELPD / acf **不可直接比**，所以口径必须落盘
     （`likelihood` 字段）而不是靠调用方记着。perpoint 与 sigma_floor 同时给时
     地板不生效（固定 σ 分支根本不经过地板），会打印提示而不是静默忽略。
+    allow_large_k：默认 False，播种前跳过 `K_drt+1 ≥ 4` 这一格（劈开得来的
+      大 K）。依据 69 条含 K≥4 的历史案例：K≥4 最终被选中 0/69、分级 0 占
+      61%、劈开 1 次 100% 崩（见 docs/round_2026-11-24/LARGE_K_PRECHECK.md）。
+      跳过记在结果的 `k_precheck` 块，`k_selection` 写「未试跑」而非「被剔除」。
+      True / 显式 --krange / --wide / --K 时恢复旧行为，落 `large_k_opt_in`。
+      **这是执行预算收紧，不是判据改动**；A1–A4 / M-a/b/c 全部不动。
     """
     drt_opts = drt_opts or {}
     sigma_floor = float(sigma_floor or 0.0)
@@ -2804,7 +2832,13 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
 
     if dry:
         lo, hi = max(1, K_drt - 1), min(kmax, K_drt + 1)
-        print(f"\n（--dry 结束）建议下一步：python bm_real.py {path} --krange {lo},{hi}")
+        skip_dry = hi >= LARGE_K_MIN and hi == K_drt + 1 and not (
+            allow_large_k or wide or krange)
+        hint = hi - 1 if skip_dry else hi
+        print(f"\n（--dry 结束）建议下一步：python bm_real.py {path} --krange {lo},{hint}")
+        if skip_dry:
+            print(f"  默认还会播种前跳过 K={hi}（K_drt+1≥{LARGE_K_MIN}）；"
+                  f"要试跑：--krange {lo},{hi} 或 --allow-large-k")
         print(f"  若要确认局部扫描没漏掉更好的 K：--wide（扫 1..{kmax}）")
         return None
 
@@ -2827,16 +2861,48 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
         print("  ** 这是「给定 K 条件下」的结果，不是模型选择。"
               "要选 K 请去掉 --K，用 --krange / --wide **")
     else:
+        # 播种前的大 K 跳过（2026-11-24）：只砍 `K_drt+1 ≥ 4` 这一格——它是
+        # 由 adjust_peaks 把峰劈开得来的，历史 69 条含 K≥4 里 0 条被最终选中、
+        # 61% 分级 0、劈开 1 次 100% 崩。K_drt 本身与 K_drt≤2 的上探全部保留，
+        # 所以绝大多数谱的默认行为逐位不变。显式 krange/wide/allow_large_k
+        # 是升级通道，恢复旧扫描范围并落 large_k_opt_in=true。
+        large_k_opt_in = bool(wide or krange or allow_large_k)
         if wide:
             lo, hi = 1, kmax
         elif krange:
             lo, hi = (int(x) for x in str(krange).split(","))
         else:
             lo, hi = max(1, K_drt - 1), min(kmax, K_drt + 1)
+        skipped_K = []
+        if (not large_k_opt_in and hi >= LARGE_K_MIN and hi == K_drt + 1):
+            skipped_K = [hi]
+            hi = K_drt
         ks = list(range(lo, hi + 1))
         print(f"\n=== ② 拟合 K ∈ {ks}（DRT 只给候选，K 由配对 LOO 选） ===")
         print(f"  K 上界 {kmax} 是人为设定，选出的 K 只在这个范围内最优；"
               f"--wide 扫 1..{kmax}，--krange a,b 自定义")
+        if skipped_K:
+            print(f"  ** 播种前跳过 K={skipped_K[0]}（K_drt+1≥{LARGE_K_MIN}，"
+                  f"劈开得来）：历史 0/69 被选中、61% 分级 0。"
+                  f"要试跑请 --allow-large-k / --krange / --wide **")
+
+    # 未试跑的大 K 要落盘（结果 json 的 k_precheck 块）；K_force 与 KK 拒绝
+    # 路径不走这个变量，按缺省空表处理。
+    if not K_force:
+        k_precheck = dict(
+            large_k_min=LARGE_K_MIN,
+            allow_large_k=bool(allow_large_k or wide or krange),
+            large_k_opt_in=bool(large_k_opt_in),
+            skipped_K=[dict(K=int(k), n_split=int(k - K_drt),
+                            reason=(f"播种前跳过：K_drt+1≥{LARGE_K_MIN} 劈开得来；"
+                                    "历史 0/69 被最终选中、61% 分级0"),
+                            evidence="docs/round_2026-11-24/LARGE_K_PRECHECK.md §3")
+                       for k in skipped_K],
+            K_drt=int(K_drt), scanned_K=[int(k) for k in ks])
+    else:
+        k_precheck = dict(large_k_min=LARGE_K_MIN, allow_large_k=bool(allow_large_k),
+                          large_k_opt_in=False, skipped_K=[], K_drt=int(K_drt),
+                          scanned_K=[int(K_force)])
 
     def _fit_ks(diffusion_use, tag="", k_list=None, adsorption_use=None,
                 ad_init=None):
@@ -3039,6 +3105,17 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
     # 2%·|Z| 算出来的，而这两者不可直接比。缺这个字段的历史结果一律视为
     # free（2026-11-23 之前生产路径只有 free 一种可能）。
     best["likelihood"] = likelihood
+    # 播种前跳过的大 K：写进 best（供 save_out 与二次分析读），并在
+    # k_selection 里补一条「未试跑」——这与「跑了但被剔除」是两件不同的事，
+    # 混写会让事后复核以为 K=4 参与过配对比较。
+    best["k_precheck"] = k_precheck
+    if skipped_K:
+        note.insert(0, f"K={','.join(str(k) for k in skipped_K)} **未试跑**"
+                       f"（播种前跳过：K_drt+1≥{LARGE_K_MIN} 且为劈开得来；"
+                       "历史 0/69 被最终选中、61% 分级 0，"
+                       "见 docs/round_2026-11-24/LARGE_K_PRECHECK.md §3）。"
+                       "要试跑请 --allow-large-k / --krange / --wide；"
+                       "**不是「跑了被剔除」**。")
 
     report(best, include_L, zeta, f)
     best["component_review"] = component_review(best, f)
@@ -3107,7 +3184,7 @@ def run(path, K_force=None, krange=None, wide=False, kmax=K_MAX,
             print(f"  （参考 Rwp 没算出来：{type(e).__name__}: {e}，主结果不受影响）")
 
     js = save_out(stem, f, Z, best, pres, include_L, zeta, tips, note,
-                  ref_rwp_block=ref_block)
+                  ref_rwp_block=ref_block, k_precheck=k_precheck)
     print(f"\n  图：{fig_path}{circ_note}\n"
           f"  结果：{js}  +  {OUT / f'real_{stem}_samples.npz'}")
     return best
@@ -3123,6 +3200,9 @@ def main():
     ap.add_argument("--wide", action="store_true",
                     help="扫 1..kmax，用于复核 DRT 局部扫描没漏掉更好的 K")
     ap.add_argument("--kmax", type=int, default=K_MAX, help=f"K 上界（默认 {K_MAX}）")
+    ap.add_argument("--allow-large-k", action="store_true",
+                    help=(f"试跑 K_drt+1≥{LARGE_K_MIN}（默认播种前跳过；"
+                          "--krange/--wide 也会自动放行）"))
     ap.add_argument("--quick", action="store_true",
                     help="粗筛：更短的链，只用于快速看 K 的量级，不可当结论")
     ap.add_argument("--ta", type=float, default=None,
@@ -3166,7 +3246,8 @@ def main():
         diffusion=diff, kk_mode=a.kk,
         drt_opts={"deinduce": not a.no_deinduce},
         sigma_floor=(a.sigma_floor or 0.0),
-        adsorption=ads, auto_adsorption=a.auto_adsorption)
+        adsorption=ads, auto_adsorption=a.auto_adsorption,
+        allow_large_k=a.allow_large_k)
 
 
 if __name__ == "__main__":

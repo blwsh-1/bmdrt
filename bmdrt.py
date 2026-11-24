@@ -30,6 +30,7 @@
     --L / --no-L   --zeta 1.0|free   --diffusion none|Ws|Wo|Wshort|both
     --kk gate|warn|off   --auto-mechanism / --auto-mechanism-full
     --no-move   --out DIR   --inbox DIR   --interval 30
+    --allow-large-k   # 试跑 K_drt+1≥4（默认播种前跳过，历史 0/69 被选中）
     --ref-rwp    # 额外落一份参考性 Rwp（独立 LS + 逐点相对权重重拟合）
                  # **只读对照**：不进 kk 门禁、不参与选 K、不改参数推断
     --likelihood free|perpoint
@@ -556,7 +557,9 @@ def process_one(path: Path, cfg: dict) -> dict:
                       # 参考性 Rwp：唯读对照，不参与任何判定（默认 False）
                       ref_rwp=bool(fit.get("ref_rwp", False)),
                       # 噪声口径：free(默认，逐位不变) / perpoint(固定 2%·|Z|)
-                      likelihood=str(fit.get("likelihood") or "free"))
+                      likelihood=str(fit.get("likelihood") or "free"),
+                      # 大 K 升级通道：默认关（播种前跳过 K_drt+1≥4）。
+                      allow_large_k=bool(fit.get("allow_large_k", False)))
                 js = outdir / f"real_{stem}.json"
                 rec["ok"] = js.exists()
                 rec["json"] = str(js) if js.exists() else None
@@ -620,6 +623,9 @@ def _enrich(rec: dict, outdir: Path, stem: str) -> dict:
                    dse=d.get("dse"), rms_re=d.get("rms_re"),
                    rms_im=d.get("rms_im"), sig_re=d.get("sigma_re"),
                    sig_im=d.get("sigma_im"), acf=d.get("acf"),
+                   # 噪声口径进 meta：结果列表能标出 perpoint，避免把两种
+                   # 不可比的 rms 摆在一起当作同一批。旧 json 无此字段 → free。
+                   likelihood=str(d.get("likelihood") or "free"),
                    cover=(min(d.get("cover_re", 1.0), d.get("cover_im", 1.0))
                           if fp else None),
                    ndiv=d.get("divergences"),
@@ -854,6 +860,10 @@ def _apply_cli(cfg: dict, opt: dict):
     # --ref-rwp：只打开参考指标，其余一切照旧（默认 False，输出逐位不变）
     if opt.get("ref_rwp"):
         fit["ref_rwp"] = True
+    # --allow-large-k 是「升级」旗标：只在显式给 True 时写进 cfg，
+    # config.json 里没有这个键时维持默认跳过（与 ref_rwp 同模式）。
+    if opt.get("allow_large_k"):
+        fit["allow_large_k"] = True
     if opt.get("kk") is not None:
         cfg.setdefault("kk", {})["mode"] = str(opt["kk"])
     if opt.get("L") is True:
@@ -1065,7 +1075,7 @@ def parse_opts(argv: list[str]) -> tuple[list[str], dict]:
            "adsorption": None, "auto_adsorption": None,
            "sigma_floor": None, "no_deinduce": False,
            "seed": None, "diffusion": None, "likelihood": None,
-           "ref_rwp": False,
+           "ref_rwp": False, "allow_large_k": False,
            "fit": False, "fast": False}
     paths, i = [], 0
     while i < len(argv):
@@ -1081,6 +1091,8 @@ def parse_opts(argv: list[str]) -> tuple[list[str], dict]:
             opt["no_move"] = True
         elif a == "--no-deinduce":
             opt["no_deinduce"] = True
+        elif a == "--allow-large-k":
+            opt["allow_large_k"] = True
         elif a == "--ref-rwp":
             # 参考性 Rwp：只读对照，不进 kk 门禁 / 不参与选 K / 不改参数推断。
             opt["ref_rwp"] = True

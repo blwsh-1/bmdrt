@@ -392,11 +392,19 @@ def t6_sampler_args():
     # 比"文件没动"更硬——以后谁把默认值改成 perpoint，这条会直接 FAIL。
     _br_src = (ROOT / "bm_real.py").read_text(encoding="utf-8")
     c("bm_real 默认噪声口径仍是 free（perpoint 必须显式传入）",
-      'ref_rwp=False, likelihood="free")' in _br_src
+      'likelihood="free", allow_large_k=False)' in _br_src
       and 'if likelihood == "perpoint":' in _br_src
       and "sigma_fixed = None" in _br_src
       and _br_src.count("sigma_fixed = None") == 1,
       "run() 默认值不是 free，或固定 σ 在 perpoint 分支之外被赋值")
+    # 2026-11-24：大 K 前置跳过——默认阈值必须是 4、默认关升级通道，
+    # 否则本轮「播种前跳过 K_drt+1≥4」的裁决被后续改动静默推翻。
+    c("大 K 前置跳过默认阈值=4 且升级通道默认关",
+      "LARGE_K_MIN = 4" in _br_src
+      and 'allow_large_k=False)' in _br_src
+      and "if skipped_K:" in _br_src
+      and '**未试跑**' in _br_src,
+      "LARGE_K_MIN / allow_large_k / 未试跑标记被改动")
     # bm_top 2026-11-20：除钩子替换外，新增三族扩散分支。逐行白名单不现实，
     # 改用**语义守卫**（比逐行更硬）：扩散开关默认 None 才不改默认采样；
     # `_diffusion_*` 在 None 时必须返回 0.0（不引入额外项）；`sampled_keys()`
